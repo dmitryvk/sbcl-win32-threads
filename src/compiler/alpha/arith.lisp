@@ -271,7 +271,7 @@
   (:temporary (:scs (non-descriptor-reg)) temp)
   (:translate *)
   (:generator 4
-    (inst sra y 2 temp)
+    (inst sra y 3 temp)
     (inst mulq x temp r)))
 
 (define-vop (fast-*/signed=>signed fast-signed-binop)
@@ -683,7 +683,8 @@
   (:results (digit :scs (unsigned-reg)))
   (:result-types unsigned-num)
   (:generator 1
-    (inst sra fixnum 2 digit)))
+	      ;; probably (bignum stuff is broken anyway)
+    (inst sra fixnum 3 digit)))
 
 (define-vop (bignum-floor)
   (:translate sb!bignum::%floor)

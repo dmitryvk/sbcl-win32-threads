@@ -179,6 +179,7 @@
     ((unsigned-byte 8) . simple-array-unsigned-byte-8)
     ((unsigned-byte 16) . simple-array-unsigned-byte-16)
     ((unsigned-byte 32) . simple-array-unsigned-byte-32)
+    ((unsigned-byte 64) . simple-array-unsigned-byte-64)
     ((signed-byte 8) . simple-array-signed-byte-8)
     ((signed-byte 16) . simple-array-signed-byte-16)
     ((signed-byte 32) . simple-array-signed-byte-32)

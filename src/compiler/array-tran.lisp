@@ -264,7 +264,7 @@
 	 #!+long-float ((complex long-float) #C(0.0L0 0.0L0)
 			#!+x86 192 #!+sparc 256
 			,sb!vm:simple-array-complex-long-float-widetag)
-	 (t 0 32 ,sb!vm:simple-vector-widetag))))
+	 (t 0 64 ,sb!vm:simple-vector-widetag))))
 
 (deftransform make-array ((dims &key initial-element element-type
 				     adjustable fill-pointer)

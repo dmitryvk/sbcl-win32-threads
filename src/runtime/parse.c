@@ -223,14 +223,14 @@ char **ptr;
             printf("unknown variable: ``%s''\n", token);
             throw_to_monitor();
         }
-        result &= ~7;
+        result &= ~15;
     }
     else {
         if (!string_to_long(token, &result)) {
             printf("invalid number: ``%s''\n", token);
             throw_to_monitor();
         }
-        result &= ~3;
+        result &= ~7;
     }
 
     if (!is_valid_lisp_addr((os_vm_address_t)result)) {

@@ -36,10 +36,11 @@
   (inst addq x y res)
   
   ; Check whether we need a bignum.
-  (inst sra res 31 temp)
+  (inst sra res 60 temp)
   (inst beq temp DONE)
   (inst not temp temp)
   (inst beq temp DONE)
+  ;; FIXME: broken below here
   (inst sra res 2 temp3)
   
   ; from move-from-signed
@@ -93,10 +94,11 @@
   (inst subq x y res)
   
   ; Check whether we need a bignum.
-  (inst sra res 31 temp)
+  (inst sra res 60 temp)
   (inst beq temp DONE)
   (inst not temp temp)
   (inst beq temp DONE)
+  ;; FIXME: broken below here
   (inst sra res 2 temp3)
   
   ; from move-from-signed
@@ -152,16 +154,14 @@
 
   ;; Remove the tag from one arg so that the result will have the
   ;; correct fixnum tag.
-  (inst sra x 2 temp)
-  (inst mulq temp y lo)
-  (inst sra lo 32 hi)
-  (inst sll lo 32 res)
-  (inst sra res 32 res)
-  ;; Check to see if the result will fit in a fixnum. (I.e. the high
-  ;; word is just 32 copies of the sign bit of the low word).
-  (inst sra res 31 temp)
-  (inst xor hi temp temp)
+  (inst sra x 3 temp)
+  (inst mulq temp y res)
+  ;; FIXME: assumes unsigned multiply
+  (inst umulh temp y temp)
   (inst beq temp DONE)
+
+  ;; FIXME: utterly, hopelessly broken.
+  ;;
   ;; Shift the double word hi:res down two bits into hi:low to get rid
   ;; of the fixnum tag.
   (inst sra lo 2 lo)
@@ -241,6 +241,7 @@
     (emit-label label))
   (inst move zero-tn rem)
   (inst move zero-tn quo)
+  ;; FIXME: hopelessly broken below here
   (inst sll dividend 32 dividend)
 
   (dotimes (i 32)

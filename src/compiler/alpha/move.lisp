@@ -151,7 +151,7 @@
   (:arg-types tagged-num)
   (:note "fixnum untagging")
   (:generator 1
-    (inst sra x 2 y)))
+    (inst sra x (1- n-lowtag-bits) y)))
 ;;;
 (define-move-vop move-to-word/fixnum :move
   (any-reg descriptor-reg) (signed-reg unsigned-reg))
@@ -175,8 +175,8 @@
   (:temporary (:sc non-descriptor-reg) header)
   (:temporary (:scs (non-descriptor-reg)) temp)
   (:generator 3
-    (inst and x 3 temp)
-    (inst sra x 2 y)
+    (inst and x (ash lowtag-mask -1) temp)
+    (inst sra x (1- n-lowtag-bits) y)
     (inst beq temp done)
 
     (loadw header x 0 other-pointer-lowtag)
@@ -186,6 +186,7 @@
 
     (loadw header x (1+ bignum-digits-offset) other-pointer-lowtag)
     (inst sll header 32 header)
+    ;; FIXME
     (inst mskll y 4 y)
     (inst bis header y y)
     (inst br zero-tn done)
@@ -206,7 +207,7 @@
   (:result-types tagged-num)
   (:note "fixnum tagging")
   (:generator 1
-    (inst sll x 2 y)))
+    (inst sll x (1- n-lowtag-bits) y)))
 ;;;
 (define-move-vop move-from-word/fixnum :move
   (signed-reg unsigned-reg) (any-reg descriptor-reg))
@@ -221,12 +222,13 @@
   (:note "signed word to integer coercion")
   (:generator 18
     (move arg x)
-    (inst sra x 29 temp)
-    (inst sll x 2 y)
+    ;; FIXME: bare constants
+    (inst sra x 60 temp)
+    (inst sll x 3 y)
     (inst beq temp done)
     (inst not temp temp)
     (inst beq temp done)
-
+    ;; FIXME: bignum stuff
     (inst li 2 header)
     (inst sra x 31 temp)
     (inst cmoveq temp 1 header)
@@ -258,10 +260,10 @@
   (:note "unsigned word to integer coercion")
   (:generator 20
     (move arg x)
-    (inst srl x 29 temp)
-    (inst sll x 2 y)
+    (inst srl x 60 temp)
+    (inst sll x 3 y)
     (inst beq temp done)
-      
+    ;; FIXME: bignum stuff
     (inst li 3 temp)
     (inst cmovge x 2 temp)
     (inst srl x 31 temp1)

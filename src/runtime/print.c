@@ -51,11 +51,11 @@ static void print_obj(char *prefix, lispobj obj);
 char *lowtag_Names[] = {
     "even fixnum",
     "instance pointer",
-    "other immediate [0]",
+    "other immediate [0]", NULL, NULL, NULL, "other immediate [1]",
     "list pointer",
     "odd fixnum",
     "function pointer",
-    "other immediate [1]",
+    "other immediate [2]", NULL, NULL, NULL, "other immediate [3]",
     "other pointer"
 };
 
@@ -447,7 +447,6 @@ static void print_otherptr(lispobj obj)
 	length = (*ptr) >> 3;
 	count = header>>8;
 	type = widetag_of(header);
-
         print_obj("header: ", header);
         if (lowtag_of(header) != OTHER_IMMEDIATE_0_LOWTAG &&
 	    lowtag_of(header) != OTHER_IMMEDIATE_1_LOWTAG) {
@@ -649,11 +648,11 @@ static void print_otherptr(lispobj obj)
 static void print_obj(char *prefix, lispobj obj)
 {
     static void (*verbose_fns[])(lispobj obj)
-	= {print_fixnum, print_struct, print_otherimm, print_list,
-	   print_fixnum, print_otherptr, print_otherimm, print_otherptr};
+	= {print_fixnum, print_struct, print_otherimm, NULL, NULL, NULL, print_otherimm, print_list,
+	   print_fixnum, print_otherptr, print_otherimm, NULL, NULL, NULL, print_otherimm, print_otherptr};
     static void (*brief_fns[])(lispobj obj)
-	= {brief_fixnum, brief_struct, brief_otherimm, brief_list,
-	   brief_fixnum, brief_otherptr, brief_otherimm, brief_otherptr};
+	= {brief_fixnum, brief_struct, brief_otherimm, NULL, NULL, NULL, brief_otherimm, brief_list,
+	   brief_fixnum, brief_otherptr, brief_otherimm, NULL, NULL, NULL, brief_otherimm, brief_otherptr};
     int type = lowtag_of(obj);
     struct var *var = lookup_by_obj(obj);
     char buffer[256];
