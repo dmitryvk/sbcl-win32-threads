@@ -101,9 +101,9 @@
 (defmacro lisp-return (return-pc lip &key (offset 0) (frob-code t))
   "Return to RETURN-PC.  LIP is an interior-reg temporary."
   `(progn
-     (inst lda ,lip  
-	   (- (* (1+ ,offset) n-word-bytes) other-pointer-lowtag)
-	    ,return-pc)
+    (inst lda ,lip  
+	  (- (+ n-word-bytes (* 4 ,offset)) other-pointer-lowtag)
+	  ,return-pc)
      ,@(when frob-code
 	 `((move ,return-pc code-tn)))
      (inst ret zero-tn ,lip 1)))

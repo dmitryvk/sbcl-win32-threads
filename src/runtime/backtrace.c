@@ -159,7 +159,7 @@ previous_info(struct call_info *info)
 
     if (info->lra == NIL) {
         /* We were interrupted. Find the correct signal context. */
-        free = SymbolValue(FREE_INTERRUPT_CONTEXT_INDEX,thread)>>2;
+        free = fixnum_value(SymbolValue(FREE_INTERRUPT_CONTEXT_INDEX,thread));
         while (free-- > 0) {
 	    os_context_t *context = 
 		thread->interrupt_contexts[free];

@@ -195,20 +195,12 @@ static void newline(char *label)
 
 static void brief_fixnum(lispobj obj)
 {
-#ifndef alpha
-    printf("%ld", ((long)obj)>>2);
-#else
-    printf("%d", ((s32)obj)>>2);
-#endif
+    printf("%ld", fixnum_value(((long)obj)));
 }
 
 static void print_fixnum(lispobj obj)
 {
-#ifndef alpha
-    printf(": %ld", ((long)obj)>>2);
-#else
-    printf(": %d", ((s32)obj)>>2);
-#endif
+    printf(": %ld", fixnum_value((long)obj));
 }
 
 static void brief_otherimm(lispobj obj)
@@ -253,7 +245,7 @@ static void brief_otherimm(lispobj obj)
             break;
 
         default:
-	    idx = type >> 2;
+	    idx = type >> 3;
 	    if (idx < (sizeof(lowtag_Names) / sizeof(char *)))
 		    printf("%s", lowtag_Names[idx]);
 	    else
@@ -267,7 +259,7 @@ static void print_otherimm(lispobj obj)
     int type, idx;
 
     type = widetag_of(obj);
-    idx = type >> 2;
+    idx = type >> 3;
 
     if (idx < (sizeof(lowtag_Names) / sizeof(char *)))
 	    printf(", %s", lowtag_Names[idx]);
@@ -452,7 +444,7 @@ static void print_otherptr(lispobj obj)
 	}
 
 	header = *ptr++;
-	length = (*ptr) >> 2;
+	length = (*ptr) >> 3;
 	count = header>>8;
 	type = widetag_of(header);
 
