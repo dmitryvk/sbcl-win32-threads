@@ -11,7 +11,7 @@
 
 (eval-when  (:compile-toplevel :load-toplevel :execute)
 
-(def!constant n-word-bits 32
+(def!constant n-word-bits 64
   #!+sb-doc
   "Number of bits per word where a word holds one lisp descriptor.")
 

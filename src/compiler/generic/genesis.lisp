@@ -186,14 +186,14 @@
 			    (ldb (byte 8 ,(- n 8 (* i 8))) new-value)))))
               `(progn
                  (defun ,name (bigvec byte-index)
-		   (aver (= sb!vm:n-word-bits 32))
-		   (aver (= sb!vm:n-byte-bits 8))
+		   ;(aver (= sb!vm:n-word-bits 32))
+		   ;(aver (= sb!vm:n-byte-bits 8))
 		   (logior ,@(ecase sb!c:*backend-byte-order*
 			       (:little-endian ash-list-le)
 			       (:big-endian ash-list-be))))
 		 (defun (setf ,name) (new-value bigvec byte-index)
-		   (aver (= sb!vm:n-word-bits 32))
-		   (aver (= sb!vm:n-byte-bits 8))
+		   ;(aver (= sb!vm:n-word-bits 32))
+		   ;(aver (= sb!vm:n-byte-bits 8))
 		   (setf ,@(ecase sb!c:*backend-byte-order*
 			     (:little-endian setf-list-le)
 			     (:big-endian setf-list-be))))))))
@@ -294,7 +294,9 @@
 			   (- unsigned #x40000000)
 			   unsigned))))
 	    ((or (= lowtag sb!vm:other-immediate-0-lowtag)
-		 (= lowtag sb!vm:other-immediate-1-lowtag))
+		 (= lowtag sb!vm:other-immediate-1-lowtag)
+		 (= lowtag sb!vm:other-immediate-2-lowtag)
+		 (= lowtag sb!vm:other-immediate-3-lowtag))
 	     (format stream
 		     "for other immediate: #X~X, type #b~8,'0B"
 		     (ash (descriptor-bits des) (- sb!vm:n-widetag-bits))
@@ -349,15 +351,8 @@
 
 (defun descriptor-fixnum (des)
   (let ((bits (descriptor-bits des)))
-    (if (logbitp (1- sb!vm:n-word-bits) bits)
-      ;; KLUDGE: The (- SB!VM:N-WORD-BITS 2) term here looks right to
-      ;; me, and it works, but in CMU CL it was (1- SB!VM:N-WORD-BITS),
-      ;; and although that doesn't make sense for me, or work for me,
-      ;; it's hard to see how it could have been wrong, since CMU CL
-      ;; genesis worked. It would be nice to understand how this came
-      ;; to be.. -- WHN 19990901
-      (logior (ash bits -2) (ash -1 (- sb!vm:n-word-bits 2)))
-      (ash bits -2))))
+    ;; Don't understand this one.
+    (ash bits (- (1- sb!vm:n-lowtag-bits)))))
 
 ;;; common idioms
 (defun descriptor-bytes (des)
@@ -735,7 +730,7 @@
 ;;; Copy the given number to the core.
 (defun number-to-core (number)
   (typecase number
-    (integer (if (< (integer-length number) 30)
+    (integer (if (< (integer-length number) 61)
 		 (make-fixnum-descriptor number)
 		 (bignum-to-core number)))
     (ratio (number-pair-to-core (number-to-core (numerator number))

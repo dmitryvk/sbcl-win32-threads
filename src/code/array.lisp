@@ -124,8 +124,11 @@
 	(values #.sb!vm:simple-array-signed-byte-8-widetag 8))
        ((signed-byte 16)
 	(values #.sb!vm:simple-array-signed-byte-16-widetag 16))
+       #!-alpha
        ((signed-byte 30)
 	(values #.sb!vm:simple-array-signed-byte-30-widetag 32))
+       ;; FIXME: add the larger specialized array types here,
+       ;; eventually
        ((signed-byte 32)
 	(values #.sb!vm:simple-array-signed-byte-32-widetag 32))
        (single-float (values #.sb!vm:simple-array-single-float-widetag 32))
@@ -322,6 +325,7 @@
       (unsigned-byte 32)
       (signed-byte 8)
       (signed-byte 16)
+      #!-alpha
       (signed-byte 30)
       (signed-byte 32)
       single-float
@@ -566,6 +570,7 @@
        (sb!vm:simple-array-unsigned-byte-32-widetag '(unsigned-byte 32))
        (sb!vm:simple-array-signed-byte-8-widetag '(signed-byte 8))
        (sb!vm:simple-array-signed-byte-16-widetag '(signed-byte 16))
+       #!-alpha
        (sb!vm:simple-array-signed-byte-30-widetag '(signed-byte 30))
        (sb!vm:simple-array-signed-byte-32-widetag '(signed-byte 32))
        (sb!vm:simple-array-single-float-widetag 'single-float)
@@ -897,6 +902,7 @@
 	((simple-array (unsigned-byte 32) (*)) 0)
 	((simple-array (signed-byte 8) (*)) 0)
 	((simple-array (signed-byte 16) (*)) 0)
+	#!-alpha
 	((simple-array (signed-byte 30) (*)) 0)
 	((simple-array (signed-byte 32) (*)) 0)
 	((simple-array single-float (*)) (coerce 0 'single-float))

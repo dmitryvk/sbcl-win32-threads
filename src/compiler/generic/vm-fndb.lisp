@@ -117,9 +117,9 @@
   (complex long-float)
   (unsafe))
 
-(defknown %raw-bits (t fixnum) (unsigned-byte 32)
+(defknown %raw-bits (t fixnum) (unsigned-byte 64)
   (foldable flushable))
-(defknown (%set-raw-bits) (t fixnum (unsigned-byte 32)) (unsigned-byte 32)
+(defknown (%set-raw-bits) (t fixnum (unsigned-byte 64)) (unsigned-byte 64)
   (unsafe))
 
 
@@ -153,8 +153,8 @@
 (defknown %set-stack-ref (system-area-pointer index t) t (unsafe))
 (defknown lra-code-header (t) t (movable flushable))
 (defknown fun-code-header (t) t (movable flushable))
-(defknown make-lisp-obj ((unsigned-byte 32)) t (movable flushable))
-(defknown get-lisp-obj-address (t) (unsigned-byte 32) (movable flushable))
+(defknown make-lisp-obj ((unsigned-byte 64)) t (movable flushable))
+(defknown get-lisp-obj-address (t) (unsigned-byte 64) (movable flushable))
 (defknown fun-word-offset (function) index (movable flushable))
 
 ;;;; 32-bit logical operations

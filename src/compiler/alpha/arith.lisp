@@ -147,12 +147,12 @@
 	     (:generator ,untagged-cost
 			 (inst ,op x y r)))))))
 
-(define-binop + 1 5 addq (unsigned-byte 6) (unsigned-byte 8))
-(define-binop - 1 5 subq (unsigned-byte 6) (unsigned-byte 8))
-(define-binop logior 1 3 bis (unsigned-byte 6) (unsigned-byte 8))
-(define-binop lognor 1 3 ornot (unsigned-byte 6) (unsigned-byte 8))
-(define-binop logand 1 3 and (unsigned-byte 6) (unsigned-byte 8))
-(define-binop logxor 1 3 xor (unsigned-byte 6) (unsigned-byte 8))
+(define-binop + 1 5 addq (unsigned-byte 5) (unsigned-byte 8))
+(define-binop - 1 5 subq (unsigned-byte 5) (unsigned-byte 8))
+(define-binop logior 1 3 bis (unsigned-byte 5) (unsigned-byte 8))
+(define-binop lognor 1 3 ornot (unsigned-byte 5) (unsigned-byte 8))
+(define-binop logand 1 3 and (unsigned-byte 5) (unsigned-byte 8))
+(define-binop logxor 1 3 xor (unsigned-byte 5) (unsigned-byte 8))
 
 ;;;; shifting
 
@@ -302,7 +302,8 @@
 
 (define-vop (fast-conditional-c/fixnum fast-conditional/fixnum)
   (:args (x :scs (any-reg)))
-  (:arg-types tagged-num (:constant (unsigned-byte-with-a-bite-out 6 4)))
+  ;; FIXME: Think harder about how big the bite should be.
+  (:arg-types tagged-num (:constant (unsigned-byte-with-a-bite-out 5 4)))
   (:info target not-p y))
 
 (define-vop (fast-conditional/signed fast-conditional)
@@ -426,7 +427,7 @@
 
 (define-vop (fast-eql-c/fixnum fast-conditional/fixnum)
   (:args (x :scs (any-reg)))
-  (:arg-types tagged-num (:constant (signed-byte 6)))
+  (:arg-types tagged-num (:constant (signed-byte 5)))
   (:temporary (:scs (non-descriptor-reg)) temp)
   (:info target not-p y)
   (:translate eql)
@@ -442,7 +443,7 @@
 ;;;
 (define-vop (generic-eql-c/fixnum fast-eql-c/fixnum)
   (:args (x :scs (any-reg descriptor-reg)))
-  (:arg-types * (:constant (signed-byte 6)))
+  (:arg-types * (:constant (signed-byte 5)))
   (:variant-cost 6))
   
 

@@ -288,20 +288,21 @@
     ((integer 0 0)
      (sc-number-or-lose 'zero))
     (null
-     (sc-number-or-lose 'null ))
-    ((or fixnum system-area-pointer character)
-     (sc-number-or-lose 'immediate ))
+     (sc-number-or-lose 'null))
+    ((or (integer #.sb!xc:most-negative-fixnum #.sb!xc:most-positive-fixnum)
+	 system-area-pointer character)
+     (sc-number-or-lose 'immediate))
     (symbol
      (if (static-symbol-p value)
-	 (sc-number-or-lose 'immediate )
+	 (sc-number-or-lose 'immediate)
 	 nil))
     (single-float
      (if (eql value 0f0)
-	 (sc-number-or-lose 'fp-single-zero )
+	 (sc-number-or-lose 'fp-single-zero)
 	 nil))
     (double-float
      (if (eql value 0d0)
-	 (sc-number-or-lose 'fp-double-zero )
+	 (sc-number-or-lose 'fp-double-zero)
 	 nil))))
 
 ;;;; function call parameters

@@ -41,7 +41,7 @@
     (inst blbs object done)
 
     ;; Pick off fixnums.
-    (inst and object 3 result)
+    (inst and object (ash lowtag-mask -1) result)
     (inst beq result done)
 
     ;; Must be an other immediate.
@@ -129,15 +129,20 @@
     (storew t1 x 0 other-pointer-lowtag)
     (move x res)))
 
+;;; FIXME: Turn this VOP into MAKE-POSITIVE-FIXNUM
 (define-vop (make-fixnum)
   (:args (ptr :scs (any-reg descriptor-reg)))
   (:results (res :scs (any-reg descriptor-reg)))
   (:generator 1
-    ;;
     ;; Some code (the hash table code) depends on this returning a
     ;; positive number so make sure it does.
-    (inst sll ptr 35 res)
-    (inst srl res 33 res)))
+    ;;
+    ;; A word of explanation: we make a net shift by 3 to clear the
+    ;; three lowest bits -- but we wish to return a positive fixnum,
+    ;; so shift by four and then back by one to ensure that the top
+    ;; bit is 0 too.
+    (inst sll ptr 4 res)
+    (inst srl res 1 res)))
 
 (define-vop (make-other-immediate-type)
   (:args (val :scs (any-reg descriptor-reg))

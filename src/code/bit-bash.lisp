@@ -14,10 +14,10 @@
 ;;;; constants and types
 
 ;;; the number of bits to process at a time
-(defconstant unit-bits n-word-bits)
+(defconstant unit-bits 32) ; FIXME
 
 ;;; the maximum number of bits that can be dealt with in a single call
-(defconstant max-bits (ash most-positive-fixnum -2))
+(defconstant max-bits (ash (1- (ash 1 29)) -2)) ; FIXME
 
 (deftype unit ()
   `(unsigned-byte ,unit-bits))
