@@ -541,18 +541,18 @@ default-value-8
   (:ignore val-locs vals)
   (:vop-var vop)
   (:generator 6
-    (trace-table-entry trace-table-fun-epilogue)
-    (maybe-load-stack-tn ocfp-temp ocfp)
-    (maybe-load-stack-tn return-pc-temp return-pc)
-    (move cfp-tn csp-tn)
-    (let ((cur-nfp (current-nfp-tn vop)))
+      (trace-table-entry trace-table-fun-epilogue)
+      (maybe-load-stack-tn ocfp-temp ocfp)
+      (maybe-load-stack-tn return-pc-temp return-pc)
+      (move cfp-tn csp-tn)
+      (let ((cur-nfp (current-nfp-tn vop)))
       (when cur-nfp
 	(inst addq cur-nfp (bytes-needed-for-non-descriptor-stack-frame)
 	      nsp-tn)))
-    (inst subq return-pc-temp (- other-pointer-lowtag n-word-bytes) lip)
-    (move ocfp-temp cfp-tn)
-    (inst ret zero-tn lip 1)
-    (trace-table-entry trace-table-normal)))
+      (inst subq return-pc-temp (- other-pointer-lowtag n-word-bytes) lip)
+      (move ocfp-temp cfp-tn)
+      (inst ret zero-tn lip 1)
+      (trace-table-entry trace-table-normal)))
 
 ;;;; full call:
 ;;;;

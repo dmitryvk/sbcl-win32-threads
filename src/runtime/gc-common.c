@@ -715,7 +715,7 @@ scav_fdefn(lispobj *where, lispobj object)
 	/* gc.c has more casts here, which may be relevant or alternatively
 	   may be compiler warning defeaters.  try 
         fdefn->raw_addr =
-	    (u32)  ((char *) LOW_WORD(fdefn->fun)) + FUN_RAW_ADDR_OFFSET;
+	((char *) LOW_WORD(fdefn->fun)) + FUN_RAW_ADDR_OFFSET;
 	*/
 	return sizeof(struct fdefn) / sizeof(lispobj);
     } else {

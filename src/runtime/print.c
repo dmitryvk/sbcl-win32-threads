@@ -439,15 +439,9 @@ static void print_otherptr(lispobj obj)
     if (!is_valid_lisp_addr((os_vm_address_t)obj)) {
 	printf("(invalid address)");
     } else {
-#ifndef alpha
         lispobj *ptr;
         unsigned long header;
         unsigned long length;
-#else
-        u32 *ptr;
-        u32 header;
-        u32 length;
-#endif
         int count, type, index;
         char *cptr, buffer[16];
 

@@ -34,28 +34,16 @@
  * better not change. */
 
 struct call_frame {
-#ifndef alpha
 	struct call_frame *old_cont;
-#else
-        u32 old_cont;
-#endif
 	lispobj saved_lra;
         lispobj code;
 	lispobj other_state[5];
 };
 
 struct call_info {
-#ifndef alpha
     struct call_frame *frame;
-#else
-    u32 frame;
-#endif
     int interrupted;
-#ifndef alpha
     struct code *code;
-#else
-    u32 code;
-#endif
     lispobj lra;
     int pc; /* Note: this is the trace file offset, not the actual pc. */
 };

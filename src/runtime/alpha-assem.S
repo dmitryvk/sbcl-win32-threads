@@ -49,24 +49,24 @@ call_into_lisp:
 	.frame	sp,framesize,ra
 
 	/* Clear descriptor regs */
-	ldil	reg_CODE,0
-	ldil	reg_FDEFN,0
+	ldiq	reg_CODE,0
+	ldiq	reg_FDEFN,0
 	mov	a0,reg_LEXENV
-	sll	a2,2,reg_NARGS
-	ldil	reg_OCFP,0
-	ldil	reg_LRA,0
-	ldil	reg_L0,0
-	ldil	reg_L1,0
+	sll	a2,3,reg_NARGS
+	ldiq	reg_OCFP,0
+	ldiq	reg_LRA,0
+	ldiq	reg_L0,0
+	ldiq	reg_L1,0
 	
 
 	/* Establish NIL. */
-	ldil	reg_NULL,NIL
+	ldiq	reg_NULL,NIL
 
 	/* The CMUCL comment here is "Start pseudo-atomic.", but */
 	/* there's no obvious code that would have that effect  */
 
 	/* No longer in foreign call. */
-	stl	zero,foreign_function_call_active
+	stq	zero,foreign_function_call_active
 
 	/* Load lisp state. */
 	ldq	reg_ALLOC,dynamic_space_free_pointer
@@ -76,25 +76,25 @@ call_into_lisp:
 	mov	a1,reg_CFP
 
 	.set	noat
-	ldil	reg_L2,0
+	ldiq	reg_L2,0
 	.set at
 
 	/* End of pseudo-atomic. */
 
 	/* Establish lisp arguments. */
-	ldl	reg_A0,0(reg_CFP)
-	ldl	reg_A1,4(reg_CFP)
-	ldl	reg_A2,8(reg_CFP)
-	ldl	reg_A3,12(reg_CFP)
-	ldl	reg_A4,16(reg_CFP)
-	ldl	reg_A5,20(reg_CFP)
+	ldq	reg_A0,0(reg_CFP)
+	ldq	reg_A1,8(reg_CFP)
+	ldq	reg_A2,16(reg_CFP)
+	ldq	reg_A3,24(reg_CFP)
+	ldq	reg_A4,32(reg_CFP)
+	ldq	reg_A5,40(reg_CFP)
 
 	/* This call will 'return' into the LRA page below */
 	lda	reg_LRA,call_into_lisp_LRA_page+OTHER_POINTER_LOWTAG
 
 	/* Indirect the closure */
-	ldl	reg_CODE, CLOSURE_FUN_OFFSET(reg_LEXENV)
-	addl	reg_CODE,6*4-FUN_POINTER_LOWTAG, reg_LIP
+	ldq	reg_CODE, CLOSURE_FUN_OFFSET(reg_LEXENV)
+	addq	reg_CODE,6*8-FUN_POINTER_LOWTAG, reg_LIP
 
 	/* And into lisp we go. */
 	jsr	reg_ZERO,(reg_LIP)
@@ -126,7 +126,7 @@ call_into_lisp_LRA:
 	stq	reg_CFP,current_control_frame_pointer
 	
 	/* Back in C land.  [CSP is just a handy non-zero value.] */
-	stl	reg_CSP,foreign_function_call_active
+	stq	reg_CSP,foreign_function_call_active
 	
 	/* Turn off pseudo-atomic and check for traps. */
 	
@@ -162,13 +162,13 @@ call_into_c:
 	.frame	sp,12,ra
 	mov	reg_CFP, reg_OCFP
 	mov	reg_CSP, reg_CFP
-	addq	reg_CFP, 32, reg_CSP
-	stl	reg_OCFP, 0(reg_CFP)
+	addq	reg_CFP, 64, reg_CSP
+	stq	reg_OCFP, 0(reg_CFP)
 	subl	reg_LIP, reg_CODE, reg_L1
 	addl	reg_L1, OTHER_POINTER_LOWTAG, reg_L1
-	stl	reg_L1, 4(reg_CFP)
-	stl	reg_CODE, 8(reg_CFP)
-	stl	reg_NULL, 12(reg_CFP)
+	stq	reg_L1, 8(reg_CFP)
+	stq	reg_CODE, 16(reg_CFP)
+	stq	reg_NULL, 24(reg_CFP)
 
 	/* Set the pseudo-atomic flag. */
 	addq	reg_ALLOC,1,reg_ALLOC
@@ -187,11 +187,11 @@ call_into_c:
 	stq	reg_CFP, current_control_frame_pointer
 
 	/* Mark us as in C land. */
-	stl	reg_CSP, foreign_function_call_active
+	stq	reg_CSP, foreign_function_call_active
 
 	/* Were we interrupted? */
 	subq	reg_ALLOC,1,reg_ALLOC
-	stl	reg_ZERO,0(reg_ALLOC)
+	stq	reg_ZERO,0(reg_ALLOC)
 
 	/* Into C land we go. */
 
@@ -220,7 +220,7 @@ call_into_c:
 	lda	reg_ALLOC,1(reg_ZERO)
 
 	/* Mark us at in Lisp land. */
-	stl	reg_ZERO, foreign_function_call_active
+	stq	reg_ZERO, foreign_function_call_active
 
 	/* Restore ALLOC, preserving pseudo-atomic-atomic */
 	ldq	reg_NL0,dynamic_space_free_pointer
@@ -228,14 +228,14 @@ call_into_c:
 	
 	/* Check for interrupt */
 	subq	reg_ALLOC,1,reg_ALLOC
-	stl	reg_ZERO,0(reg_ALLOC)
+	stq	reg_ZERO,0(reg_ALLOC)
 
-	ldl	reg_NULL, 12(reg_CFP)
+	ldq	reg_NULL, 24(reg_CFP)
 
 	/* Restore LRA & CODE (they may have been GC'ed) */
 	/* can you see anything here which touches LRA?  I can't ...*/
-	ldl	reg_CODE, 8(reg_CFP)
-	ldl	reg_NL0, 4(reg_CFP)
+	ldq	reg_CODE, 16(reg_CFP)
+	ldq	reg_NL0, 8(reg_CFP)
 	subq	reg_NL0, OTHER_POINTER_LOWTAG, reg_NL0
 	addq	reg_CODE, reg_NL0, reg_NL0
 
@@ -287,9 +287,9 @@ undefined_tramp= call_into_lisp_LRA_page+0x140
         .ent    closure_tramp_offset
 closure_tramp= call_into_lisp_LRA_page+0x150
 closure_tramp_offset:
-        ldl     reg_LEXENV, FDEFN_FUN_OFFSET(reg_FDEFN)
-        ldl     reg_L0, CLOSURE_FUN_OFFSET(reg_LEXENV)
-        addl    reg_L0, SIMPLE_FUN_CODE_OFFSET, reg_LIP
+        ldq     reg_LEXENV, FDEFN_FUN_OFFSET(reg_FDEFN)
+        ldq     reg_L0, CLOSURE_FUN_OFFSET(reg_LEXENV)
+        addq    reg_L0, SIMPLE_FUN_CODE_OFFSET, reg_LIP
         jmp     reg_ZERO,(reg_LIP)
         .end    closure_tramp_offset
 
@@ -311,8 +311,8 @@ fun_end_breakpoint_guts:
 	br	zero, fun_end_breakpoint_trap
 	nop
 	mov	reg_CSP, reg_OCFP
-	addl	reg_CSP, 4, reg_CSP
-	addl	zero, 4, reg_NARGS
+	addq	reg_CSP, 8, reg_CSP
+	addq	zero, 8, reg_NARGS
 	mov	reg_NULL, reg_A1
 	mov	reg_NULL, reg_A2
 	mov	reg_NULL, reg_A3

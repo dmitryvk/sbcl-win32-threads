@@ -527,7 +527,7 @@ scav_fdefn(lispobj *where, lispobj object)
 	== (char *)((unsigned long)(fdefn->raw_addr))) {
         scavenge(where + 1, sizeof(struct fdefn)/sizeof(lispobj) - 1);
         fdefn->raw_addr =
-	    (u32)  ((char *) LOW_WORD(fdefn->fun)) + FUN_RAW_ADDR_OFFSET;
+	    ((char *) LOW_WORD(fdefn->fun)) + FUN_RAW_ADDR_OFFSET;
         return sizeof(struct fdefn) / sizeof(lispobj);
     }
     else

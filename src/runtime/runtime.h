@@ -36,7 +36,7 @@
  * problem.. */
 #define QSHOW_SIGNALS 0
 
-#define N_LOWTAG_BITS 3
+#define N_LOWTAG_BITS 4
 #define LOWTAG_MASK ((1<<N_LOWTAG_BITS)-1)
 #define N_WIDETAG_BITS 8
 #define WIDETAG_MASK ((1<<N_WIDETAG_BITS)-1)
@@ -62,7 +62,7 @@ typedef signed int s32;
 /* this is an integral type the same length as a machine pointer */
 typedef unsigned long pointer_sized_uint_t ;
 
-typedef u32 lispobj;
+typedef unsigned long lispobj;
 
 static inline int
 lowtag_of(lispobj obj) {
@@ -96,8 +96,8 @@ native_pointer(lispobj obj)
 
 /* FIXME: There seems to be no reason that make_fixnum and fixnum_value
  * can't be implemented as (possibly inline) functions. */
-#define make_fixnum(n) ((lispobj)((n)<<2))
-#define fixnum_value(n) (((long)n)>>2)
+#define make_fixnum(n) ((lispobj)((n)<<3))
+#define fixnum_value(n) (((long)n)>>3)
 
 /* Too bad ANSI C doesn't define "bool" as C++ does.. */
 typedef int boolean;
@@ -105,8 +105,8 @@ typedef int boolean;
 /* FIXME: There seems to be no reason that SymbolFunction can't be
  * defined as (possibly inline) functions instead of macros. */
 
-static inline lispobj SymbolValue(u32 sym, void *thread);
-static inline void SetSymbolValue(u32 sym, lispobj val, void *thread);
+static inline lispobj SymbolValue(lispobj sym, void *thread);
+static inline void SetSymbolValue(lispobj sym, lispobj val, void *thread);
 /* This only works for static symbols. */
 /* FIXME: should be called StaticSymbolFunction, right? */
 #define SymbolFunction(sym) \

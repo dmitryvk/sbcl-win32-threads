@@ -199,7 +199,9 @@
 			     (:big-endian setf-list-be))))))))
   (make-bvref-n 8)
   (make-bvref-n 16)
-  (make-bvref-n 32))
+  (make-bvref-n 32)
+  (make-bvref-n 64))
+
 
 ;;;; representation of spaces in the core
 
@@ -351,8 +353,10 @@
 
 (defun descriptor-fixnum (des)
   (let ((bits (descriptor-bits des)))
-    ;; Don't understand this one.
-    (ash bits (- (1- sb!vm:n-lowtag-bits)))))
+    (if (logbitp (1- sb!vm:n-word-bits) bits)
+	(logior (ash bits -3) (ash -1 (- sb!vm:n-word-bits 3)))
+	(ash bits -3))))
+
 
 ;;; common idioms
 (defun descriptor-bytes (des)
@@ -485,7 +489,7 @@
 	 (bytes (gspace-bytes gspace))
 	 (byte-index (ash (+ index (descriptor-word-offset address))
 			  sb!vm:word-shift))
-	 (value (bvref-32 bytes byte-index)))
+	 (value (bvref-64 bytes byte-index)))
     (make-random-descriptor value)))
 
 (declaim (ftype (function (descriptor) descriptor) read-memory))
@@ -528,7 +532,7 @@
     (let* ((bytes (gspace-bytes (descriptor-intuit-gspace address)))
 	   (byte-index (ash (+ index (descriptor-word-offset address))
 			       sb!vm:word-shift)))
-      (setf (bvref-32 bytes byte-index)
+      (setf (bvref-64 bytes byte-index)
 	    (descriptor-bits value)))))
 
 (declaim (ftype (function (descriptor descriptor)) write-memory))
@@ -2941,11 +2945,11 @@ initially undefined function references:~2%")
 (defun write-word (num)
   (ecase sb!c:*backend-byte-order*
     (:little-endian
-     (dotimes (i 4)
+     (dotimes (i 8)
        (write-byte (ldb (byte 8 (* i 8)) num) *core-file*)))
     (:big-endian
-     (dotimes (i 4)
-       (write-byte (ldb (byte 8 (* (- 3 i) 8)) num) *core-file*))))
+     (dotimes (i 8)
+       (write-byte (ldb (byte 8 (* (- 7 i) 8)) num) *core-file*))))
   num)
 
 (defun advance-to-page ()
