@@ -76,10 +76,10 @@
   (:results (result :scs (unsigned-reg)))
   (:result-types positive-fixnum)
   (:generator 6
-    (inst ldl temp (- fun-pointer-lowtag) function)
+    (inst ldq temp (- fun-pointer-lowtag) function)
     (inst and temp #xff temp)
     (inst bis type temp temp)
-    (inst stl temp (- fun-pointer-lowtag) function)
+    (inst stq temp (- fun-pointer-lowtag) function)
     (move type result)))
 
 
@@ -246,6 +246,6 @@
     (let ((offset
 	   (- (* (+ index vector-data-offset) n-word-bytes)
 	      other-pointer-lowtag)))
-      (inst ldl count offset count-vector)
+      (inst ldq count offset count-vector)
       (inst addq count 1 count)
-      (inst stl count offset count-vector))))
+      (inst stq count offset count-vector))))

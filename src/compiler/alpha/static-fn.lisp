@@ -77,7 +77,7 @@
 		 (cur-nfp (current-nfp-tn vop)))
 	     ,@(moves (arg-names) (temp-names))
 	     (inst li (fixnumize ,num-args) nargs)
-	     (inst ldl entry-point (static-fun-offset symbol) null-tn)
+	     (inst ldq entry-point (static-fun-offset symbol) null-tn)
 	     (when cur-nfp
 	       (store-stack-tn nfp-save cur-nfp))
 	     (inst move cfp-tn ocfp)

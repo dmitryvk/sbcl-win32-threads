@@ -197,7 +197,7 @@
                                 (inst srl index ,bit-shift temp)
                                 (inst sll temp 2 temp)
                                 (inst addq object temp lip)
-                                (inst ldl old
+                                (inst ldq old
                                       (- (* vector-data-offset n-word-bytes)
                                          other-pointer-lowtag)
                                       lip)

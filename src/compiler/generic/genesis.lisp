@@ -2968,10 +2968,11 @@ initially undefined function references:~2%")
     (file-position *core-file*
 		   (* sb!c:*backend-page-size* (1+ *data-page*)))
     (format t
-	    "writing ~S byte~:P [~S page~:P] from ~S~%"
+	    "writing ~S byte~:P [~S page~:P] from ~S (start 0x~X)~%"
 	    total-bytes
 	    pages
-	    gspace)
+	    gspace
+	    (gspace-byte-address gspace))
     (force-output)
 
     ;; Note: It is assumed that the GSPACE allocation routines always

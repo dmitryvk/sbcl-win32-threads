@@ -539,10 +539,13 @@
    (emit-byte segment byte)))
 
 (defun emit-header-data (segment type)
+  ;; this version hardcoded for 8 byte words: change emit-qword to
+  ;; something else for other lengths
+  (aver (= n-word-bytes 8))		
   (emit-back-patch
-   segment 4
+   segment n-word-bytes
    (lambda (segment posn)
-     (emit-lword segment
+     (emit-qword segment
 		 (logior type
 			 (ash (+ posn (component-header-length))
 			      (- n-widetag-bits word-shift)))))))

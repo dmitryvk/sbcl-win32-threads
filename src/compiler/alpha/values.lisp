@@ -112,7 +112,7 @@
     (inst move csp-tn dst)
     (inst addq csp-tn count csp-tn)
     LOOP
-    (inst ldl temp 0 src)
+    (inst ldq temp 0 src)
     (inst addq src 4 src)
     (inst addq dst 4 dst)
     (inst stl temp -4 dst)

@@ -498,7 +498,7 @@
                           (let ((stack-tn
                                  (sc-case x
                                           (signed-reg
-                                           (inst stl x
+                                           (inst stq x
                                                  (* (tn-offset temp)
 						    n-word-bytes)
                                                  (current-nfp-tn vop))
@@ -613,7 +613,7 @@
 		(current-nfp-tn vop)))
 	 (single-stack
 	  (unless (location= bits res)
-	    (inst ldl temp
+	    (inst ldq temp
 		  (* (tn-offset bits) n-word-bytes)
 		  (current-nfp-tn vop))
 	    (inst stl temp
@@ -666,11 +666,11 @@
 	  (inst sts float
 		(* (tn-offset stack-temp) n-word-bytes)
 		(current-nfp-tn vop))
-	  (inst ldl bits
+	  (inst ldq bits
 		(* (tn-offset stack-temp) n-word-bytes)
 		(current-nfp-tn vop)))
 	 (single-stack
-	  (inst ldl bits
+	  (inst ldq bits
 		(* (tn-offset float) n-word-bytes)
 		(current-nfp-tn vop)))
 	 (descriptor-reg
@@ -699,11 +699,11 @@
         (inst stt float
 	      (* (tn-offset stack-temp) n-word-bytes)
 	      (current-nfp-tn vop))
-        (inst ldl hi-bits
+        (inst ldq hi-bits
 	      (* (1+ (tn-offset stack-temp)) n-word-bytes)
 	      (current-nfp-tn vop)))
       (double-stack
-        (inst ldl hi-bits
+        (inst ldq hi-bits
 	      (* (1+ (tn-offset float)) n-word-bytes)
 	      (current-nfp-tn vop)))
       (descriptor-reg
@@ -726,11 +726,11 @@
         (inst stt float
 	      (* (tn-offset stack-temp) n-word-bytes)
 	      (current-nfp-tn vop))
-	(inst ldl lo-bits
+	(inst ldq lo-bits
 	      (* (tn-offset stack-temp) n-word-bytes)
 	      (current-nfp-tn vop)))
       (double-stack
-       (inst ldl lo-bits
+       (inst ldq lo-bits
 	     (* (tn-offset float) n-word-bytes)
 	     (current-nfp-tn vop)))
       (descriptor-reg

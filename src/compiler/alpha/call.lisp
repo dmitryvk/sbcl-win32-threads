@@ -136,8 +136,8 @@
     (emit-label start-lab)
     ;; Allocate function header.
     (inst simple-fun-header-word)
-    (dotimes (i (1- simple-fun-code-offset))
-      (inst lword 0))
+    (dotimes (i (* n-word-bytes (1- simple-fun-code-offset)))
+      (inst byte 0))
     ;; The start of the actual code.
     ;; Compute CODE from the address of this entry point.
     (let ((entry-point (gen-label)))
@@ -307,7 +307,7 @@ default-value-8
 		(defaults (cons default-lab tn))
 		
 		(inst blt temp default-lab)
-		(inst ldl move-temp (* i n-word-bytes) ocfp-tn)
+		(inst ldq move-temp (* i n-word-bytes) ocfp-tn)
 		(inst subq temp (fixnumize 1) temp)
 		(store-stack-tn tn move-temp)))
 	    
@@ -710,7 +710,7 @@ default-value-8
 			     `((inst subq csp-tn new-fp nargs-pass)
 			       ,@(let ((index -1))
 				   (mapcar (lambda (name)
-					     `(inst ldl ,name
+					     `(inst ldq ,name
 						    ,(ash (incf index)
 							  word-shift)
 						    new-fp))
@@ -722,7 +722,7 @@ default-value-8
 				 (any-reg
 				  (inst move ocfp ocfp-pass))
 				 (control-stack
-				  (inst ldl ocfp-pass
+				  (inst ldq ocfp-pass
 					(ash (tn-offset ocfp)
 					     word-shift)
 					cfp-tn))))
@@ -731,7 +731,7 @@ default-value-8
 				 (#!-gengc descriptor-reg #!+gengc any-reg
 				  (inst move return-pc return-pc-pass))
 				 (control-stack
-				  (inst ldl return-pc-pass
+				  (inst ldq return-pc-pass
 					(ash (tn-offset return-pc)
 					     word-shift)
 					 cfp-tn))))
@@ -760,31 +760,31 @@ default-value-8
 		 `((sc-case name
 		     (descriptor-reg (move name name-pass))
 		     (control-stack
-		      (inst ldl name-pass
+		      (inst ldq name-pass
 			    (ash (tn-offset name) word-shift) cfp-tn)
 		      (do-next-filler))
 		     (constant
-		      (inst ldl name-pass
+		      (inst ldq name-pass
 			    (- (ash (tn-offset name) word-shift)
 			       other-pointer-lowtag) code-tn)
 		      (do-next-filler)))
-		   (inst ldl entry-point
+		   (inst ldq entry-point
 			 (- (ash fdefn-raw-addr-slot word-shift)
 			    other-pointer-lowtag) name-pass)
 		   (do-next-filler))
 		 `((sc-case arg-fun
 		     (descriptor-reg (move arg-fun lexenv))
 		     (control-stack
-		      (inst ldl lexenv
+		      (inst ldq lexenv
 			    (ash (tn-offset arg-fun) word-shift) cfp-tn)
 		      (do-next-filler))
 		     (constant
-		      (inst ldl lexenv
+		      (inst ldq lexenv
 			    (- (ash (tn-offset arg-fun) word-shift)
 			       other-pointer-lowtag) code-tn)
 		      (do-next-filler)))
 		   #!-gengc
-		   (inst ldl function
+		   (inst ldq function
 			 (- (ash closure-fun-slot word-shift)
 			    fun-pointer-lowtag) lexenv)
 		   #!-gengc
@@ -794,7 +794,7 @@ default-value-8
 			 (- (ash simple-fun-code-offset word-shift)
 			    fun-pointer-lowtag) entry-point)
 		   #!+gengc
-		   (inst ldl entry-point
+		   (inst ldq entry-point
 			 (- (ash closure-entry-point-slot word-shift)
 			    fun-pointer-lowtag) lexenv)
 		   #!+gengc
@@ -994,7 +994,7 @@ default-value-8
       ;; Check for the single case.
       (inst li (fixnumize 1) a0)
       (inst cmpeq nvals-arg a0 temp)
-      (inst ldl a0 0 vals-arg)
+      (inst ldq a0 0 vals-arg)
       (inst beq temp not-single)
 
       ;; Return with one value.

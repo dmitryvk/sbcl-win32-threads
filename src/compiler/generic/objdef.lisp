@@ -51,7 +51,7 @@
 (define-primitive-object (bignum :lowtag other-pointer-lowtag
 				 :widetag bignum-widetag
 				 :alloc-trans sb!bignum::%allocate-bignum)
-  (digits :rest-p t :c-type #!-alpha "long" #!+alpha "u32"))
+  (digits :rest-p t :c-type #!-alpha32 "long" #!+alpha32 "u32"))
 
 (define-primitive-object (ratio :type ratio
 				:lowtag other-pointer-lowtag
@@ -133,7 +133,7 @@
 				 :widetag t)
   (length :ref-trans sb!c::vector-length
 	  :type index)
-  (data :rest-p t :c-type #!-alpha "unsigned long" #!+alpha "u32"))
+  (data :rest-p t :c-type #!-alpha32 "unsigned long" #!+alpha32 "u32"))
 
 (define-primitive-object (code :type code-component
 			       :lowtag other-pointer-lowtag
@@ -159,7 +159,7 @@
 				:widetag fdefn-widetag)
   (name :ref-trans fdefn-name)
   (fun :type (or function null) :ref-trans fdefn-fun)
-  (raw-addr :c-type #!-alpha "char *" #!+alpha "u32"))
+  (raw-addr :c-type #!-alpha32 "char *" #!+alpha32 "u32"))
 
 ;;; a simple function (as opposed to hairier things like closures
 ;;; which are also subtypes of Common Lisp's FUNCTION type)
@@ -259,13 +259,13 @@
 	 :ref-known (flushable)
 	 :init :arg))
 
-#!+alpha
+#!+alpha32
 (define-primitive-object (sap :lowtag other-pointer-lowtag
 			      :widetag sap-widetag)
   (padding)
   (pointer :c-type "char *" :length 2))
 
-#!-alpha
+#!-alpha32
 (define-primitive-object (sap :lowtag other-pointer-lowtag
 			      :widetag sap-widetag)
   (pointer :c-type "char *"))
@@ -280,7 +280,7 @@
   (broken :type (member t nil)
 	  :ref-trans sb!c::%weak-pointer-broken :ref-known (flushable)
 	  :init :null)
-  (next :c-type #!-alpha "struct weak_pointer *" #!+alpha "u32"))
+  (next :c-type #!-alpha32 "struct weak_pointer *" #!+alpha32 "u32"))
 
 ;;;; other non-heap data blocks
 
@@ -289,18 +289,18 @@
   symbol)
 
 (define-primitive-object (unwind-block)
-  (current-uwp :c-type #!-alpha "struct unwind_block *" #!+alpha "u32")
-  (current-cont :c-type #!-alpha "lispobj *" #!+alpha "u32")
+  (current-uwp :c-type #!-alpha32 "struct unwind_block *" #!+alpha32 "u32")
+  (current-cont :c-type #!-alpha32 "lispobj *" #!+alpha32 "u32")
   #!-x86 current-code
   entry-pc)
 
 (define-primitive-object (catch-block)
-  (current-uwp :c-type #!-alpha "struct unwind_block *" #!+alpha "u32")
-  (current-cont :c-type #!-alpha "lispobj *" #!+alpha "u32")
+  (current-uwp :c-type #!-alpha32 "struct unwind_block *" #!+alpha32 "u32")
+  (current-cont :c-type #!-alpha32 "lispobj *" #!+alpha32 "u32")
   #!-x86 current-code
   entry-pc
   tag
-  (previous-catch :c-type #!-alpha "struct catch_block *" #!+alpha "u32")
+  (previous-catch :c-type #!-alpha32 "struct catch_block *" #!+alpha32 "u32")
   size)
 
 ;;; (For an explanation of this, see the comments at the definition of
@@ -370,18 +370,18 @@
   ;; pass the address of initial-function into new_thread_trampoline 
   (unbound-marker :init :unbound) ; tls[0] = UNBOUND_MARKER_WIDETAG 
   (pid :c-type "pid_t")
-  (binding-stack-start :c-type "lispobj *" :length #!+alpha 2 #!-alpha 1)
-  (binding-stack-pointer :c-type "lispobj *" :length #!+alpha 2 #!-alpha 1)
-  (control-stack-start :c-type "lispobj *" :length #!+alpha 2 #!-alpha 1)
-  (control-stack-end :c-type "lispobj *" :length #!+alpha 2 #!-alpha 1)
-  (alien-stack-start :c-type "lispobj *" :length #!+alpha 2 #!-alpha 1)
-  (alien-stack-pointer :c-type "lispobj *" :length #!+alpha 2 #!-alpha 1)
+  (binding-stack-start :c-type "lispobj *" :length #!+alpha32 2 #!-alpha32 1)
+  (binding-stack-pointer :c-type "lispobj *" :length #!+alpha32 2 #!-alpha32 1)
+  (control-stack-start :c-type "lispobj *" :length #!+alpha32 2 #!-alpha32 1)
+  (control-stack-end :c-type "lispobj *" :length #!+alpha32 2 #!-alpha32 1)
+  (alien-stack-start :c-type "lispobj *" :length #!+alpha32 2 #!-alpha32 1)
+  (alien-stack-pointer :c-type "lispobj *" :length #!+alpha32 2 #!-alpha32 1)
   #!+gencgc (alloc-region :c-type "struct alloc_region" :length 5)
   (tls-cookie)				;  on x86, the LDT index 
-  (this :c-type "struct thread *" :length #!+alpha 2 #!-alpha 1)
-  (next :c-type "struct thread *" :length #!+alpha 2 #!-alpha 1)
+  (this :c-type "struct thread *" :length #!+alpha32 2 #!-alpha32 1)
+  (next :c-type "struct thread *" :length #!+alpha32 2 #!-alpha32 1)
   #!+x86 (pseudo-atomic-atomic)
   #!+x86 (pseudo-atomic-interrupted)
   (interrupt-data :c-type "struct interrupt_data *" 
-		  :length #!+alpha 2 #!-alpha 1)
+		  :length #!+alpha32 2 #!-alpha32 1)
   (interrupt-contexts :c-type "os_context_t *" :rest-p t))

@@ -38,7 +38,7 @@
   (:result-types *)
   (:generator 5
     (inst addq object offset sap)
-    (inst ldl result 0 sap)))
+    (inst ldq result 0 sap)))
 
 (define-vop (read-control-stack-c)
   (:translate stack-ref)
@@ -49,7 +49,7 @@
   (:results (result :scs (descriptor-reg)))
   (:result-types *)
   (:generator 4
-    (inst ldl result (* offset n-word-bytes) object)))
+    (inst ldq result (* offset n-word-bytes) object)))
 
 (define-vop (write-control-stack)
   (:translate %set-stack-ref)
@@ -63,7 +63,7 @@
   (:temporary (:scs (sap-reg) :from (:argument 1)) sap)
   (:generator 2
     (inst addq object offset sap)
-    (inst stl value 0 sap)
+    (inst stq value 0 sap)
     (move value result)))
 
 (define-vop (write-control-stack-c)
@@ -76,7 +76,7 @@
   (:results (result :scs (descriptor-reg)))
   (:result-types *)
   (:generator 1
-    (inst stl value (* offset n-word-bytes) sap)
+    (inst stq value (* offset n-word-bytes) sap)
     (move value result)))
 
 
