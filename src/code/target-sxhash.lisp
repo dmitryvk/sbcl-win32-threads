@@ -65,7 +65,7 @@
   (let* ((xy (+ (* x 3) y)))
     (declare (type (unsigned-byte 32) xy))
     (the (and fixnum unsigned-byte)
-	 (logand most-positive-fixnum
+	 (logand 536870911
 		 (logxor 441516657
 			 xy
 			 (the fixnum (ash xy -5)))))))

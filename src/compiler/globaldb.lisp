@@ -67,8 +67,9 @@
 	      (let ((rest (rest x)))
 		(and (symbolp (car rest))
 		     (null (cdr rest)))))
-	 (logxor (symbol-hash (second x))
-		 110680597))
+	 (logand 536870911
+		 (logxor (symbol-hash (second x))
+			 110680597)))
 	(t (sxhash x))))
 
 ;;; Given any non-negative integer, return a prime number >= to it.
