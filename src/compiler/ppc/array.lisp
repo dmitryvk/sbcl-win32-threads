@@ -26,15 +26,14 @@
   (:results (result :scs (descriptor-reg)))
   (:generator 0
     (pseudo-atomic (pa-flag)
-      (inst ori header alloc-tn other-pointer-lowtag)
-      (inst addi ndescr rank (* (1+ array-dimensions-offset) sb!vm:n-word-bytes))
+      (inst addi ndescr rank (* (1+ array-dimensions-offset) n-word-bytes))
       (inst clrrwi ndescr ndescr n-lowtag-bits)
-      (inst add alloc-tn alloc-tn ndescr)
-      (inst addi ndescr rank (fixnumize (1- sb!vm:array-dimensions-offset)))
-      (inst slwi ndescr ndescr sb!vm:n-widetag-bits)
+      (allocation header ndescr other-pointer-lowtag)
+      (inst addi ndescr rank (fixnumize (1- array-dimensions-offset)))
+      (inst slwi ndescr ndescr n-widetag-bits)
       (inst or ndescr ndescr type)
       (inst srwi ndescr ndescr 2)
-      (storew ndescr header 0 sb!vm:other-pointer-lowtag))
+      (storew ndescr header 0 other-pointer-lowtag))
     (move result header)))
 
 

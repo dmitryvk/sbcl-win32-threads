@@ -132,6 +132,45 @@
 
 
 ;;;; Storage allocation:
+
+;; Allocation macro
+;;
+;; This macro does the appropriate stuff to allocate space.
+;;
+;; The allocated space is stored in RESULT-TN with the lowtag LOWTAG
+;; applied.  The amount of space to be allocated is SIZE bytes (which
+;; must be a multiple of the lisp object size).
+;;
+;; If STACK-P is given, then allocation occurs on the control stack
+;; (for dynamic-extent).  In this case, you MUST also specify NODE, so
+;; that the appropriate compiler policy can be used, and TEMP-TN,
+;; which is needed for work-space.  TEMP-TN MUST be a non-descriptor
+;; reg.
+;;
+;; If generational GC is enabled, you MUST supply a value for TEMP-TN
+;; because a temp register is needed to do inline allocation.
+;; TEMP-TN, in this case, can be any register, since it holds a
+;; double-word aligned address (essentially a fixnum).
+(defmacro allocation (result-tn size lowtag &key stack-p node temp-tn)
+  ;; We assume we're in a pseudo-atomic so the pseudo-atomic bit is
+  ;; set.  If the lowtag also has a 1 bit in the same position, we're all
+  ;; set.  Otherwise, we need to zap out the lowtag from alloc-tn, and
+  ;; then or in the lowtag.
+  ;; Normal allocation to the heap.
+  `(let ((size ,size))
+     (if (logbitp (1- n-lowtag-bits) ,lowtag)
+	      (progn
+		(inst ori ,result-tn alloc-tn ,lowtag)
+		(if (numberp size)
+		    (inst addi alloc-tn alloc-tn size)
+		  (inst add alloc-tn alloc-tn size)))
+	      (progn
+		(inst clrrwi ,result-tn alloc-tn n-lowtag-bits)
+		(inst ori ,result-tn ,result-tn ,lowtag)
+		(if (numberp size)
+		    (inst addi alloc-tn alloc-tn size)
+		  (inst add alloc-tn alloc-tn size))))))
+
 (defmacro with-fixed-allocation ((result-tn flag-tn temp-tn type-code size)
 				 &body body)
   "Do stuff to allocate an other-pointer object of fixed Size with a single
@@ -141,10 +180,11 @@
   initializes the object."
   (once-only ((result-tn result-tn) (temp-tn temp-tn) (flag-tn flag-tn)
 	      (type-code type-code) (size size))
-    `(pseudo-atomic (,flag-tn :extra (pad-data-block ,size))
-       (inst ori ,result-tn alloc-tn other-pointer-lowtag)
-       (inst lr ,temp-tn (logior (ash (1- ,size) n-widetag-bits) ,type-code))
-       (storew ,temp-tn ,result-tn 0 other-pointer-lowtag)
+    `(pseudo-atomic (,flag-tn)
+       (allocation ,result-tn (pad-data-block ,size) other-pointer-lowtag)
+       (when ,type-code
+	 (inst lr ,temp-tn (logior (ash (1- ,size) n-widetag-bits) ,type-code))
+	 (storew ,temp-tn ,result-tn 0 other-pointer-lowtag))
        ,@body)))
 
 
@@ -247,3 +287,5 @@ garbage collection.  This is currently implemented by disabling GC"
   (declare (ignore objects))		;should we eval these for side-effect?
   `(without-gcing
     ,@body))
+
+

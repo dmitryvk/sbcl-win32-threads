@@ -35,9 +35,8 @@
 			temp)))))
 	     (let* ((cons-cells (if star (1- num) num))
 		    (alloc (* (pad-data-block cons-size) cons-cells)))
-	       (pseudo-atomic (pa-flag :extra alloc)
-		 (inst clrrwi res alloc-tn n-lowtag-bits)
-		 (inst ori res res list-pointer-lowtag)
+	       (pseudo-atomic (pa-flag)
+		 (allocation res alloc list-pointer-lowtag)
 		 (move ptr res)
 		 (dotimes (i (1- cons-cells))
 		   (storew (maybe-load (tn-ref-tn things)) ptr
@@ -69,6 +68,7 @@
 	 (unboxed-arg :scs (any-reg)))
   (:results (result :scs (descriptor-reg)))
   (:temporary (:scs (non-descriptor-reg)) ndescr)
+  (:temporary (:scs (non-descriptor-reg)) size)
   (:temporary (:scs (any-reg) :from (:argument 0)) boxed)
   (:temporary (:scs (non-descriptor-reg) :from (:argument 1)) unboxed)
   (:temporary (:sc non-descriptor-reg :offset nl3-offset) pa-flag)
@@ -82,9 +82,8 @@
       ;; Note: we don't have to subtract off the 4 that was added by
       ;; pseudo-atomic, because oring in other-pointer-lowtag just adds
       ;; it right back.
-      (inst ori result alloc-tn other-pointer-lowtag)
-      (inst add alloc-tn alloc-tn boxed)
-      (inst add alloc-tn alloc-tn unboxed)
+      (inst add size boxed unboxed)
+      (allocation result size other-pointer-lowtag)
       (inst slwi ndescr boxed (- n-widetag-bits word-shift))
       (inst ori ndescr ndescr code-header-widetag)
       (storew ndescr result 0 other-pointer-lowtag)
@@ -115,9 +114,9 @@
   (:results (result :scs (descriptor-reg)))
   (:generator 10
     (let ((size (+ length closure-info-offset)))
-      (pseudo-atomic (pa-flag :extra (pad-data-block size))
-	(inst clrrwi. result alloc-tn n-lowtag-bits)
-	(inst ori result result fun-pointer-lowtag)
+      (pseudo-atomic (pa-flag)
+	(allocation result (pad-data-block size)
+		    fun-pointer-lowtag)
 	(inst lr temp (logior (ash (1- size) n-widetag-bits) closure-header-widetag))
 	(storew temp result 0 fun-pointer-lowtag)))
     ;(inst lis temp (ash 18 10))
@@ -154,12 +153,8 @@
   (:temporary (:scs (non-descriptor-reg)) temp)
   (:temporary (:sc non-descriptor-reg :offset nl3-offset) pa-flag)
   (:generator 4
-    (pseudo-atomic (pa-flag :extra (pad-data-block words))
-      (cond ((logbitp 2 lowtag)
-	     (inst ori result alloc-tn lowtag))
-	    (t
-	     (inst clrrwi result alloc-tn n-lowtag-bits)
-	     (inst ori result  result lowtag)))
+    (pseudo-atomic (pa-flag)
+      (allocation result (pad-data-block words) lowtag)
       (when type
 	(inst lr temp (logior (ash (1- words) n-widetag-bits) type))
 	(storew temp result 0 lowtag)))))
@@ -178,10 +173,5 @@
     (inst addi header header (+ (ash -2 n-widetag-bits) type))
     (inst clrrwi bytes bytes n-lowtag-bits)
     (pseudo-atomic (pa-flag)
-      (cond ((logbitp 2 lowtag)
-	     (inst ori result alloc-tn lowtag))
-	    (t
-	     (inst clrrwi result alloc-tn n-lowtag-bits)
-	     (inst ori result result lowtag)))
-      (storew header result 0 lowtag)
-      (inst add alloc-tn alloc-tn bytes))))
+      (allocation result bytes lowtag)
+      (storew header result 0 lowtag))))

@@ -1122,11 +1122,9 @@ default-value-8
     (pseudo-atomic (pa-flag)
       (assemble ()
 	;; Allocate a cons (2 words) for each item.
-	(inst clrrwi result alloc-tn n-lowtag-bits)
-	(inst ori result result list-pointer-lowtag)
-	(move dst result)
 	(inst slwi temp count 1)
-	(inst add alloc-tn alloc-tn temp)
+	(allocation result temp list-pointer-lowtag)
+	(move dst result)
 	(inst b enter)
 
 	;; Compute the next cons and store it in the current one.
