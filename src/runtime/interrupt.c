@@ -858,9 +858,7 @@ interrupt_handle_pending(os_context_t *context)
             /* STOP_FOR_GC_PENDING and GC_PENDING are cleared by
              * the signal handler if it actually stops us. */
             arch_clear_pseudo_atomic_interrupted(context);
-            #if defined(LISP_FEATURE_WIN32)
-            sig_stop_for_gc_handler(0,NULL,context);
-            #else
+            #if !defined(LISP_FEATURE_WIN32)
             sig_stop_for_gc_handler(SIG_STOP_FOR_GC,NULL,context);
             #endif
         } else
@@ -1187,7 +1185,7 @@ low_level_maybe_now_maybe_later(int signal, siginfo_t *info, void *void_context)
 }
 #endif
 
-#if defined(LISP_FEATURE_SB_THREAD) && !defined(LISP_FEATURE_SB_THREAD)
+#if defined(LISP_FEATURE_SB_THREAD) && !defined(LISP_FEATURE_WIN32)
 
 /* This function must not cons, because that may trigger a GC. */
 void

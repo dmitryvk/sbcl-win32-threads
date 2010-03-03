@@ -540,8 +540,12 @@ boolean create_os_thread(struct thread *th,os_thread_t *kid_tid)
     if((initcode = pthread_attr_init(th->os_attr)) ||
        /* call_into_lisp_first_time switches the stack for the initial
         * thread. For the others, we use this. */
+#if defined(LISP_FEATURE_WIN32)
+       (pthread_attr_setstacksize(th->os_attr, thread_control_stack_size)) ||
+#else
        (pthread_attr_setstack(th->os_attr,th->control_stack_start,
                               thread_control_stack_size)) ||
+#endif
        (retcode = pthread_create
         (kid_tid,th->os_attr,(void *(*)(void *))new_thread_trampoline,th))) {
         FSHOW_SIGNAL((stderr, "init = %d\n", initcode));
@@ -718,7 +722,9 @@ int
 kill_safely(os_thread_t os_thread, int signal)
 {
     FSHOW_SIGNAL((stderr,"/kill_safely: %lu, %d\n", os_thread, signal));
-#if !defined(LISP_FEATURE_WIN32)
+#if defined(LISP_FEATURE_WIN32)
+    return 0;
+#else
     {
 #ifdef LISP_FEATURE_SB_THREAD
         sigset_t oldset;

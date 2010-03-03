@@ -260,9 +260,13 @@ Ldone:
 
 #ifdef LISP_FEATURE_WIN32
 	/* Establish an SEH frame. */
+	/* Save binding stack pointer */
 #ifdef LISP_FEATURE_SB_THREAD
-	/* FIXME: need to save BSP here. */
-#error "need to save BSP here, but don't know how yet."
+	pushl %eax
+	movl %fs:0x14, %eax
+	movl THREAD_BINDING_STACK_POINTER_OFFSET(%eax), %eax
+	movl %eax, 4(%esp)
+	popl %eax
 #else
 	pushl	BINDING_STACK_POINTER + SYMBOL_VALUE_OFFSET
 #endif
