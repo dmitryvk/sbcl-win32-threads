@@ -26,6 +26,10 @@
 
 #define FUTEX_WAIT_NSEC (10000000) /* 10 msec */
 
+#if defined(LISP_FEATURE_WIN32)
+#define EWOULDBLOCK 3
+#endif
+
 #if 1
 # define futex_assert(ex)                                              \
 do {                                                                   \
@@ -260,8 +264,10 @@ again:
 
     /* It's not possible to unwind frames across pthread_cond_wait(3). */
     for (;;) {
+#if !defined(LISP_FEATURE_WIN32)
         int i;
         sigset_t pendset;
+#endif
         struct timespec abstime;
 
         ret = futex_relative_to_abs(&abstime, FUTEX_WAIT_NSEC);
@@ -277,6 +283,7 @@ again:
         /* futex system call of Linux returns with EINTR errno when
          * it's interrupted by signals.  Check pending signals here to
          * emulate this behaviour. */
+#if !defined(LISP_FEATURE_WIN32)
         sigpending(&pendset);
         for (i = 1; i < NSIG; i++) {
             if (sigismember(&pendset, i) && sigismember(&newset, i)) {
@@ -284,11 +291,14 @@ again:
                 goto done;
             }
         }
+#endif
     }
 done:
     ; /* Null statement is required between label and pthread_cleanup_pop. */
     pthread_cleanup_pop(1);
+#if !defined(LISP_FEATURE_WIN32)
     pthread_sigmask(SIG_SETMASK, &oldset, NULL);
+#endif
 
     /* futex_wake() in linux-os.c loops when futex system call returns
      * EINTR.  */
@@ -332,7 +342,9 @@ futex_wake(int *lock_word, int n)
         pthread_cleanup_pop(1);
     }
 
+#if !defined(LISP_FEATURE_WIN32)
     pthread_sigmask(SIG_SETMASK, &oldset, NULL);
+#endif
 
     return 0;
 }
