@@ -26,11 +26,11 @@ OS_SRC = win32-os.c x86-win32-os.c os-common.c
 # interface, though.:-| As far as I (WHN 2002-05-19) know, no one is
 # working on one and it would be a nice thing to have.)
 OS_LINK_FLAGS = -Wl,--export-dynamic,-mno-cygwin
-OS_LIBS = -mno-cygwin
+OS_LIBS = -mno-cygwin -L pthread-win32 -lpthreadGC2
 
 GC_SRC = gencgc.c
 
-CFLAGS =  -g -Wall -O3 -mno-cygwin
+CFLAGS =  -g -Wall -O3 -mno-cygwin -I pthread-win32
 ASFLAGS = $(CFLAGS)
 
 CPP = cpp
