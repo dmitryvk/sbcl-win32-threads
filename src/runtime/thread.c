@@ -418,7 +418,7 @@ create_thread_struct(lispobj initial_function) {
         (lispobj*)((void*)th->binding_stack_start+BINDING_STACK_SIZE);
     th->binding_stack_pointer=th->binding_stack_start;
     th->this=th;
-    th->os_thread=0;
+    memset(&th->os_thread, 0, sizeof(th->os_thread));
 #ifdef LISP_FEATURE_SB_THREAD
     th->os_attr=malloc(sizeof(pthread_attr_t));
     th->state_lock=(pthread_mutex_t *)((void *)th->alien_stack_start +
@@ -558,13 +558,16 @@ boolean create_os_thread(struct thread *th,os_thread_t *kid_tid)
     gc_assert(retcode == 0);
     FSHOW_SIGNAL((stderr,"/create_os_thread: released lock\n"));
 #endif
+#if !defined(LISP_FEATURE_WIN32)
     thread_sigmask(SIG_SETMASK,&oldset,0);
+#endif
     return r;
 }
 
 os_thread_t create_thread(lispobj initial_function) {
     struct thread *th, *thread = arch_os_get_current_thread();
-    os_thread_t kid_tid = 0;
+    os_thread_t kid_tid;
+    memset(&kid_tid, 0, sizeof(kid_tid));
 
     /* Must defend against async unwinds. */
     if (SymbolValue(INTERRUPTS_ENABLED, thread) != NIL)
@@ -577,7 +580,7 @@ os_thread_t create_thread(lispobj initial_function) {
     th = create_thread_struct(initial_function);
     if (th && !create_os_thread(th,&kid_tid)) {
         free_thread_struct(th);
-        kid_tid = 0;
+        memset(&kid_tid, 0, sizeof(kid_tid));
     }
     return kid_tid;
 }
@@ -593,6 +596,7 @@ os_thread_t create_thread(lispobj initial_function) {
  * holding the lock, but they must agree on which. */
 void gc_stop_the_world()
 {
+#if !defined(LISP_FEATURE_WIN32)
     struct thread *p,*th=arch_os_get_current_thread();
     int status, lock_ret;
 #ifdef LOCK_CREATE_THREAD
@@ -620,6 +624,7 @@ void gc_stop_the_world()
             /* We already hold all_thread_lock, P can become DEAD but
              * cannot exit, ergo it's safe to use pthread_kill. */
             status=pthread_kill(p->os_thread,SIG_STOP_FOR_GC);
+            
             if (status==ESRCH) {
                 /* This thread has exited. */
                 gc_assert(thread_state(p)==STATE_DEAD);
@@ -642,10 +647,12 @@ void gc_stop_the_world()
         }
     }
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:end\n"));
+#endif
 }
 
 void gc_start_the_world()
 {
+#if !defined(LISP_FEATURE_WIN32)
     struct thread *p,*th=arch_os_get_current_thread();
     int lock_ret;
     /* if a resumed thread creates a new thread before we're done with
@@ -677,6 +684,7 @@ void gc_start_the_world()
 #endif
 
     FSHOW_SIGNAL((stderr,"/gc_start_the_world:end\n"));
+#endif
 }
 #endif
 
@@ -710,6 +718,7 @@ int
 kill_safely(os_thread_t os_thread, int signal)
 {
     FSHOW_SIGNAL((stderr,"/kill_safely: %lu, %d\n", os_thread, signal));
+#if !defined(LISP_FEATURE_WIN32)
     {
 #ifdef LISP_FEATURE_SB_THREAD
         sigset_t oldset;
@@ -756,4 +765,5 @@ kill_safely(os_thread_t os_thread, int signal)
         }
 #endif
     }
+#endif
 }

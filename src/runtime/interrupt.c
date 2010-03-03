@@ -102,7 +102,7 @@ union interrupt_handler interrupt_handlers[NSIG];
  * work for SIGSEGV and similar. It is good enough for timers, and
  * maybe all deferrables. */
 
-#ifdef LISP_FEATURE_SB_THREAD
+#if defined(LISP_FEATURE_SB_THREAD) && !defined(LISP_FEATURE_WIN32)
 static void
 add_handled_signals(sigset_t *sigset)
 {
@@ -121,7 +121,7 @@ void block_signals(sigset_t *what, sigset_t *where, sigset_t *old);
 static boolean
 maybe_resignal_to_lisp_thread(int signal, os_context_t *context)
 {
-#ifdef LISP_FEATURE_SB_THREAD
+#if defined(LISP_FEATURE_SB_THREAD) && !defined(LISP_FEATURE_WIN32)
     if (!pthread_getspecific(lisp_thread)) {
         if (!(sigismember(&deferrable_sigset,signal))) {
             corruption_warning_and_maybe_lose
@@ -858,7 +858,11 @@ interrupt_handle_pending(os_context_t *context)
             /* STOP_FOR_GC_PENDING and GC_PENDING are cleared by
              * the signal handler if it actually stops us. */
             arch_clear_pseudo_atomic_interrupted(context);
+            #if defined(LISP_FEATURE_WIN32)
+            sig_stop_for_gc_handler(0,NULL,context);
+            #else
             sig_stop_for_gc_handler(SIG_STOP_FOR_GC,NULL,context);
+            #endif
         } else
 #endif
          /* Test for T and not for != NIL since the value :IN-PROGRESS
@@ -1183,7 +1187,7 @@ low_level_maybe_now_maybe_later(int signal, siginfo_t *info, void *void_context)
 }
 #endif
 
-#ifdef LISP_FEATURE_SB_THREAD
+#if defined(LISP_FEATURE_SB_THREAD) && !defined(LISP_FEATURE_SB_THREAD)
 
 /* This function must not cons, because that may trigger a GC. */
 void

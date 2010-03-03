@@ -86,40 +86,7 @@ int arch_os_thread_init(struct thread *thread)
     }
 
 #ifdef LISP_FEATURE_SB_THREAD
-    /* this must be called from a function that has an exclusive lock
-     * on all_threads
-     */
-    struct user_desc ldt_entry = {
-        1, 0, 0, /* index, address, length filled in later */
-        1, MODIFY_LDT_CONTENTS_DATA, 0, 0, 0, 1
-    };
-    int n;
-    get_spinlock(&modify_ldt_lock,thread);
-    n=modify_ldt(0,local_ldt_copy,sizeof local_ldt_copy);
-    /* get next free ldt entry */
-
-    if(n) {
-        u32 *p;
-        for(n=0,p=local_ldt_copy;*p;p+=LDT_ENTRY_SIZE/sizeof(u32))
-            n++;
-    }
-    ldt_entry.entry_number=n;
-    ldt_entry.base_addr=(unsigned long) thread;
-    ldt_entry.limit=dynamic_values_bytes;
-    ldt_entry.limit_in_pages=0;
-    if (modify_ldt (1, &ldt_entry, sizeof (ldt_entry)) != 0) {
-        modify_ldt_lock=0;
-        /* modify_ldt call failed: something magical is not happening */
-        return -1;
-    }
-    __asm__ __volatile__ ("movw %w0, %%fs" : : "q"
-                          ((n << 3) /* selector number */
-                           + (1 << 2) /* TI set = LDT */
-                           + 3)); /* privilege level */
-    thread->tls_cookie=n;
-    modify_ldt_lock=0;
-
-    if(n<0) return 0;
+    __asm__ __volatile__ ("movl %0, %%fs:0x14" : : "r" (thread));
 #endif
 
     return 1;
