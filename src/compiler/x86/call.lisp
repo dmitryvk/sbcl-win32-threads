@@ -1313,9 +1313,10 @@
   ;; register on -SB-THREAD.
   #!+sb-thread
   (progn
-    (inst cmp (make-ea :dword
-                       :disp (* thread-stepping-slot n-word-bytes))
-          nil-value :fs))
+    (inst push eax-tn)
+    (inst mov eax-tn (make-ea :dword :disp #x14) :fs)
+    (inst cmp (make-ea :dword :base eax-tn :disp (* thread-stepping-slot n-word-bytes)) nil-value)
+    (inst pop eax-tn))
   #!-sb-thread
   (inst cmp (make-ea-for-symbol-value sb!impl::*stepping*)
         nil-value))

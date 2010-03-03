@@ -262,6 +262,7 @@ Ldone:
 	/* Establish an SEH frame. */
 	/* Save binding stack pointer */
 #ifdef LISP_FEATURE_SB_THREAD
+	subl $4, %esp
 	pushl %eax
 	movl %fs:0x14, %eax
 	movl THREAD_BINDING_STACK_POINTER_OFFSET(%eax), %eax
@@ -542,8 +543,8 @@ DEFINE_ALLOC_TO_REG(alloc_16_to_edi,%edi,$16)
 #define START_REGION GNAME(boxed_region)
 #endif
 
+/* FIXME Win32 */
 #define ALLOC_OVERFLOW(size)                                    \
-        /* Calculate the size for the allocation. */            \
         subl    START_REGION,size;                              \
         ALLOC(size)
 

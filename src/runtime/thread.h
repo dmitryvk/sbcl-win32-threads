@@ -184,6 +184,10 @@ static inline struct thread *arch_os_get_current_thread(void)
 #if defined(LISP_FEATURE_SB_THREAD)
 #if defined(LISP_FEATURE_X86)
     register struct thread *me=0;
+#if defined(LISP_FEATURE_WIN32)
+    __asm__ __volatile__ ("movl %%fs:0x14, %0" : "=r"(me) :);
+    return me;
+#endif
     if(all_threads) {
 #if defined(LISP_FEATURE_DARWIN) && defined(LISP_FEATURE_RESTORE_FS_SEGMENT_REGISTER_FROM_TLS)
         sel_t sel;

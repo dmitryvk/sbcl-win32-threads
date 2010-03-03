@@ -346,9 +346,9 @@
     (aver (not (location= result esp-tn)))
     (unless (zerop amount)
       (let ((delta (logandc2 (+ amount 3) 3)))
-        (inst mov temp
-              (make-ea-for-symbol-tls-index *alien-stack*))
-        (inst sub (make-ea :dword :base temp) delta :fs)))
+        (inst mov temp (make-ea :dword :disp #x14) :fs)
+        (inst lea temp (make-ea :dword :base temp :disp (ea-disp (make-ea-for-symbol-tls-index *alien-stack*))))
+        (inst sub (make-ea :dword :base temp) delta)))
     (load-tl-symbol-value result *alien-stack*))
   #!-sb-thread
   (:generator 0
@@ -366,9 +366,9 @@
   (:generator 0
     (unless (zerop amount)
       (let ((delta (logandc2 (+ amount 3) 3)))
-        (inst mov temp
-              (make-ea-for-symbol-tls-index *alien-stack*))
-        (inst add (make-ea :dword :base temp) delta :fs))))
+        (inst mov temp (make-ea :dword :disp #x14) :fs)
+        (inst lea temp (make-ea :dword :base temp :disp (ea-disp (make-ea-for-symbol-tls-index *alien-stack*))))
+        (inst add (make-ea :dword :base temp) delta))))
   #!-sb-thread
   (:generator 0
     (unless (zerop amount)

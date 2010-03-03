@@ -135,7 +135,8 @@ initial_thread_trampoline(struct thread *th)
     th->no_tls_value_marker = NO_TLS_VALUE_MARKER_WIDETAG;
     if(arch_os_thread_init(th)==0) return 1;
     link_thread(th);
-    th->os_thread=thread_self();
+    th->os_thread=(pthread_t*)malloc(sizeof(pthread_t));
+    *(th->os_thread) = thread_self();
 #ifndef LISP_FEATURE_WIN32
     protect_control_stack_hard_guard_page(1, NULL);
     protect_binding_stack_hard_guard_page(1, NULL);
@@ -202,7 +203,7 @@ perform_thread_post_mortem(struct thread_post_mortem *post_mortem)
     pthread_detach(pthread_self());
 #endif
     if (post_mortem) {
-        gc_assert(!pthread_join(post_mortem->os_thread, NULL));
+        gc_assert(!pthread_join(*post_mortem->os_thread, NULL));
         gc_assert(!pthread_attr_destroy(post_mortem->os_attr));
         free(post_mortem->os_attr);
         os_invalidate(post_mortem->os_address, THREAD_STRUCT_SIZE);
@@ -275,7 +276,8 @@ new_thread_trampoline(struct thread *th)
         lose("arch_os_thread_init failed\n");
     }
 
-    th->os_thread=thread_self();
+    th->os_thread=(pthread_t*)malloc(sizeof(pthread_t));
+    *(th->os_thread)=thread_self();
     protect_control_stack_guard_page(1, NULL);
     protect_binding_stack_guard_page(1, NULL);
     protect_alien_stack_guard_page(1, NULL);
@@ -547,7 +549,7 @@ boolean create_os_thread(struct thread *th,os_thread_t *kid_tid)
                               thread_control_stack_size)) ||
 #endif
        (retcode = pthread_create
-        (kid_tid,th->os_attr,(void *(*)(void *))new_thread_trampoline,th))) {
+        (*kid_tid,th->os_attr,(void *(*)(void *))new_thread_trampoline,th))) {
         FSHOW_SIGNAL((stderr, "init = %d\n", initcode));
         FSHOW_SIGNAL((stderr, "pthread_create returned %d, errno %d\n",
                       retcode, errno));
@@ -735,7 +737,7 @@ kill_safely(os_thread_t os_thread, int signal)
         pthread_mutex_lock(&all_threads_lock);
         for (thread = all_threads; thread; thread = thread->next) {
             if (thread->os_thread == os_thread) {
-                int status = pthread_kill(os_thread, signal);
+                int status = pthread_kill(*os_thread, signal);
                 if (status)
                     lose("kill_safely: pthread_kill failed with %d\n", status);
                 break;
