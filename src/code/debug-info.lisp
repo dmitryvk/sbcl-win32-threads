@@ -307,9 +307,13 @@
 (defvar *!initial-debug-sources*)
 
 (defun !debug-info-cold-init ()
+  (/show0 "In !debug-info-cold-init")
   (let ((now (get-universal-time)))
+    (/show0 "Got universal time")
     (dolist (debug-source *!initial-debug-sources*)
+      (/show0 "Another dolist iteration")
       (let* ((namestring (debug-source-namestring debug-source))
              (timestamp (file-write-date namestring)))
+        (/show0 "Setfing")
         (setf (debug-source-created debug-source) timestamp
               (debug-source-compiled debug-source) now)))))

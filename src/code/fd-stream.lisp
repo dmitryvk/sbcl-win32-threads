@@ -2449,14 +2449,23 @@
 ;;; This is called when the cold load is first started up, and may also
 ;;; be called in an attempt to recover from nested errors.
 (defun stream-cold-init-or-reset ()
+  (/show0 "In stream-cold-init-or-reset")
   (stream-reinit)
+  (/show0 "Setting *TERMINAL-IO*")
   (setf *terminal-io* (make-synonym-stream '*tty*))
+  (/show0 "Setting *STANDARD-OUTPUT*")
   (setf *standard-output* (make-synonym-stream '*stdout*))
+  (/show0 "Setting *STANDARD-INPUT*")
   (setf *standard-input* (make-synonym-stream '*stdin*))
+  (/show0 "Setting *ERROR-OUTPUT*")
   (setf *error-output* (make-synonym-stream '*stderr*))
+  (/show0 "Setting *QUERY-IO*")
   (setf *query-io* (make-synonym-stream '*terminal-io*))
+  (/show0 "Setting *DEBUG-IO*")
   (setf *debug-io* *query-io*)
+  (/show0 "Setting *TRACE-OUTPUT*")
   (setf *trace-output* *standard-output*)
+  (/show0 "Leaving stream-cold-init-or-reset")
   (values))
 
 (defun stream-deinit ()
