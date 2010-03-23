@@ -264,11 +264,12 @@
   (:result-types system-area-pointer)
   (:translate current-thread-offset-sap)
   (:args (n :scs (unsigned-reg) :target sap))
+  (:temporary (:sc unsigned-reg) tmp)
   (:arg-types unsigned-num)
   (:policy :fast-safe)
   (:generator 2
-    (inst mov sap (make-ea :dword :disp #x14) :fs)
-    (inst mov sap (make-ea :dword :base sap :disp 0 :index n :scale 4))))
+    (inst mov tmp (make-ea :dword :disp #x14) :fs)
+    (inst mov sap (make-ea :dword :base tmp :disp 0 :index n :scale 4))))
 
 (define-vop (halt)
   (:generator 1

@@ -630,7 +630,7 @@ void gc_stop_the_world()
             /* We already hold all_thread_lock, P can become DEAD but
              * cannot exit, ergo it's safe to use pthread_kill. */
             status=pthread_kill(p->os_thread,SIG_STOP_FOR_GC);
-            
+
             if (status==ESRCH) {
                 /* This thread has exited. */
                 gc_assert(thread_state(p)==STATE_DEAD);
