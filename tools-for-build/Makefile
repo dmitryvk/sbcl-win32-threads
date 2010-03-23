@@ -10,8 +10,8 @@
 -include genesis/Makefile.features
 -include Config
 
-CPPFLAGS:=-I../src/runtime
-LDFLAGS:=$(LDFLAGS) $(OS_LIBS)
+CPPFLAGS:=-I../src/runtime -I../src/runtime/pthread-win32
+LDFLAGS:=$(LDFLAGS) $(OS_LIBS) -L../src/runtime/pthread-win32
 
 all: grovel-headers determine-endianness where-is-mcontext \
         modify-ldt-struct-name sigaction-sa-nodefer-works-test
