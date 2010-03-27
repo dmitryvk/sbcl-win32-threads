@@ -64,7 +64,11 @@ extern sigset_t blockable_sigset;
 #endif
 
 #ifdef LISP_FEATURE_SB_THREAD
+#if defined(LISP_FEATURE_WIN32)
+#define QSHOW_PREFIX fprintf(stderr, "%lu ", GetCurrentThreadId());
+#else
 #define QSHOW_PREFIX fprintf(stderr, "%lu ", pthread_self());
+#endif
 #else
 #define QSHOW_PREFIX
 #endif
@@ -112,7 +116,9 @@ typedef unsigned long pointer_sized_uint_t ;
 #if defined(LISP_FEATURE_SB_THREAD)
 #include <pthread.h>
 #if defined(LISP_FEATURE_WIN32)
-typedef pthread_t *os_thread_t;
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+typedef HANDLE os_thread_t;
 #else
 typedef pthread_t os_thread_t;
 #endif
