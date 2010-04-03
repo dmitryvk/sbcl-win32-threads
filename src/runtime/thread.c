@@ -44,6 +44,7 @@
 #include "interr.h"             /* for lose() */
 #include "alloc.h"
 #include "gc-internal.h"
+#include "pseudo-atomic.h"
 
 #ifdef LISP_FEATURE_WIN32
 /*
@@ -619,12 +620,22 @@ os_thread_t create_thread(lispobj initial_function) {
  * it's in the middle of allocation) then waits for another SIG_STOP_FOR_GC.
  */
 
+#if defined(LISP_FEATURE_WIN32)
+// helper function for Win32
+static void sleep_while_gc()
+{
+  struct thread* th = arch_os_get_current_thread();
+  fprintf(stderr, "In thread %lu, waiting while thread is suspended\n", (DWORD)th->os_thread);
+  wait_for_thread_state_change(th, STATE_SUSPENDED);
+  fprintf(stderr, "In thred %lu, waiting done, returning\n", (DWORD)th->os_thread);
+}
+#endif
+
 /* To avoid deadlocks when gc stops the world all clients of each
  * mutex must enable or disable SIG_STOP_FOR_GC for the duration of
  * holding the lock, but they must agree on which. */
 void gc_stop_the_world()
 {
-#if !defined(LISP_FEATURE_WIN32)
     struct thread *p,*th=arch_os_get_current_thread();
     int status, lock_ret;
 #ifdef LOCK_CREATE_THREAD
@@ -649,6 +660,16 @@ void gc_stop_the_world()
         if((p!=th) && ((thread_state(p)==STATE_RUNNING))) {
             FSHOW_SIGNAL((stderr,"/gc_stop_the_world: suspending thread %lu\n",
                           p->os_thread));
+#if defined(LISP_FEATURE_WIN32)
+            if (SuspendThread(p->os_thread) == (DWORD)-1)
+              lose("cannot suspend thread %lu, SuspendThread returned -1, GetLastError() = %lu",
+                   (DWORD)p->os_thread, GetLastError());
+            if (get_pseudo_atomic_atomic(p))
+              lose("Sorry, can't yet suspend thread in pseudo-atomic section");
+            set_thread_state(p, STATE_SUSPENDED);
+            plant_call(p->os_thread, sleep_while_gc);
+            ResumeThread(p->os_thread);
+#else
             /* We already hold all_thread_lock, P can become DEAD but
              * cannot exit, ergo it's safe to use pthread_kill. */
             status=pthread_kill(p->os_thread,SIG_STOP_FOR_GC);
@@ -660,6 +681,7 @@ void gc_stop_the_world()
                 lose("cannot send suspend thread=%lu: %d, %s\n",
                      p->os_thread,status,strerror(status));
             }
+#endif
         }
     }
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:signals sent\n"));
@@ -675,12 +697,10 @@ void gc_stop_the_world()
         }
     }
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:end\n"));
-#endif
 }
 
 void gc_start_the_world()
 {
-#if !defined(LISP_FEATURE_WIN32)
     struct thread *p,*th=arch_os_get_current_thread();
     int lock_ret;
     /* if a resumed thread creates a new thread before we're done with
@@ -699,7 +719,10 @@ void gc_start_the_world()
                 }
                 FSHOW_SIGNAL((stderr, "/gc_start_the_world: resuming %lu\n",
                               p->os_thread));
+                //FIXME Win32: unplant_call_if_uncalled here
+                fprintf(stderr, "gc_start_the_world setting state to running\n");
                 set_thread_state(p, STATE_RUNNING);
+                fprintf(stderr, "gc_start_the_world done setting state to running\n");
             }
         }
     }
@@ -712,7 +735,6 @@ void gc_start_the_world()
 #endif
 
     FSHOW_SIGNAL((stderr,"/gc_start_the_world:end\n"));
-#endif
 }
 #endif
 

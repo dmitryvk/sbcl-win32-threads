@@ -282,4 +282,9 @@ struct runtime_options {
     size_t thread_control_stack_size;
 };
 
+#if defined(LISP_FEATURE_WIN32)
+typedef void (*planted_function_t)();
+void plant_call(HANDLE thread, planted_function_t fn);
+#endif
+
 #endif /* _SBCL_RUNTIME_H_ */
