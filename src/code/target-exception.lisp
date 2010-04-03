@@ -101,3 +101,15 @@
 ;;;   I don't know if we still need this or not. Better safe for now.
 (defun receive-pending-interrupt ()
   (receive-pending-interrupt))
+
+(in-package "SB!UNIX")
+
+(declaim (inline %unblock-deferrable-signals %unblock-gc-signals))
+(sb!alien:define-alien-routine ("unblock_deferrable_signals"
+                                %unblock-deferrable-signals)
+    sb!alien:void
+  (where sb!alien:unsigned-long)
+  (old sb!alien:unsigned-long))
+
+(defun unblock-deferrable-signals ()
+  (%unblock-deferrable-signals 0 0))
