@@ -4071,6 +4071,13 @@ garbage_collect_generation(generation_index_t generation, int raise)
                  * it in two steps shuts gcc up about strict aliasing. */
                 esp = (void **)((void *)&raise);
             } else {
+#if defined(LISP_FEATURE_WIN32)
+                CONTEXT context;
+                context.ContextFlags = CONTEXT_FULL;
+                if (GetThreadContext(th->os_thread, &context) == 0)
+                  lose("Unable to get thread context for thread 0x%x\n", (int)th->os_thread);
+                esp = (void**)context.Esp;
+#else
                 void **esp1;
                 free=fixnum_value(SymbolValue(FREE_INTERRUPT_CONTEXT_INDEX,th));
                 for(i=free-1;i>=0;i--) {
@@ -4082,6 +4089,7 @@ garbage_collect_generation(generation_index_t generation, int raise)
                         preserve_context_registers(c);
                     }
                 }
+#endif
             }
 #else
             esp = (void **)((void *)&raise);
