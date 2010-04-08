@@ -190,6 +190,27 @@ void plant_call(HANDLE thread, planted_function_t fn)
                 *((int*)((void*)context.Esp - 0)) = context.Eip;
                 context.Esp -= 4;
                 *((int*)((void*)context.Esp - 0)) = (int)(void*)fn;
+
+                // PUSHAD
+                context.Esp -= 4;
+                *((int*)((void*)context.Esp - 0)) = context.Eax;
+                context.Esp -= 4;
+                *((int*)((void*)context.Esp - 0)) = context.Ecx;
+                context.Esp -= 4;
+                *((int*)((void*)context.Esp - 0)) = context.Edx;
+                context.Esp -= 4;
+                *((int*)((void*)context.Esp - 0)) = context.Ebx;
+                context.Esp -= 4;
+                *((int*)((void*)context.Esp - 0)) = context.Esp - 5 * 4;
+                context.Esp -= 4;
+                *((int*)((void*)context.Esp - 0)) = context.Ebp;
+                context.Esp -= 4;
+                *((int*)((void*)context.Esp - 0)) = context.Esi;
+                context.Esp -= 4;
+                *((int*)((void*)context.Esp - 0)) = context.Edi;
+                context.Esp -= 4;
+                // PUSHFD
+                *((int*)((void*)context.Esp - 0)) = context.EFlags;
                 // setting %EIP
                 context.Eip = (int)(void*)planted_trampoline;
         }

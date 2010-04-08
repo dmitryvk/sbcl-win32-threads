@@ -811,17 +811,14 @@ Lrestore:
   .align	2,0x90
 GNAME(planted_trampoline):
   #now function pointer is on stack
-  pushl %ebp
-  movl %esp, %ebp
-  pushfl
-  pushal
-  #now the planted function pointer is now offset at 32 + 4 + 4 (32 bytes from pusha, 4 bytes from pushf, 4 for old ebp)
-  call *40(%esp)
-  popal
+  # pushfl - made by plant_call
+  # pushal - made by plant_call
+  #now the planted function pointer is now offset at 32 + 4 (32 bytes from pusha, 4 bytes from pushf)
+  call *36(%esp)
   popfl
+  popal
   #pop the planted function pointer and argument
   leal 4(%esp), %esp
-  popl %ebp
   #return to original place
   ret
   SIZE(GNAME(planted_trampoline))
