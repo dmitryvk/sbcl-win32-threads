@@ -159,13 +159,13 @@ void plant_call(HANDLE thread, planted_function_t fn)
         CONTEXT context;
         if (SuspendThread(thread) == -1)
         {
-                fprintf(stderr, "Unable to suspend thread 0x%x\n", (int)thread);
+                fprintf(stderr, "Unable to suspend thread %lu\n", (int)thread);
                 return;
         }
         context.ContextFlags = CONTEXT_FULL;
         if (GetThreadContext(thread, &context) == 0)
         {
-                fprintf(stderr, "Unable to get thread context for thread 0x%x\n", (int) thread);
+                fprintf(stderr, "Unable to get thread context for thread %lu\n", (int) thread);
                 ResumeThread(thread);
                 return;
         }
@@ -216,15 +216,15 @@ void plant_call(HANDLE thread, planted_function_t fn)
         }
         if (SetThreadContext(thread, &context) == 0)
         {
-                fprintf(stderr, "Unable to get thread context for thread 0x%x\n", (int) thread);
+                fprintf(stderr, "Unable to set thread context for thread %lu\n", (int) thread);
                 ResumeThread(thread);
                 return;
         }
 
         if (ResumeThread(thread) == -1)
         {
-                fprintf(stderr, "Unable to resume thread 0x%x\n", (int)thread);
+                fprintf(stderr, "Unable to resume thread %lu\n", (int)thread);
                 return;
         }
-        fprintf(stderr, "Function planted to thread 0x%x\n", (int)thread);
+        //fprintf(stderr, "Function planted to thread %lu\n", (int)thread);
 }
