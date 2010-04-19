@@ -640,10 +640,14 @@ void gc_stop_the_world()
             if (SuspendThread(p->os_thread) == (DWORD)-1)
               lose("cannot suspend thread %lu, SuspendThread returned -1, GetLastError() = %lu",
                    (DWORD)p->os_thread, GetLastError());
-            if (get_pseudo_atomic_atomic(p))
-              lose("Sorry, can't yet suspend thread in pseudo-atomic section");
-            set_thread_state(p, STATE_SUSPENDED);
-            plant_call(p->os_thread, sleep_while_gc);
+            if (get_pseudo_atomic_atomic(p)) {
+              fprintf(stderr, "Thread %lu is in pa, setting *stop-for-gc-pending* and pai\n", (unsigned long)p->os_thread);
+              SetSymbolValue(STOP_FOR_GC_PENDING, T, p);
+              set_pseudo_atomic_interrupted(p);
+            } else {
+              set_thread_state(p, STATE_SUSPENDED);
+              plant_call(p->os_thread, sleep_while_gc);
+            }
             ResumeThread(p->os_thread);
 #else
             /* We already hold all_thread_lock, P can become DEAD but

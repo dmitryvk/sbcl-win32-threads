@@ -858,7 +858,9 @@ interrupt_handle_pending(os_context_t *context)
             /* STOP_FOR_GC_PENDING and GC_PENDING are cleared by
              * the signal handler if it actually stops us. */
             arch_clear_pseudo_atomic_interrupted(context);
-            #if !defined(LISP_FEATURE_WIN32)
+            #if defined(LISP_FEATURE_WIN32)
+            sig_stop_for_gc_handler(-1,NULL,context);
+            #else
             sig_stop_for_gc_handler(SIG_STOP_FOR_GC,NULL,context);
             #endif
         } else
@@ -1185,7 +1187,7 @@ low_level_maybe_now_maybe_later(int signal, siginfo_t *info, void *void_context)
 }
 #endif
 
-#if defined(LISP_FEATURE_SB_THREAD) && !defined(LISP_FEATURE_WIN32)
+#if defined(LISP_FEATURE_SB_THREAD)
 
 /* This function must not cons, because that may trigger a GC. */
 void
@@ -1203,8 +1205,10 @@ sig_stop_for_gc_handler(int signal, siginfo_t *info, os_context_t *context)
         FSHOW_SIGNAL((stderr,"sig_stop_for_gc deferred (PA)\n"));
         SetSymbolValue(STOP_FOR_GC_PENDING,T,thread);
         arch_set_pseudo_atomic_interrupted(context);
+        #if !defined(LISP_FEATURE_WIN32)
         maybe_save_gc_mask_and_block_deferrables
             (os_context_sigmask_addr(context));
+        #endif
         return;
     }
 
@@ -1231,8 +1235,10 @@ sig_stop_for_gc_handler(int signal, siginfo_t *info, os_context_t *context)
     if (thread->interrupt_data->gc_blocked_deferrables) {
         FSHOW_SIGNAL((stderr,"cleaning up after gc_blocked_deferrables\n"));
         clear_pseudo_atomic_interrupted(thread);
+        #if !defined(LISP_FEATURE_WIN32)
         sigcopyset(os_context_sigmask_addr(context),
                    &thread->interrupt_data->pending_mask);
+        #endif
         thread->interrupt_data->gc_blocked_deferrables = 0;
     }
 
