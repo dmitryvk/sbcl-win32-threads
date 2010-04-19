@@ -210,6 +210,10 @@ char *core_string;
 
 struct runtime_options *runtime_options;
 
+#if defined(LISP_FEATURE_WIN32)
+void pthreads_win32_init();
+#endif
+
 
 int
 main(int argc, char *argv[], char *envp[])
@@ -233,6 +237,10 @@ main(int argc, char *argv[], char *envp[])
 
     lispobj initial_function;
     const char *sbcl_home = getenv("SBCL_HOME");
+
+    #if defined(LISP_FEATURE_WIN32)
+    pthreads_win32_init();
+    #endif
 
     interrupt_init();
     block_blockable_signals(0, 0);

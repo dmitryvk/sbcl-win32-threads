@@ -16,7 +16,11 @@
 #if defined(LISP_FEATURE_SB_THREAD) && defined(LISP_FEATURE_SB_PTHREAD_FUTEX)
 
 #include <errno.h>
+#if defined(LISP_FEATURE_WIN32)
+#include "pthreads_win32.h"
+#else
 #include <pthread.h>
+#endif
 #include <stdlib.h>
 
 #include "runtime.h"

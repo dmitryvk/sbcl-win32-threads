@@ -114,14 +114,12 @@ typedef unsigned long pointer_sized_uint_t ;
 #include <sys/types.h>
 
 #if defined(LISP_FEATURE_SB_THREAD)
-#include <pthread.h>
 #if defined(LISP_FEATURE_WIN32)
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-typedef HANDLE os_thread_t;
+#include "pthreads_win32.h"
 #else
-typedef pthread_t os_thread_t;
+#include <pthread.h>
 #endif
+typedef pthread_t os_thread_t;
 #else
 typedef pid_t os_thread_t;
 #endif

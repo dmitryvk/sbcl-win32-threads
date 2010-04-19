@@ -136,11 +136,7 @@ initial_thread_trampoline(struct thread *th)
     th->no_tls_value_marker = NO_TLS_VALUE_MARKER_WIDETAG;
     if(arch_os_thread_init(th)==0) return 1;
     link_thread(th);
-#if defined(LISP_FEATURE_WIN32)
-    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &th->os_thread, 0, TRUE, DUPLICATE_SAME_ACCESS);
-#else
     th->os_thread = thread_self();
-#endif
 #ifndef LISP_FEATURE_WIN32
     protect_control_stack_hard_guard_page(1, NULL);
     protect_binding_stack_hard_guard_page(1, NULL);
@@ -207,11 +203,7 @@ perform_thread_post_mortem(struct thread_post_mortem *post_mortem)
     pthread_detach(pthread_self());
 #endif
     if (post_mortem) {
-#if defined(LISP_FEATURE_WIN32)
-        gc_assert(WaitForSingleObject(post_mortem->os_thread, INFINITE) == WAIT_OBJECT_0);
-#else
         gc_assert(!pthread_join(post_mortem->os_thread, NULL));
-#endif
         gc_assert(!pthread_attr_destroy(post_mortem->os_attr));
         free(post_mortem->os_attr);
         os_invalidate(post_mortem->os_address, THREAD_STRUCT_SIZE);
@@ -272,12 +264,7 @@ new_thread_trampoline(struct thread *th)
 {
     lispobj function;
     int result, lock_ret;
-
-#if defined(LISP_FEATURE_WIN32)
-    FSHOW((stderr,"/creating thread %lu\n", GetCurrentThreadId()));
-#else
     FSHOW((stderr,"/creating thread %lu\n", thread_self()));
-#endif
     check_deferrables_blocked_or_lose(0);
     check_gc_signals_unblocked_or_lose(0);
     pthread_setspecific(lisp_thread, (void *)1);
@@ -288,11 +275,7 @@ new_thread_trampoline(struct thread *th)
         lose("arch_os_thread_init failed\n");
     }
 
-#if defined(LISP_FEATURE_WIN32)
-    DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &th->os_thread, 0, TRUE, DUPLICATE_SAME_ACCESS);
-#else
     th->os_thread=thread_self();
-#endif
     protect_control_stack_guard_page(1, NULL);
     protect_binding_stack_guard_page(1, NULL);
     protect_alien_stack_guard_page(1, NULL);
@@ -341,11 +324,7 @@ new_thread_trampoline(struct thread *th)
 #endif
 
     schedule_thread_post_mortem(th);
-#if defined(LISP_FEATURE_WIN32)
-    FSHOW((stderr,"/exiting thread %lu\n", GetCurrentThreadId()));
-#else
     FSHOW((stderr,"/exiting thread %lu\n", thread_self()));
-#endif
     return result;
 }
 
@@ -563,15 +542,12 @@ boolean create_os_thread(struct thread *th,os_thread_t *kid_tid)
         * thread. For the others, we use this. */
 #if defined(LISP_FEATURE_WIN32)
        (pthread_attr_setstacksize(th->os_attr, thread_control_stack_size)) ||
-       (retcode = (*kid_tid = CreateThread(NULL, thread_control_stack_size,
-                                          (LPTHREAD_START_ROUTINE)new_thread_trampoline, th,
-                                          0, NULL)) == NULL)
 #else
        (pthread_attr_setstack(th->os_attr,th->control_stack_start,
                               thread_control_stack_size)) ||
-       (retcode = pthread_create
-        (*kid_tid,th->os_attr,(void *(*)(void *))new_thread_trampoline,th))
 #endif
+       (retcode = pthread_create
+        (kid_tid,th->os_attr,(void *(*)(void *))new_thread_trampoline,th))
         ) {
         FSHOW_SIGNAL((stderr, "init = %d\n", initcode));
         FSHOW_SIGNAL((stderr, "pthread_create returned %d, errno %d\n",
