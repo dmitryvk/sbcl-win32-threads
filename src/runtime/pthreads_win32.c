@@ -281,6 +281,23 @@ int pthread_mutex_lock(pthread_mutex_t *mutex)
   return 0;
 }
 
+int pthread_mutex_trylock(pthread_mutex_t *mutex)
+{
+  if (*mutex == PTHREAD_MUTEX_INITIALIZER) {
+    pthread_mutex_lock(&mutex_init_lock);
+    if (*mutex == PTHREAD_MUTEX_INITIALIZER) {
+      *mutex = (CRITICAL_SECTION*)malloc(sizeof(CRITICAL_SECTION));
+      pthread_mutex_init(mutex, NULL);
+    }
+    pthread_mutex_unlock(&mutex_init_lock);
+  }
+  pthread_np_enter_uninterruptible();
+  if (TryEnterCriticalSection(*mutex))
+    return 0;
+  else
+    return EBUSY;
+}
+
 int pthread_mutex_unlock(pthread_mutex_t *mutex)
 {
   LeaveCriticalSection(*mutex);
@@ -457,6 +474,16 @@ int sched_yield()
 {
   SwitchToThread();
   return 0;
+}
+
+void pthread_lock_structures()
+{
+  pthread_mutex_lock(&pthread_all_threads_lock);
+}
+
+void pthread_unlock_structures()
+{
+  pthread_mutex_unlock(&pthread_all_threads_lock);
 }
 
 void pthreads_win32_init()
