@@ -5,6 +5,9 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+/* 0 - Misc */
+void pthreads_win32_init();
+
 /* 1 - Thread */
 
 typedef HANDLE pthread_t;
@@ -24,6 +27,7 @@ typedef void (*pthread_cleanup_fn)(void* arg);
 #define pthread_cleanup_pop(execute) if (execute) __pthread_fn(__pthread_arg); }
 
 int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine) (void *), void *arg);
+int pthread_equal(pthread_t thread1, pthread_t thread2);
 int pthread_detach(pthread_t thread);
 int pthread_join(pthread_t thread, void **retval);
 pthread_t pthread_self(void);
@@ -36,6 +40,15 @@ int pthread_setspecific(pthread_key_t key, const void *value);
 typedef int sigset_t;
 int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset);
 
+/* 1a - Thread non-portable */
+
+void pthread_np_safepoint();
+void pthread_np_suspend(pthread_t thread);
+void pthread_np_resume(pthread_t thread);
+unsigned char pthread_np_interruptible(pthread_t thread);
+void pthread_np_request_interruption(pthread_t thread);
+void pthread_np_enter_uninterruptible();
+void pthread_np_leave_uninterruptible();
 
 /* 2 - Mutex */
 
@@ -58,7 +71,7 @@ typedef HANDLE (*cv_event_get_fn)();
 typedef void (*cv_event_return_fn)(HANDLE event);
 
 typedef struct pthread_cond_t {
-  CRITICAL_SECTION wakeup_lock;
+  pthread_mutex_t wakeup_lock;
   struct thread_wakeup *first_wakeup;
   struct thread_wakeup *last_wakeup;
   unsigned char alertable;
