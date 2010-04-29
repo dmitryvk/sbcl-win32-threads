@@ -357,6 +357,18 @@ static pthread_mutex_t allocation_lock = PTHREAD_MUTEX_INITIALIZER;
  * miscellaneous heap functions
  */
 
+void gc_lock_mutexes()
+{
+  pthread_mutex_lock(&free_pages_lock);
+  pthread_mutex_lock(&allocation_lock);
+}
+
+void gc_unlock_mutexes()
+{
+  pthread_mutex_unlock(&allocation_lock);
+  pthread_mutex_unlock(&free_pages_lock);
+}
+ 
 /* Count the number of pages which are write-protected within the
  * given generation. */
 static long

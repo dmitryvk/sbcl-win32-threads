@@ -212,6 +212,7 @@ struct runtime_options *runtime_options;
 
 #if defined(LISP_FEATURE_WIN32)
 void pthreads_win32_init();
+extern pthread_mutex_t gc_lock;
 #endif
 
 
@@ -240,6 +241,7 @@ main(int argc, char *argv[], char *envp[])
 
     #if defined(LISP_FEATURE_WIN32)
     pthreads_win32_init();
+    pthread_mutex_init(&gc_lock, NULL);
     #endif
 
     interrupt_init();

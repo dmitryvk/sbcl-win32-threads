@@ -309,6 +309,11 @@ new_thread_trampoline(struct thread *th)
     pthread_mutex_destroy(th->state_lock);
     pthread_cond_destroy(th->state_cond);
 
+#if defined(LISP_FEATURE_SB_THREAD) && defined(LISP_FEATURE_WIN32)
+    CloseHandle(th->gc_sleep_event);
+    CloseHandle(th->gc_wakeup_event);
+#endif
+
     os_invalidate((os_vm_address_t)th->interrupt_data,
                   (sizeof (struct interrupt_data)));
 
@@ -485,6 +490,10 @@ create_thread_struct(lispobj initial_function) {
     th->interrupt_data->allocation_trap_context = 0;
 #endif
     th->no_tls_value_marker=initial_function;
+#if defined(LISP_FEATURE_SB_THREAD) && defined(LISP_FEATURE_WIN32)
+    th->gc_sleep_event = CreateEvent(NULL, FALSE, FALSE, NULL);
+    th->gc_wakeup_event = CreateEvent(NULL, FALSE, FALSE, NULL);
+#endif
 
     th->stepping = NIL;
     return th;
@@ -600,9 +609,11 @@ os_thread_t create_thread(lispobj initial_function) {
 unsigned int gc_stopping = 0;
 struct thread* stopping_thread = NULL;
 pthread_mutex_t safepoint_lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t gc_lock;
 
 void pthread_np_safepoint()
 {
+#if 0
   struct thread * p;
   unsigned int should_stop;
   if (gc_stopping && (p = arch_os_get_current_thread()) != stopping_thread) {
@@ -614,6 +625,7 @@ void pthread_np_safepoint()
     if (should_stop)
       wait_for_thread_state_change(p, STATE_SUSPENDED);
   }
+#endif
 }
 
 // helper function for Win32
@@ -621,6 +633,34 @@ static void sleep_while_gc()
 {
   struct thread* th = arch_os_get_current_thread();
   wait_for_thread_state_change(th, STATE_SUSPENDED);
+}
+
+extern void gc_lock_mutexes();
+extern void gc_unlock_mutexes();
+
+void gc_lock_mutex()
+{
+  struct thread* th = arch_os_get_current_thread();
+  while (pthread_mutex_trylock(&gc_lock) == EBUSY) {
+    OutputDebugString("gc_lock_mutex failed\n");
+    SetEvent(th->gc_sleep_event);
+    scrub_control_stack();
+    WaitForSingleObject(th->gc_wakeup_event, INFINITE);
+  }
+  OutputDebugString("gc_lock_mutex succeeded\n");
+  SetSymbolValue(STOP_FOR_GC_PENDING, NIL, th);
+  SetSymbolValue(GC_PENDING, NIL, th);
+  clear_pseudo_atomic_interrupted(th);
+}
+
+void gc_unlock_mutex()
+{
+  struct thread* th = arch_os_get_current_thread();
+  SetSymbolValue(STOP_FOR_GC_PENDING, NIL, th);
+  SetSymbolValue(GC_PENDING, NIL, th);
+  clear_pseudo_atomic_interrupted(th);
+  OutputDebugString("gc_unlock_mutex unlocked\n");
+  pthread_mutex_unlock(&gc_lock);
 }
 #endif
 
@@ -631,9 +671,12 @@ void gc_stop_the_world()
 {
     struct thread *p,*th=arch_os_get_current_thread();
     int status, lock_ret;
-    fprintf(stderr, "stopping the world\n");
+    //fprintf(stderr, "stopping the world\n");
     stopping_thread = th;
     gc_stopping = 1;
+    OutputDebugString("gc_stopping\n");
+    gc_lock_mutexes();
+    pthread_lock_structures();
 #ifdef LOCK_CREATE_THREAD
     /* KLUDGE: Stopping the thread during pthread_create() causes deadlock
      * on FreeBSD. */
@@ -656,20 +699,27 @@ void gc_stop_the_world()
         if((p!=th) && ((thread_state(p)==STATE_RUNNING))) {
             FSHOW_SIGNAL((stderr,"/gc_stop_the_world: suspending thread %lu\n",
                           p->os_thread));
-            fprintf(stderr, " 0, 0x%p\n", p);
+            //fprintf(stderr, " 0, 0x%p\n", p);
 #if defined(LISP_FEATURE_WIN32)
+            OutputDebugString("gc_stopping pthread_np_suspend\n");
             pthread_np_suspend(p->os_thread);
+            OutputDebugString("gc_stopping pthread_np_suspended\n");
             p->os_suspended = 0;
             if (get_pseudo_atomic_atomic(p)) {
+              OutputDebugString("gc_stopping pseudo_atomic\n");
               set_pseudo_atomic_interrupted(p);
               SetSymbolValue(STOP_FOR_GC_PENDING, T, p);
               pthread_np_resume(p->os_thread);
-            } else if (pthread_np_interruptible(p->os_thread)) {
-              p->os_suspended = 1;
-              set_thread_state(p, STATE_SUSPENDED);
-            } else {
-              pthread_np_request_interruption(p->os_thread);
+              WaitForSingleObject(p->gc_sleep_event, INFINITE);
+            } else if(get_pseudo_atomic_interrupted(p)) {
+              OutputDebugString("gc_stopping pseudo_atomic_interrupted\n");
+              set_pseudo_atomic_interrupted(p);
+              SetSymbolValue(STOP_FOR_GC_PENDING, T, p);
               pthread_np_resume(p->os_thread);
+              WaitForSingleObject(p->gc_sleep_event, INFINITE);
+            } else {
+              OutputDebugString("gc_stopping os_suspended\n");
+              p->os_suspended = 1;
             }
 #else
             /* We already hold all_thread_lock, P can become DEAD but
@@ -687,6 +737,7 @@ void gc_stop_the_world()
         }
     }
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:signals sent\n"));
+#if !defined(LISP_FEATURE_WIN32)
     for(p=all_threads;p;p=p->next) {
         if (p!=th) {
             FSHOW_SIGNAL
@@ -698,8 +749,12 @@ void gc_stop_the_world()
                 lose("/gc_stop_the_world: unexpected state");
         }
     }
+#endif
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:end\n"));
-    fprintf(stderr, " stopped the world\n");
+    pthread_unlock_structures();
+    gc_unlock_mutexes();
+    OutputDebugString("gc_stopped\n");
+    //fprintf(stderr, " stopped the world\n");
     gc_stopping = 0;
 }
 
@@ -707,50 +762,57 @@ void gc_start_the_world()
 {
     struct thread *p,*th=arch_os_get_current_thread();
     int lock_ret;
-    fprintf(stderr, " starting the world\n");
+    //fprintf(stderr, " starting the world\n");
     /* if a resumed thread creates a new thread before we're done with
      * this loop, the new thread will get consed on the front of
      * all_threads, but it won't have been stopped so won't need
      * restarting */
+    OutputDebugString("gc_starting\n");
     FSHOW_SIGNAL((stderr,"/gc_start_the_world:begin\n"));
     for(p=all_threads;p;p=p->next) {
-        fprintf(stderr, " 0.0x%p, 0\n", p);
+        //fprintf(stderr, " 0.0x%p, 0\n", p);
         gc_assert(p->os_thread!=0);
         if (p!=th) {
-            fprintf(stderr, " 0.0x%p, 1\n", p);
+            //fprintf(stderr, " 0.0x%p, 1\n", p);
             lispobj state = thread_state(p);
-            fprintf(stderr, " 0.0x%p, 2\n", p);
+            //fprintf(stderr, " 0.0x%p, 2\n", p);
             if (state != STATE_DEAD) {
+#if !defined(LISP_FEATURE_WIN32)
                 if(state != STATE_SUSPENDED) {
                     lose("gc_start_the_world: wrong thread state is %d\n",
                          fixnum_value(state));
                 }
+#endif
                 FSHOW_SIGNAL((stderr, "/gc_start_the_world: resuming %lu\n",
                               p->os_thread));
-                fprintf(stderr, " 0.0x%p, 3\n", p);
+                //fprintf(stderr, " 0.0x%p, 3\n", p);
 #if defined(LISP_FEATURE_WIN32)
-                if (p->os_suspended)
+                if (p->os_suspended) {
                   pthread_np_resume(p->os_thread);
+                } else {
+                  SetEvent(p->gc_wakeup_event);
+                }
 #else
                 set_thread_state(p, STATE_RUNNING);
 #endif
-                fprintf(stderr, " 0.0x%p, 4\n", p);
+                //fprintf(stderr, " 0.0x%p, 4\n", p);
             }
         }
     }
-    fprintf(stderr, " 1\n");
+    //fprintf(stderr, " 1\n");
 
     lock_ret = pthread_mutex_unlock(&all_threads_lock);
-    fprintf(stderr, " 2, lock_ret = %d\n", lock_ret);
+    //fprintf(stderr, " 2, lock_ret = %d\n", lock_ret);
     gc_assert(lock_ret == 0);
 #ifdef LOCK_CREATE_THREAD
     lock_ret = pthread_mutex_unlock(&create_thread_lock);
-    fprintf(stderr, " 3, lock_ret = %d\n", lock_ret);
+    //fprintf(stderr, " 3, lock_ret = %d\n", lock_ret);
     gc_assert(lock_ret == 0);
 #endif
 
     FSHOW_SIGNAL((stderr,"/gc_start_the_world:end\n"));
-    fprintf(stderr, " started the world\n");
+    OutputDebugString("gc_started\n");
+    //fprintf(stderr, " started the world\n");
 }
 #endif
 
