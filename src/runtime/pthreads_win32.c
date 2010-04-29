@@ -368,12 +368,38 @@ void cv_wakeup_add(struct pthread_cond_t* cv, struct thread_wakeup* w)
   pthread_mutex_unlock(&cv->wakeup_lock);
 }
 
+void cv_wakeup_remove(struct pthread_cond_t* cv, struct thread_wakeup* w)
+{
+  pthread_mutex_lock(&cv->wakeup_lock);
+  {
+    if (cv->first_wakeup == w) {
+      cv->first_wakeup = w->next;
+      if (cv->last_wakeup == w)
+        cv->last_wakeup = NULL;
+    } else {
+      struct thread_wakeup * prev = cv->first_wakeup;
+      while (prev && prev->next != w)
+        prev = prev->next;
+      if (!prev)
+        return;
+      prev->next = w->next;
+      if (cv->last_wakeup == w)
+        cv->last_wakeup = prev;
+    }
+  }
+  pthread_mutex_unlock(&cv->wakeup_lock);
+}
+
 int pthread_cond_wait(pthread_cond_t * cv, pthread_mutex_t * cs)
 {
   struct thread_wakeup w;
   cv_wakeup_add(cv, &w);
   if (cv->last_wakeup->next == cv->last_wakeup) {
     fprintf(stderr, "cv->last_wakeup->next == cv->last_wakeup\n");
+    ExitProcess(0);
+  }
+  if (cv->last_wakeup->next != NULL) {
+    fprintf(stderr, "cv->last_wakeup->next != NULL\n");
     ExitProcess(0);
   }
   pthread_self_args()->waiting_cond = cv;
@@ -417,9 +443,14 @@ int pthread_cond_timedwait(pthread_cond_t * cv, pthread_mutex_t * cs, const stru
   }
   pthread_self_args()->waiting_cond = NULL;
   cv->return_fn(w.event);
+  if (rv == WAIT_TIMEOUT)
+    cv_wakeup_remove(cv, &w);
   pthread_checkpoint();
   pthread_mutex_lock(cs);
-  return 0;
+  if (rv == WAIT_TIMEOUT)
+    return ETIMEDOUT;
+  else
+    return 0;
 }
 
 int sched_yield()
