@@ -412,6 +412,8 @@
   (tls-cookie)                          ;  on x86, the LDT index
   #!+(or x86 x86-64) (pseudo-atomic-bits)
   #!+(and sb-thread win32) (os-suspended :c-type "unsigned int" :length 1)
+  #!+(and sb-thread win32) (gc-suspend-event :c-type "HANDLE" :length 1)
+  #!+(and sb-thread win32) (gc-resume-event :c-type "HANDLE" :length 1)
   (interrupt-data :c-type "struct interrupt_data *"
                   :length #!+alpha 2 #!-alpha 1)
   (stepping)
