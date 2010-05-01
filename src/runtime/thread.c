@@ -597,23 +597,10 @@ os_thread_t create_thread(lispobj initial_function) {
  */
 
 #if defined(LISP_FEATURE_WIN32)
-unsigned int gc_stopping = 0;
-struct thread* stopping_thread = NULL;
 pthread_mutex_t safepoint_lock = PTHREAD_MUTEX_INITIALIZER;
 
 void pthread_np_safepoint()
 {
-  struct thread * p;
-  unsigned int should_stop;
-  if (gc_stopping && (p = arch_os_get_current_thread()) != stopping_thread) {
-    pthread_mutex_lock(&safepoint_lock);
-    should_stop = gc_stopping && (p = arch_os_get_current_thread()) != stopping_thread;
-    if (should_stop)
-      set_thread_state(p, STATE_SUSPENDED);
-    pthread_mutex_unlock(&safepoint_lock);
-    if (should_stop)
-      wait_for_thread_state_change(p, STATE_SUSPENDED);
-  }
 }
 
 // helper function for Win32
@@ -631,9 +618,7 @@ void gc_stop_the_world()
 {
     struct thread *p,*th=arch_os_get_current_thread();
     int status, lock_ret;
-    fprintf(stderr, "stopping the world\n");
-    stopping_thread = th;
-    gc_stopping = 1;
+    OutputDebugString("stopping the world\n");
 #ifdef LOCK_CREATE_THREAD
     /* KLUDGE: Stopping the thread during pthread_create() causes deadlock
      * on FreeBSD. */
@@ -656,7 +641,6 @@ void gc_stop_the_world()
         if((p!=th) && ((thread_state(p)==STATE_RUNNING))) {
             FSHOW_SIGNAL((stderr,"/gc_stop_the_world: suspending thread %lu\n",
                           p->os_thread));
-            fprintf(stderr, " 0, 0x%p\n", p);
 #if defined(LISP_FEATURE_WIN32)
             pthread_np_suspend(p->os_thread);
             p->os_suspended = 0;
@@ -699,27 +683,23 @@ void gc_stop_the_world()
         }
     }
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:end\n"));
-    fprintf(stderr, " stopped the world\n");
-    gc_stopping = 0;
+    OutputDebugString(" stopped the world\n");
 }
 
 void gc_start_the_world()
 {
     struct thread *p,*th=arch_os_get_current_thread();
     int lock_ret;
-    fprintf(stderr, " starting the world\n");
+    OutputDebugString(" starting the world\n");
     /* if a resumed thread creates a new thread before we're done with
      * this loop, the new thread will get consed on the front of
      * all_threads, but it won't have been stopped so won't need
      * restarting */
     FSHOW_SIGNAL((stderr,"/gc_start_the_world:begin\n"));
     for(p=all_threads;p;p=p->next) {
-        fprintf(stderr, " 0.0x%p, 0\n", p);
         gc_assert(p->os_thread!=0);
         if (p!=th) {
-            fprintf(stderr, " 0.0x%p, 1\n", p);
             lispobj state = thread_state(p);
-            fprintf(stderr, " 0.0x%p, 2\n", p);
             if (state != STATE_DEAD) {
                 if(state != STATE_SUSPENDED) {
                     lose("gc_start_the_world: wrong thread state is %d\n",
@@ -727,30 +707,25 @@ void gc_start_the_world()
                 }
                 FSHOW_SIGNAL((stderr, "/gc_start_the_world: resuming %lu\n",
                               p->os_thread));
-                fprintf(stderr, " 0.0x%p, 3\n", p);
 #if defined(LISP_FEATURE_WIN32)
                 if (p->os_suspended)
                   pthread_np_resume(p->os_thread);
 #else
                 set_thread_state(p, STATE_RUNNING);
 #endif
-                fprintf(stderr, " 0.0x%p, 4\n", p);
             }
         }
     }
-    fprintf(stderr, " 1\n");
 
     lock_ret = pthread_mutex_unlock(&all_threads_lock);
-    fprintf(stderr, " 2, lock_ret = %d\n", lock_ret);
     gc_assert(lock_ret == 0);
 #ifdef LOCK_CREATE_THREAD
     lock_ret = pthread_mutex_unlock(&create_thread_lock);
-    fprintf(stderr, " 3, lock_ret = %d\n", lock_ret);
     gc_assert(lock_ret == 0);
 #endif
 
     FSHOW_SIGNAL((stderr,"/gc_start_the_world:end\n"));
-    fprintf(stderr, " started the world\n");
+    OutputDebugString(" started the world\n");
 }
 #endif
 
