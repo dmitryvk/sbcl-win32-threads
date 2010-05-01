@@ -147,6 +147,7 @@ initial_thread_trampoline(struct thread *th)
 #endif
 
 #if defined(LISP_FEATURE_X86) || defined(LISP_FEATURE_X86_64)
+    OutputDebugString("call_into_lisp_first_time");
     return call_into_lisp_first_time(function,args,0);
 #else
     return funcall0(function);
@@ -309,8 +310,8 @@ new_thread_trampoline(struct thread *th)
     pthread_mutex_destroy(th->state_lock);
     pthread_cond_destroy(th->state_cond);
 #if defined(LISP_FEATURE_WIN32)
-    CloseHandle(th->gc_suspend_lock);
-    CloseHandle(th->gc_resume_lock);
+    CloseHandle(th->gc_suspend_event);
+    CloseHandle(th->gc_resume_event);
 #endif
 
     os_invalidate((os_vm_address_t)th->interrupt_data,
@@ -358,6 +359,7 @@ create_thread_struct(lispobj initial_function) {
 #ifdef LISP_FEATURE_SB_THREAD
     unsigned int i;
 #endif
+    OutputDebugString("create_thread_struct");
 
     /* May as well allocate all the spaces at once: it saves us from
      * having to decide what to do if only some of the allocations
@@ -495,6 +497,7 @@ create_thread_struct(lispobj initial_function) {
     th->no_tls_value_marker=initial_function;
 
     th->stepping = NIL;
+    OutputDebugString("create_thread_struct ok");
     return th;
 }
 
@@ -616,6 +619,30 @@ static void sleep_while_gc()
 {
   struct thread* th = arch_os_get_current_thread();
   wait_for_thread_state_change(th, STATE_SUSPENDED);
+}
+
+pthread_mutex_t already_in_gc_lock;
+
+void gc_lock_mutex()
+{
+  struct thread * p = arch_os_get_current_thread();
+  while (pthread_mutex_trylock(&already_in_gc_lock) == EBUSY) {
+    SetEvent(p->gc_suspend_event);
+    scrub_control_stack();
+    WaitForSingleObject(p->gc_resume_event, INFINITE);
+  }
+  clear_pseudo_atomic_interrupted(p);
+  SetSymbolValue(GC_PENDING, NIL, p);
+  SetSymbolValue(STOP_FOR_GC_PENDING, NIL, p);
+}
+
+void gc_unlock_mutex()
+{
+  struct thread * p = arch_os_get_current_thread();
+  pthread_mutex_unlock(&already_in_gc_lock);
+  clear_pseudo_atomic_interrupted(p);
+  SetSymbolValue(GC_PENDING, NIL, p);
+  SetSymbolValue(STOP_FOR_GC_PENDING, NIL, p);
 }
 #endif
 

@@ -212,6 +212,7 @@ struct runtime_options *runtime_options;
 
 #if defined(LISP_FEATURE_WIN32)
 void pthreads_win32_init();
+extern pthread_mutex_t already_in_gc_lock;
 #endif
 
 
@@ -239,7 +240,11 @@ main(int argc, char *argv[], char *envp[])
     const char *sbcl_home = getenv("SBCL_HOME");
 
     #if defined(LISP_FEATURE_WIN32)
+    OutputDebugString("pthreads_win32_init");
     pthreads_win32_init();
+    OutputDebugString("pthread_mutex_init already_in_gc_lock");
+    pthread_mutex_init(&already_in_gc_lock, NULL);
+    OutputDebugString("pthread_mutex_init already_in_gc_lock ok");
     #endif
 
     interrupt_init();
