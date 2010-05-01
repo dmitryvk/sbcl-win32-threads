@@ -690,7 +690,7 @@ void gc_stop_the_world()
               SetSymbolValue(STOP_FOR_GC_PENDING, T, p);
               pthread_np_resume(p->os_thread);
               WaitForSingleObject(p->gc_suspend_event, INFINITE);
-            } else if (get_pseudo_atomic_atomic(p)) {
+            } else if (get_pseudo_atomic_interrupted(p)) {
               OutputDebugString("  gc_stop_the_world, pseudo-atomic-interrupted");
               SetSymbolValue(STOP_FOR_GC_PENDING, T, p);
               pthread_np_resume(p->os_thread);
