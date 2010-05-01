@@ -5,6 +5,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <errno.h>
+
 /* 0 - Misc */
 void pthreads_win32_init();
 
@@ -100,7 +102,6 @@ int pthread_cond_timedwait(pthread_cond_t * cond, pthread_mutex_t * mutex, const
 int pthread_cond_wait(pthread_cond_t * cond, pthread_mutex_t * mutex);
 
 #define ETIMEDOUT 123 //Something
-#define EBUSY 321 //Something
 
 int sched_yield();
 

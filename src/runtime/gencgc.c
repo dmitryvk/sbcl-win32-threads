@@ -368,7 +368,7 @@ void gc_unlock_mutexes()
   pthread_mutex_unlock(&allocation_lock);
   pthread_mutex_unlock(&free_pages_lock);
 }
- 
+
 /* Count the number of pages which are write-protected within the
  * given generation. */
 static long
