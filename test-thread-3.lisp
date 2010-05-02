@@ -1,7 +1,8 @@
 (defun cons-lot (stream char)
+  (sleep 2)
   (loop
     (loop repeat 10
-      for ar = (make-array (* 1024 1024 10) :initial-element 0)
+      for ar = (make-array (* 1024 1024 1/2) :initial-element 0)
       do (setf (aref ar 1000) 112))
     (format stream "~A" char)
     (finish-output stream)))
@@ -12,5 +13,5 @@
     repeat n
     do (sb-thread:make-thread (lambda () (cons-lot stream #\.)))))
 
-(threaded-cons-lot 2)
+(threaded-cons-lot 4)
 ;(quit)
