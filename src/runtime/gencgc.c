@@ -55,6 +55,9 @@
 #if defined(LUTEX_WIDETAG)
 #include "pthread-lutex.h"
 #endif
+#if defined(LISP_FEATURE_WIN32)
+#include "pthreads_win32.h"
+#endif
 
 /* forward declarations */
 page_index_t  gc_find_freeish_pages(long *restart_page_ptr, long nbytes,
@@ -3979,6 +3982,19 @@ preserve_context_registers (os_context_t *c)
         preserve_pointer(*ptr);
     }
 }
+
+#if defined(LISP_FEATURE_WIN32)
+void win32_preserve_context_registers(CONTEXT* context)
+{
+  preserve_pointer((void*)context->Eax);
+  preserve_pointer((void*)context->Ecx);
+  preserve_pointer((void*)context->Edx);
+  preserve_pointer((void*)context->Ebx);
+  preserve_pointer((void*)context->Esi);
+  preserve_pointer((void*)context->Edi);
+  preserve_pointer((void*)context->Eip);
+}
+#endif
 #endif
 
 /* Garbage collect a generation. If raise is 0 then the remains of the
@@ -4070,12 +4086,24 @@ garbage_collect_generation(generation_index_t generation, int raise)
                 /* Somebody is going to burn in hell for this, but casting
                  * it in two steps shuts gcc up about strict aliasing. */
                 esp = (void **)((void *)&raise);
+#if defined(LISP_FEATURE_WIN32)
+                {
+                  CONTEXT context;
+                  context.ContextFlags = CONTEXT_FULL;
+                  if (GetThreadContext(th->os_thread, &context) == 0)
+                    lose("Unable to get thread context for thread 0x%x\n", (int)th->os_thread);
+                  win32_preserve_context_registers(&context);
+                }
+#endif
             } else {
 #if defined(LISP_FEATURE_WIN32)
                 CONTEXT context;
                 context.ContextFlags = CONTEXT_FULL;
+                pthread_np_suspend(th->os_thread);
                 if (GetThreadContext(th->os_thread, &context) == 0)
                   lose("Unable to get thread context for thread 0x%x\n", (int)th->os_thread);
+                win32_preserve_context_registers(&context);
+                pthread_np_resume(th->os_thread);
                 esp = (void**)context.Esp;
 #else
                 void **esp1;
