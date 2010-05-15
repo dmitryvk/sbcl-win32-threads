@@ -28,138 +28,70 @@ int pthread_attr_setstacksize(pthread_attr_t *attr, size_t stacksize)
   return 0;
 }
 
-typedef void *(*pthread_fn)(void*);
-
 DWORD thread_self_tls_index;
 
 typedef unsigned char boolean;
 
-typedef struct thread_args {
-  pthread_fn start_routine;
-  void* arg;
-  HANDLE handle;
-  pthread_cond_t *waiting_cond;
-  int uninterruptible_section_nesting;
-  unsigned int in_safepoint;
-  struct thread_args *prev, *next;
-} thread_args;
-
-thread_args * pthread_all_threads;
-pthread_mutex_t pthread_all_threads_lock;
-
-void pthread_link_thread_args(thread_args *args)
-{
-  pthread_mutex_lock(&pthread_all_threads_lock);
-  if (pthread_all_threads) {
-    args->next = pthread_all_threads;
-    args->prev = pthread_all_threads->prev;
-    args->next->prev = args;
-    args->prev->next = args;
-    pthread_all_threads = args;
-  } else {
-    args->next = args;
-    args->prev = args;
-    pthread_all_threads = args;
-  }
-  pthread_mutex_unlock(&pthread_all_threads_lock);
-}
-
-void pthread_unlink_thread_args(thread_args *args)
-{
-  pthread_mutex_lock(&pthread_all_threads_lock);
-  if (args->next == args) {
-    pthread_all_threads = NULL;
-  } else {
-    args->next->prev = args->prev;
-    args->prev->next = args->next;
-    pthread_all_threads = args->prev;
-  }
-  pthread_mutex_unlock(&pthread_all_threads_lock);
-}
-
-thread_args* pthread_find_thread_args(HANDLE handle)
-{
-  thread_args* found = NULL, *i;
-  pthread_mutex_lock(&pthread_all_threads_lock);
-  if (pthread_all_threads == NULL) {
-    found = NULL;
-  } else if (pthread_all_threads->handle == handle) {
-    found = pthread_all_threads;
-  } else {
-    for (i = pthread_all_threads->next; i != pthread_all_threads; i = i->next) {
-      if (i->handle == handle) {
-        found = i;
-        break;
-      }
-    }
-  }
-  pthread_mutex_unlock(&pthread_all_threads_lock);
-  return found;
-}
-
 void pthread_np_suspend(pthread_t thread)
 {
   CONTEXT context;
-  SuspendThread(thread);
+  SuspendThread(thread->handle);
   context.ContextFlags = CONTEXT_FULL;
-  GetThreadContext(thread, &context);
+  GetThreadContext(thread->handle, &context);
+}
+
+int pthread_np_get_thread_context(pthread_t thread, CONTEXT* context)
+{
+  context->ContextFlags = CONTEXT_FULL;
+  return GetThreadContext(thread->handle, context) != 0;
 }
 
 void pthread_np_resume(pthread_t thread)
 {
-  ResumeThread(thread);
+  ResumeThread(thread->handle);
 }
 
 unsigned char pthread_np_interruptible(pthread_t thread)
 {
-  thread_args* args = pthread_find_thread_args(thread);
-  if (args == NULL)
-    return 0;
-  return args->uninterruptible_section_nesting == 0 && args->waiting_cond == NULL;
+  return thread->uninterruptible_section_nesting == 0 && thread->waiting_cond == NULL;
 }
 
 void pthread_np_request_interruption(pthread_t thread)
 {
-  thread_args* args;
-  args = pthread_find_thread_args(thread);
-  if (args == NULL)
-    return;
-  if (args->waiting_cond) {
-    pthread_cond_broadcast(args->waiting_cond);
+  if (thread->waiting_cond) {
+    pthread_cond_broadcast(thread->waiting_cond);
   }
 }
 
-thread_args* pthread_self_args()
+pthread_t pthread_self()
 {
-  return (thread_args*)TlsGetValue(thread_self_tls_index);
+  return (pthread_t)TlsGetValue(thread_self_tls_index);
 }
 
 DWORD WINAPI Thread_Function(LPVOID param)
 {
-  thread_args *args = (thread_args*)param;
-  void* arg = args->arg;
+  pthread_t self = (pthread_t)param;
+  void* arg = self->arg;
   void* retval = NULL;
-  pthread_fn fn = args->start_routine;
-  TlsSetValue(thread_self_tls_index, args);
-  pthread_link_thread_args(args);
+  pthread_fn fn = self->start_routine;
+  TlsSetValue(thread_self_tls_index, self);
   retval = fn(arg);
-  pthread_unlink_thread_args(args);
-  free(args);
+  free(self);
   return (DWORD)retval;
 }
 
 int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine) (void *), void *arg)
 {
-  thread_args* args = (thread_args*)malloc(sizeof(thread_args));
-  HANDLE createdThread = CreateThread(NULL, attr ? attr->stack_size : 0, Thread_Function, args, CREATE_SUSPENDED, NULL);
+  pthread_t pth = (pthread_t)malloc(sizeof(pthread_thread));
+  HANDLE createdThread = CreateThread(NULL, attr ? attr->stack_size : 0, Thread_Function, pth, CREATE_SUSPENDED, NULL);
   if (!createdThread)
     return 1;
-  args->start_routine = start_routine;
-  args->arg = arg;
-  args->handle = createdThread;
-  args->uninterruptible_section_nesting = 0;
-  args->waiting_cond = NULL;
-  args->in_safepoint = 0;
+  pth->start_routine = start_routine;
+  pth->arg = arg;
+  pth->handle = createdThread;
+  pth->uninterruptible_section_nesting = 0;
+  pth->waiting_cond = NULL;
+  pth->in_safepoint = 0;
   ResumeThread(createdThread);
   if (thread)
     *thread = createdThread;
@@ -179,18 +111,13 @@ int pthread_detach(pthread_t thread)
 
 int pthread_join(pthread_t thread, void **retval)
 {
-  if (WaitForSingleObject(thread, INFINITE) == WAIT_OBJECT_0) {
-    CloseHandle(thread);
+  if (WaitForSingleObject(thread->handle, INFINITE) == WAIT_OBJECT_0) {
+    CloseHandle(thread->handle);
     return 0;
   } else {
-    CloseHandle(thread);
+    CloseHandle(thread->handle);
     return 1;
   }
-}
-
-pthread_t pthread_self(void)
-{
-  return pthread_self_args()->handle;
 }
 
 int pthread_key_create(pthread_key_t *key, void (*destructor)(void*))
@@ -242,26 +169,26 @@ int pthread_mutex_destroy(pthread_mutex_t *mutex)
 
 void pthread_checkpoint()
 {
-  thread_args * args = pthread_self_args();
-  if (args->uninterruptible_section_nesting == 0 && !args->in_safepoint) {
-    args->in_safepoint = 1;
+  pthread_t self = pthread_self();
+  if (self->uninterruptible_section_nesting == 0 && !self->in_safepoint) {
+    self->in_safepoint = 1;
     pthread_np_safepoint();
-    args->in_safepoint = 0;
+    self->in_safepoint = 0;
   }
 }
 
 void pthread_np_enter_uninterruptible()
 {
-  thread_args* args;
-  if ((args = pthread_self_args()))
-    args->uninterruptible_section_nesting++;
+  pthread_t self = pthread_self();
+  if (self)
+    self->uninterruptible_section_nesting++;
 }
 
 void pthread_np_leave_uninterruptible()
 {
-  thread_args* args;
-  if ((args = pthread_self_args())) {
-    args->uninterruptible_section_nesting--;
+  pthread_t self = pthread_self();
+  if (self) {
+    self->uninterruptible_section_nesting--;
     pthread_checkpoint();
   }
 }
@@ -419,14 +346,14 @@ int pthread_cond_wait(pthread_cond_t * cv, pthread_mutex_t * cs)
     fprintf(stderr, "cv->last_wakeup->next != NULL\n");
     ExitProcess(0);
   }
-  pthread_self_args()->waiting_cond = cv;
+  pthread_self()->waiting_cond = cv;
   pthread_mutex_unlock(cs);
   if (cv->alertable) {
     while (WaitForSingleObjectEx(w.event, INFINITE, TRUE) == WAIT_IO_COMPLETION);
   } else {
     WaitForSingleObject(w.event, INFINITE);
   }
-  pthread_self_args()->waiting_cond = NULL;
+  pthread_self()->waiting_cond = NULL;
   cv->return_fn(w.event);
   pthread_checkpoint();
   pthread_mutex_lock(cs);
@@ -442,7 +369,7 @@ int pthread_cond_timedwait(pthread_cond_t * cv, pthread_mutex_t * cs, const stru
     fprintf(stderr, "cv->last_wakeup->next == cv->last_wakeup\n");
     ExitProcess(0);
   }
-  pthread_self_args()->waiting_cond = cv;
+  pthread_self()->waiting_cond = cv;
   pthread_mutex_unlock(cs);
   {
     struct timeval cur_tm;
@@ -458,7 +385,7 @@ int pthread_cond_timedwait(pthread_cond_t * cv, pthread_mutex_t * cs, const stru
       rv = WaitForSingleObject(w.event, msec);
     }
   }
-  pthread_self_args()->waiting_cond = NULL;
+  pthread_self()->waiting_cond = NULL;
   cv->return_fn(w.event);
   if (rv == WAIT_TIMEOUT)
     cv_wakeup_remove(cv, &w);
@@ -478,24 +405,24 @@ int sched_yield()
 
 void pthread_lock_structures()
 {
-  pthread_mutex_lock(&pthread_all_threads_lock);
+  pthread_mutex_lock(&mutex_init_lock);
 }
 
 void pthread_unlock_structures()
 {
-  pthread_mutex_unlock(&pthread_all_threads_lock);
+  pthread_mutex_unlock(&mutex_init_lock);
 }
 
 void pthreads_win32_init()
 {
-  thread_args * args = (thread_args*)malloc(sizeof(thread_args));
+  pthread_t pth = (pthread_t)malloc(sizeof(pthread_thread));
   thread_self_tls_index = TlsAlloc();
-  args->waiting_cond = NULL;
-  args->uninterruptible_section_nesting = 0;
-  pthread_all_threads = NULL;
+  pth->start_routine = NULL;
+  pth->arg = NULL;
+  pth->uninterruptible_section_nesting = 0;
+  pth->waiting_cond = NULL;
+  pth->in_safepoint = 0;
   pthread_mutex_init(&mutex_init_lock, NULL);
-  pthread_mutex_init(&pthread_all_threads_lock, NULL);
-  DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &args->handle, 0, TRUE, DUPLICATE_SAME_ACCESS);
-  TlsSetValue(thread_self_tls_index, args);
-  pthread_link_thread_args(args);
+  DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &pth->handle, 0, TRUE, DUPLICATE_SAME_ACCESS);
+  TlsSetValue(thread_self_tls_index, pth);
 }

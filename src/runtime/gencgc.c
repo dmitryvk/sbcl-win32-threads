@@ -4089,8 +4089,7 @@ garbage_collect_generation(generation_index_t generation, int raise)
 #if defined(LISP_FEATURE_WIN32)
                 {
                   CONTEXT context;
-                  context.ContextFlags = CONTEXT_FULL;
-                  if (GetThreadContext(th->os_thread, &context) == 0)
+                  if (!pthread_np_get_thread_context(th->os_thread, &context))
                     lose("Unable to get thread context for thread 0x%x\n", (int)th->os_thread);
                   win32_preserve_context_registers(&context);
                 }
@@ -4098,9 +4097,8 @@ garbage_collect_generation(generation_index_t generation, int raise)
             } else {
 #if defined(LISP_FEATURE_WIN32)
                 CONTEXT context;
-                context.ContextFlags = CONTEXT_FULL;
                 pthread_np_suspend(th->os_thread);
-                if (GetThreadContext(th->os_thread, &context) == 0)
+                if (!pthread_np_get_thread_context(th->os_thread, &context))
                   lose("Unable to get thread context for thread 0x%x\n", (int)th->os_thread);
                 win32_preserve_context_registers(&context);
                 pthread_np_resume(th->os_thread);

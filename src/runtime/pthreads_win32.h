@@ -11,7 +11,7 @@ void pthreads_win32_init();
 
 /* 1 - Thread */
 
-typedef HANDLE pthread_t;
+typedef struct pthread_thread* pthread_t;
 
 typedef struct pthread_attr_t {
   unsigned int stack_size;
@@ -106,5 +106,18 @@ int sched_yield();
 
 void pthread_lock_structures();
 void pthread_unlock_structures();
+
+typedef void *(*pthread_fn)(void*);
+
+typedef struct pthread_thread {
+  pthread_fn start_routine;
+  void* arg;
+  HANDLE handle;
+  pthread_cond_t *waiting_cond;
+  int uninterruptible_section_nesting;
+  unsigned int in_safepoint;
+} pthread_thread;
+
+int pthread_np_get_thread_context(pthread_t thread, CONTEXT* context);
 
 #endif
