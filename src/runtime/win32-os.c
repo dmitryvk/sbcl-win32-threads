@@ -46,7 +46,7 @@
 #include "dynbind.h"
 
 #include <sys/types.h>
-#include <signal.h>
+#include "pthreads_win32.h"
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -301,7 +301,7 @@ extern boolean internal_errors_enabled;
 #ifdef LISP_FEATURE_UD2_BREAKPOINTS
 #define IS_TRAP_EXCEPTION(exception_record, context) \
     (((exception_record)->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION) && \
-     (((unsigned short *)((context)->Eip))[0] == 0x0b0f))
+     (((unsigned short *)((context.win32_context)->Eip))[0] == 0x0b0f))
 #define TRAP_CODE_WIDTH 2
 #else
 #define IS_TRAP_EXCEPTION(exception_record, context) \
@@ -321,8 +321,8 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                  void *dispatcher_context)
 {
     os_context_t ctx;
-    ctx->win32_context = context;
-    pthread_sigmask(SIG_SETMASK, NULL, &ctx->sigmask);
+    ctx.win32_context = context;
+    pthread_sigmask(SIG_SETMASK, NULL, &ctx.sigmask);
     pthread_sigmask(SIG_BLOCK, &blockable_sigset, NULL);
     if (exception_record->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND)) {
         /* If we're being unwound, be graceful about it. */
@@ -330,7 +330,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         /* Undo any dynamic bindings. */
         unbind_to_here(exception_frame->bindstack_pointer,
                        arch_os_get_current_thread());
-        pthread_sigmask(SIG_SETMASK, &ctx->sigmask, NULL);
+        pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
         return ExceptionContinueSearch;
     }
 
@@ -341,25 +341,25 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         exception_record->ExceptionCode == EXCEPTION_SINGLE_STEP) {
         /* We are doing a displaced instruction. At least function
          * end breakpoints uses this. */
-        restore_breakpoint_from_single_step(context);
-        pthread_sigmask(SIG_SETMASK, &ctx->sigmask, NULL);
+        restore_breakpoint_from_single_step(&ctx);
+        pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
         return ExceptionContinueExecution;
     }
 
-    if (IS_TRAP_EXCEPTION(exception_record, context)) {
+    if (IS_TRAP_EXCEPTION(exception_record, ctx)) {
         unsigned char trap;
         /* This is just for info in case the monitor wants to print an
          * approximation. */
         current_control_stack_pointer =
-            (lispobj *)*os_context_sp_addr(context);
+            (lispobj *)*os_context_sp_addr(&ctx);
         /* Unlike some other operating systems, Win32 leaves EIP
          * pointing to the breakpoint instruction. */
-        context->Eip += TRAP_CODE_WIDTH;
+        ctx.win32_context->Eip += TRAP_CODE_WIDTH;
         /* Now EIP points just after the INT3 byte and aims at the
          * 'kind' value (eg trap_Cerror). */
-        trap = *(unsigned char *)(*os_context_pc_addr(context));
-        handle_trap(context, trap);
-        pthread_sigmask(SIG_SETMASK, &ctx->sigmask, NULL);
+        trap = *(unsigned char *)(*os_context_pc_addr(&ctx));
+        handle_trap(&ctx, trap);
+        pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
         /* Done, we're good to go! */
         return ExceptionContinueExecution;
     }
@@ -395,12 +395,12 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                         gencgc_handle_wp_violation(fault_address);
                     }
                 }
-                pthread_sigmask(SIG_SETMASK, &ctx->sigmask, NULL);
+                pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
                 return ExceptionContinueExecution;
             }
 
         } else if (gencgc_handle_wp_violation(fault_address)) {
-            pthread_sigmask(SIG_SETMASK, &ctx->sigmask, NULL);
+            pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
             /* gc accepts the wp violation, so resume where we left off. */
             return ExceptionContinueExecution;
         }
@@ -424,11 +424,11 @@ handle_exception(EXCEPTION_RECORD *exception_record,
          * aren't supposed to happen during cold init or reinit
          * anyway. */
 
-        fake_foreign_function_call(context);
+        fake_foreign_function_call(&ctx);
 
         /* Allocate the SAP objects while the "interrupts" are still
          * disabled. */
-        context_sap = alloc_sap(context);
+        context_sap = alloc_sap(&ctx);
         exception_record_sap = alloc_sap(exception_record);
 
         /* The exception system doesn't automatically clear pending
@@ -441,9 +441,9 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                  exception_record_sap);
 
         /* If Lisp doesn't nlx, we need to put things back. */
-        undo_fake_foreign_function_call(context);
+        undo_fake_foreign_function_call(&ctx);
 
-        pthread_sigmask(SIG_SETMASK, &ctx->sigmask, NULL);
+        pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
         /* FIXME: HANDLE-WIN32-EXCEPTION should be allowed to decline */
         return ExceptionContinueExecution;
     }
@@ -464,11 +464,11 @@ handle_exception(EXCEPTION_RECORD *exception_record,
 
     fflush(stderr);
 
-    fake_foreign_function_call(context);
+    fake_foreign_function_call(&ctx);
     lose("Exception too early in cold init, cannot continue.");
 
     /* FIXME: WTF? How are we supposed to end up here? */
-    pthread_sigmask(SIG_SETMASK, &ctx->sigmask, NULL);
+    pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
     return ExceptionContinueSearch;
 }
 

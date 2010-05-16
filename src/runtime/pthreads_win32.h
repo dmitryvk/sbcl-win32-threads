@@ -3,7 +3,6 @@
 #include <time.h>
 #include <errno.h>
 #include <sys/types.h>
-#include <signal.h>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -130,5 +129,34 @@ int sigfillset(sigset_t *set);
 int sigaddset(sigset_t *set, int signum);
 int sigdelset(sigset_t *set, int signum);
 int sigismember(const sigset_t *set, int signum);
+
+typedef int sig_atomic_t;
+
+#define SIGHUP    1
+#define SIGINT    2 /* Interactive attention */
+#define SIGQUIT   3
+#define SIGILL    4 /* Illegal instruction */
+#define SIGPIPE   5
+#define SIGALRM   6
+#define SIGURG    7
+#define SIGFPE    8 /* Floating point error */
+#define SIGTSTP   9
+#define SIGCHLD   10
+#define SIGSEGV   11 /* Segmentation violation */
+#define SIGIO     12
+#define SIGXCPU   13
+#define SIGXFSZ   14
+#define SIGTERM   15 /* Termination request */
+#define SIGVTALRM 16
+#define SIGPROF   17
+#define SIGWINCH  18
+#define SIGBREAK  21 /* Control-break */
+#define SIGABRT   22 /* Abnormal termination (abort) */
+
+#define SIGRTMIN  23
+
+#define SIG_DEFER SIGHUP
+
+#define NSIG 31     /* maximum signal number + 1 */
 
 #endif

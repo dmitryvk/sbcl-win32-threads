@@ -12,7 +12,7 @@
 #if !defined(_INCLUDE_INTERRUPT_H_)
 #define _INCLUDE_INTERRUPT_H_
 
-#include <signal.h>
+#include "pthreads_win32.h"
 #include <string.h>
 
 /*

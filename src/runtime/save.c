@@ -16,7 +16,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <signal.h>
+#include "pthreads_win32.h"
 #include <sys/file.h>
 
 #include "sbcl.h"

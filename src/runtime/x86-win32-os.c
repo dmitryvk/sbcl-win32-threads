@@ -32,7 +32,7 @@
 #include "sbcl.h"
 
 #include <sys/types.h>
-#include <signal.h>
+#include "pthreads_win32.h"
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -98,6 +98,11 @@ int arch_os_thread_init(struct thread *thread)
 
 int arch_os_thread_cleanup(struct thread *thread) {
     return 0;
+}
+
+sigset_t *os_context_sigmask_addr(os_context_t *context)
+{
+  return &context->sigmask;
 }
 
 os_context_register_t *

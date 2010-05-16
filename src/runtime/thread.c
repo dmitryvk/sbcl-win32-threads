@@ -17,7 +17,7 @@
 #ifndef LISP_FEATURE_WIN32
 #include <sched.h>
 #endif
-#include <signal.h>
+#include "pthreads_win32.h"
 #include <stddef.h>
 #include <errno.h>
 #include <sys/types.h>
@@ -697,6 +697,12 @@ void gc_stop_the_world()
               WaitForSingleObject(p->gc_suspend_event, INFINITE);
             } else {
               p->os_suspended = 1;
+              if (p->os_thread->blocked_signal_set != 0)
+              {
+                char buf[100];
+                sprintf(buf, "thread 0x%p has signals blocked\n", p->os_thread);
+                OutputDebugString(buf);
+              }
             }
 #else
             /* We already hold all_thread_lock, P can become DEAD but

@@ -29,7 +29,7 @@
 #include <sys/file.h>
 #include <sys/param.h>
 #include <sys/stat.h>
-#include <signal.h>
+#include "pthreads_win32.h"
 #ifndef LISP_FEATURE_WIN32
 #include <sched.h>
 #endif

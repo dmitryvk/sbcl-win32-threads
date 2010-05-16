@@ -10,7 +10,7 @@
  */
 
 #include <stdio.h>
-#include <signal.h>
+#include "pthreads_win32.h"
 
 #include "sbcl.h"
 #include "runtime.h"
