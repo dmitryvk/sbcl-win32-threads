@@ -83,6 +83,7 @@ DWORD WINAPI Thread_Function(LPVOID param)
 int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine) (void *), void *arg)
 {
   pthread_t pth = (pthread_t)malloc(sizeof(pthread_thread));
+  pthread_t self = pthread_self();
   HANDLE createdThread = CreateThread(NULL, attr ? attr->stack_size : 0, Thread_Function, pth, CREATE_SUSPENDED, NULL);
   if (!createdThread)
     return 1;
@@ -92,7 +93,11 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_
   pth->uninterruptible_section_nesting = 0;
   pth->waiting_cond = NULL;
   pth->in_safepoint = 0;
-  sigemptyset(&pth->blocked_signal_set);
+  if (self) {
+    pth->blocked_signal_set = self->blocked_signal_set;
+  } else {
+    sigemptyset(&pth->blocked_signal_set);
+  }
   ResumeThread(createdThread);
   if (thread)
     *thread = createdThread;
