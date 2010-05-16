@@ -2432,10 +2432,8 @@ maybe_gc(os_context_t *context)
      * A kludgy alternative is to propagate the sigmask change to the
      * outer context.
      */
-#ifndef LISP_FEATURE_WIN32
     check_gc_signals_unblocked_or_lose(os_context_sigmask_addr(context));
     unblock_gc_signals(0, 0);
-#endif
     FSHOW((stderr, "/maybe_gc: calling SUB_GC\n"));
     /* FIXME: Nothing must go wrong during GC else we end up running
      * the debugger, error handlers, and user code in general in a
@@ -2453,19 +2451,15 @@ maybe_gc(os_context_t *context)
          * here. */
         ((SymbolValue(INTERRUPTS_ENABLED,thread) != NIL) ||
          (SymbolValue(ALLOW_WITH_INTERRUPTS,thread) != NIL))) {
-#ifndef LISP_FEATURE_WIN32
         sigset_t *context_sigmask = os_context_sigmask_addr(context);
         if (!deferrables_blocked_p(context_sigmask)) {
             thread_sigmask(SIG_SETMASK, context_sigmask, 0);
             check_gc_signals_unblocked_or_lose(0);
-#endif
             FSHOW((stderr, "/maybe_gc: calling POST_GC\n"));
             funcall0(StaticSymbolFunction(POST_GC));
-#ifndef LISP_FEATURE_WIN32
         } else {
             FSHOW((stderr, "/maybe_gc: punting on POST_GC due to blockage\n"));
         }
-#endif
     }
     undo_fake_foreign_function_call(context);
     FSHOW((stderr, "/maybe_gc: returning\n"));

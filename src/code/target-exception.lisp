@@ -110,6 +110,20 @@
     sb!alien:void
   (where sb!alien:unsigned-long)
   (old sb!alien:unsigned-long))
+(sb!alien:define-alien-routine ("unblock_gc_signals" %unblock-gc-signals)
+    sb!alien:void
+  (where sb!alien:unsigned-long)
+  (old sb!alien:unsigned-long))
 
 (defun unblock-deferrable-signals ()
   (%unblock-deferrable-signals 0 0))
+
+(defun unblock-gc-signals ()
+  (%unblock-gc-signals 0 0))
+  
+(defun sb!kernel:signal-cold-init-or-reinit ()
+  #!+sb-doc
+  "Enable all the default signals that Lisp knows how to deal with."
+  (unblock-gc-signals)
+  (unblock-deferrable-signals)
+  (values))

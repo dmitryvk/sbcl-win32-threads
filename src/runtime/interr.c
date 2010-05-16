@@ -95,10 +95,8 @@ void
 corruption_warning_and_maybe_lose(char *fmt, ...)
 {
     va_list ap;
-#ifndef LISP_FEATURE_WIN32
     sigset_t oldset;
     block_blockable_signals(0, &oldset);
-#endif
     fprintf(stderr, "CORRUPTION WARNING");
     va_start(ap, fmt);
     print_message(fmt, ap);
@@ -111,10 +109,8 @@ corruption_warning_and_maybe_lose(char *fmt, ...)
     fflush(stderr);
     if (lose_on_corruption_p)
         call_lossage_handler();
-#ifndef LISP_FEATURE_WIN32
     else
         thread_sigmask(SIG_SETMASK,&oldset,0);
-#endif
 }
 
 char *internal_error_descriptions[] = {INTERNAL_ERROR_NAMES};

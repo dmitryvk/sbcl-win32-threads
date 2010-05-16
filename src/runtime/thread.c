@@ -574,9 +574,7 @@ boolean create_os_thread(struct thread *th,os_thread_t *kid_tid)
     gc_assert(retcode == 0);
     FSHOW_SIGNAL((stderr,"/create_os_thread: released lock\n"));
 #endif
-#if !defined(LISP_FEATURE_WIN32)
     thread_sigmask(SIG_SETMASK,&oldset,0);
-#endif
     return r;
 }
 
