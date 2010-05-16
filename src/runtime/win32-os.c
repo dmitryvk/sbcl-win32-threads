@@ -320,13 +320,17 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                  CONTEXT *context,
                  void *dispatcher_context)
 {
+    os_context_t ctx;
+    ctx->win32_context = context;
+    pthread_sigmask(SIG_SETMASK, NULL, &ctx->sigmask);
+    pthread_sigmask(SIG_BLOCK, &blockable_sigset, NULL);
     if (exception_record->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND)) {
         /* If we're being unwound, be graceful about it. */
 
         /* Undo any dynamic bindings. */
         unbind_to_here(exception_frame->bindstack_pointer,
                        arch_os_get_current_thread());
-
+        pthread_sigmask(SIG_SETMASK, &ctx->sigmask, NULL);
         return ExceptionContinueSearch;
     }
 
@@ -338,6 +342,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         /* We are doing a displaced instruction. At least function
          * end breakpoints uses this. */
         restore_breakpoint_from_single_step(context);
+        pthread_sigmask(SIG_SETMASK, &ctx->sigmask, NULL);
         return ExceptionContinueExecution;
     }
 
@@ -354,6 +359,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
          * 'kind' value (eg trap_Cerror). */
         trap = *(unsigned char *)(*os_context_pc_addr(context));
         handle_trap(context, trap);
+        pthread_sigmask(SIG_SETMASK, &ctx->sigmask, NULL);
         /* Done, we're good to go! */
         return ExceptionContinueExecution;
     }
@@ -389,10 +395,12 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                         gencgc_handle_wp_violation(fault_address);
                     }
                 }
+                pthread_sigmask(SIG_SETMASK, &ctx->sigmask, NULL);
                 return ExceptionContinueExecution;
             }
 
         } else if (gencgc_handle_wp_violation(fault_address)) {
+            pthread_sigmask(SIG_SETMASK, &ctx->sigmask, NULL);
             /* gc accepts the wp violation, so resume where we left off. */
             return ExceptionContinueExecution;
         }
@@ -435,6 +443,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         /* If Lisp doesn't nlx, we need to put things back. */
         undo_fake_foreign_function_call(context);
 
+        pthread_sigmask(SIG_SETMASK, &ctx->sigmask, NULL);
         /* FIXME: HANDLE-WIN32-EXCEPTION should be allowed to decline */
         return ExceptionContinueExecution;
     }
@@ -459,6 +468,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     lose("Exception too early in cold init, cannot continue.");
 
     /* FIXME: WTF? How are we supposed to end up here? */
+    pthread_sigmask(SIG_SETMASK, &ctx->sigmask, NULL);
     return ExceptionContinueSearch;
 }
 
