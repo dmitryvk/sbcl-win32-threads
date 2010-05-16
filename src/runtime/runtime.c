@@ -40,8 +40,6 @@
 #include <time.h>
 #endif
 
-#include "signal.h"
-
 #include "runtime.h"
 #include "vars.h"
 #include "globals.h"

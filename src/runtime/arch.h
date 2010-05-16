@@ -13,7 +13,7 @@
 #define __ARCH_H__
 
 #include "os.h"
-#include "signal.h"
+#include "pthreads_win32.h"
 #include "thread.h"
 
 /* Do anything we need to do when starting up the runtime environment

@@ -19,7 +19,7 @@
 
 #include "sbcl.h"
 #include "arch.h"
-#include "signal.h"
+#include "pthreads_win32.h"
 
 #include "runtime.h"
 #include "interr.h"

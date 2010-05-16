@@ -194,6 +194,12 @@ get_current_sigmask(sigset_t *sigset)
 void
 block_signals(sigset_t *what, sigset_t *where, sigset_t *old)
 {
+    if (what)
+    {
+      char buf[100];
+      sprintf(buf, "Thread 0x%p, calling block_signals with 0x%x, where = 0x%p", pthread_self(), *what, where);
+      OutputDebugString(buf);
+    }
     if (where) {
         int i;
         if (old)
@@ -210,6 +216,12 @@ block_signals(sigset_t *what, sigset_t *where, sigset_t *old)
 void
 unblock_signals(sigset_t *what, sigset_t *where, sigset_t *old)
 {
+    if (what)
+    {
+      char buf[100];
+      sprintf(buf, "Thread 0x%p, calling unblock_signals with 0x%x, where = 0x%p", pthread_self(), *what, where);
+      OutputDebugString(buf);
+    }
     if (where) {
         int i;
         if (old)

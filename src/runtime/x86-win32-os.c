@@ -22,7 +22,6 @@
 #include <unistd.h>
 #include <errno.h>
 
-#include "./signal.h"
 #include "os.h"
 #include "arch.h"
 #include "globals.h"

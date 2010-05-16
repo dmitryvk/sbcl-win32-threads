@@ -18,7 +18,7 @@
 #include "os.h"
 #include "arch.h"
 #include "lispregs.h"
-#include "signal.h"
+#include "pthreads_win32.h"
 #include "alloc.h"
 #include "interrupt.h"
 #include "interr.h"

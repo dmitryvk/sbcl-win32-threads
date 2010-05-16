@@ -677,9 +677,11 @@ void gc_stop_the_world()
         FSHOW_SIGNAL((stderr,"/gc_stop_the_world: thread=%lu, state=%x\n",
                       p->os_thread, thread_state(p)));
         if((p!=th) && ((thread_state(p)==STATE_RUNNING))) {
+            int delay = 50;
             FSHOW_SIGNAL((stderr,"/gc_stop_the_world: suspending thread %lu\n",
                           p->os_thread));
 #if defined(LISP_FEATURE_WIN32)
+            again:
             OutputDebugString(" gc_stop_the_world, calling pthread_np_suspend");
             pthread_np_suspend(p->os_thread);
             OutputDebugString(" gc_stop_the_world, called pthread_np_suspend");
@@ -697,11 +699,18 @@ void gc_stop_the_world()
               WaitForSingleObject(p->gc_suspend_event, INFINITE);
             } else {
               p->os_suspended = 1;
-              if (p->os_thread->blocked_signal_set != 0)
+              if (sigismember(&p->os_thread->blocked_signal_set, SIG_STOP_FOR_GC))
               {
                 char buf[100];
-                sprintf(buf, "thread 0x%p has signals blocked\n", p->os_thread);
+                sprintf(buf, "thread 0x%p has SIG_STOP_FOR_GC blocked (mask = 0x%x), retrying\n", p->os_thread, p->os_thread->blocked_signal_set);
                 OutputDebugString(buf);
+
+                pthread_np_resume(p->os_thread);
+                Sleep(delay);
+                delay *= 2;
+                if (delay > 1000)
+                  delay = 1000;
+                goto again;
               }
             }
 #else

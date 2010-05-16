@@ -48,6 +48,7 @@ int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset);
 
 void pthread_np_safepoint();
 void pthread_np_suspend(pthread_t thread);
+void pthread_np_suspend_with_signal(pthread_t thread, int signum);
 void pthread_np_resume(pthread_t thread);
 unsigned char pthread_np_interruptible(pthread_t thread);
 void pthread_np_request_interruption(pthread_t thread);
@@ -131,6 +132,9 @@ int sigdelset(sigset_t *set, int signum);
 int sigismember(const sigset_t *set, int signum);
 
 typedef int sig_atomic_t;
+
+#define SIG_IGN ((void (*)(int, siginfo_t, void*))-1)
+#define SIG_DFL ((void (*)(int, siginfo_t, void*))-2)
 
 #define SIGHUP    1
 #define SIGINT    2 /* Interactive attention */
