@@ -92,6 +92,7 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_
   pth->uninterruptible_section_nesting = 0;
   pth->waiting_cond = NULL;
   pth->in_safepoint = 0;
+  sigemptyset(&pth->blocked_signal_set);
   ResumeThread(createdThread);
   if (thread)
     *thread = createdThread;
@@ -146,9 +147,23 @@ int pthread_setspecific(pthread_key_t key, const void *value)
 
 int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset)
 {
-  fprintf(stderr, "pthread_sigmask called\n");
-  ExitProcess(1);
-  return 1;
+  pthread_t self = pthread_self();
+  if (oldset)
+    *oldset = self->blocked_signal_set;
+  if (set) {
+    switch (how) {
+      case SIG_BLOCK:
+        self->blocked_signal_set |= *set;
+        break;
+      case SIG_UNBLOCK:
+        self->blocked_signal_set &= ~(*set);
+        break;
+      case SIG_SETMASK:
+        self->blocked_signal_set = *set;
+        break;
+    }
+  }
+  return 0;
 }
 
 pthread_mutex_t mutex_init_lock;
@@ -422,7 +437,38 @@ void pthreads_win32_init()
   pth->uninterruptible_section_nesting = 0;
   pth->waiting_cond = NULL;
   pth->in_safepoint = 0;
+  sigemptyset(&pth->blocked_signal_set);
   pthread_mutex_init(&mutex_init_lock, NULL);
   DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &pth->handle, 0, TRUE, DUPLICATE_SAME_ACCESS);
   TlsSetValue(thread_self_tls_index, pth);
 }
+
+int sigemptyset(sigset_t *set)
+{
+  *set = 0;
+  return 0;
+}
+
+int sigfillset(sigset_t *set)
+{
+  *set = 0xfffffffful;
+  return 0;
+}
+
+int sigaddset(sigset_t *set, int signum)
+{
+  *set |= 1 << signum;
+  return 0;
+}
+
+int sigdelset(sigset_t *set, int signum)
+{
+  *set &= ~(1 << signum);
+  return 0;
+}
+
+int sigismember(const sigset_t *set, int signum)
+{
+  return (*set & (1 << signum)) != 0;
+}
+

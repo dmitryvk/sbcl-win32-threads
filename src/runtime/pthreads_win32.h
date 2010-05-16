@@ -2,6 +2,8 @@
 #define WIN32_PTHREAD_INCLUDED
 #include <time.h>
 #include <errno.h>
+#include <sys/types.h>
+#include <signal.h>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -38,7 +40,9 @@ int pthread_key_create(pthread_key_t *key, void (*destructor)(void*));
 void *pthread_getspecific(pthread_key_t key);
 int pthread_setspecific(pthread_key_t key, const void *value);
 
-typedef int sigset_t;
+#define SIG_BLOCK 1
+#define SIG_UNBLOCK 2
+#define SIG_SETMASK 3
 int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset);
 
 /* 1a - Thread non-portable */
@@ -116,8 +120,15 @@ typedef struct pthread_thread {
   pthread_cond_t *waiting_cond;
   int uninterruptible_section_nesting;
   unsigned int in_safepoint;
+  sigset_t blocked_signal_set;
 } pthread_thread;
 
 int pthread_np_get_thread_context(pthread_t thread, CONTEXT* context);
+
+int sigemptyset(sigset_t *set);
+int sigfillset(sigset_t *set);
+int sigaddset(sigset_t *set, int signum);
+int sigdelset(sigset_t *set, int signum);
+int sigismember(const sigset_t *set, int signum);
 
 #endif
