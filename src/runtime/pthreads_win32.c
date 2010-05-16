@@ -172,6 +172,7 @@ int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset)
         self->blocked_signal_set = *set;
         break;
     }
+    if (0)
     {
       char buf[100];
       sprintf(buf, "Thread 0x%p, set signals mask to 0x%x by %s of 0x%x", self, self->blocked_signal_set, action, *set);
