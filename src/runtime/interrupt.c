@@ -1202,7 +1202,7 @@ sig_stop_for_gc_handler(int signal, siginfo_t *info, os_context_t *context)
     }
 
 #if defined(LISP_FEATURE_WIN32)
-    SetEvent(thread->gc_suspend_event);
+    lose("Argh, don't know how to suspend myself");
 #else
     set_thread_state(thread,STATE_SUSPENDED);
 #endif
@@ -1215,7 +1215,7 @@ sig_stop_for_gc_handler(int signal, siginfo_t *info, os_context_t *context)
     scrub_control_stack();
 
 #if defined(LISP_FEATURE_WIN32)
-    WaitForSingleObject(thread->gc_resume_event, INFINITE);
+    lose("Argh, don't know how to wait for wake");
 #else
     wait_for_thread_state_change(thread, STATE_SUSPENDED);
 #endif

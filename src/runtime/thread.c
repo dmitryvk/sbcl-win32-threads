@@ -309,10 +309,6 @@ new_thread_trampoline(struct thread *th)
     if(th->tls_cookie>=0) arch_os_thread_cleanup(th);
     pthread_mutex_destroy(th->state_lock);
     pthread_cond_destroy(th->state_cond);
-#if defined(LISP_FEATURE_WIN32)
-    CloseHandle(th->gc_suspend_event);
-    CloseHandle(th->gc_resume_event);
-#endif
 
     os_invalidate((os_vm_address_t)th->interrupt_data,
                   (sizeof (struct interrupt_data)));
@@ -433,10 +429,6 @@ create_thread_struct(lispobj initial_function) {
     th->state_cond=(pthread_cond_t *)((void *)th->state_lock +
                                       (sizeof(pthread_mutex_t)));
     pthread_cond_init(th->state_cond, NULL);
-#if defined(LISP_FEATURE_WIN32)
-    th->gc_suspend_event = CreateEvent(NULL, FALSE, FALSE, NULL);
-    th->gc_resume_event = CreateEvent(NULL, FALSE, FALSE, NULL);
-#endif
 #endif
     th->state=STATE_RUNNING;
 #ifdef LISP_FEATURE_STACK_GROWS_DOWNWARD_NOT_UPWARD
@@ -606,17 +598,8 @@ os_thread_t create_thread(lispobj initial_function) {
  */
 
 #if defined(LISP_FEATURE_WIN32)
-pthread_mutex_t safepoint_lock = PTHREAD_MUTEX_INITIALIZER;
-
 void pthread_np_safepoint()
 {
-}
-
-// helper function for Win32
-static void sleep_while_gc()
-{
-  struct thread* th = arch_os_get_current_thread();
-  wait_for_thread_state_change(th, STATE_SUSPENDED);
 }
 
 pthread_mutex_t already_in_gc_lock;
@@ -624,11 +607,7 @@ pthread_mutex_t already_in_gc_lock;
 void gc_lock_mutex()
 {
   struct thread * p = arch_os_get_current_thread();
-  while (pthread_mutex_trylock(&already_in_gc_lock) == EBUSY) {
-    SetEvent(p->gc_suspend_event);
-    scrub_control_stack();
-    WaitForSingleObject(p->gc_resume_event, INFINITE);
-  }
+  pthread_mutex_lock(&already_in_gc_lock);
   clear_pseudo_atomic_interrupted(p);
   SetSymbolValue(GC_PENDING, NIL, p);
   SetSymbolValue(STOP_FOR_GC_PENDING, NIL, p);
@@ -679,38 +658,7 @@ void gc_stop_the_world()
             FSHOW_SIGNAL((stderr,"/gc_stop_the_world: suspending thread %lu\n",
                           p->os_thread));
 #if defined(LISP_FEATURE_WIN32)
-            again:
-            OutputDebugString(" gc_stop_the_world, calling pthread_np_suspend");
-            pthread_np_suspend(p->os_thread);
-            OutputDebugString(" gc_stop_the_world, called pthread_np_suspend");
-            p->os_suspended = 0;
-            if (get_pseudo_atomic_atomic(p)) {
-              OutputDebugString("  gc_stop_the_world, pseudo-atomic");
-              set_pseudo_atomic_interrupted(p);
-              SetSymbolValue(STOP_FOR_GC_PENDING, T, p);
-              pthread_np_resume(p->os_thread);
-              WaitForSingleObject(p->gc_suspend_event, INFINITE);
-            } else if (get_pseudo_atomic_interrupted(p)) {
-              OutputDebugString("  gc_stop_the_world, pseudo-atomic-interrupted");
-              SetSymbolValue(STOP_FOR_GC_PENDING, T, p);
-              pthread_np_resume(p->os_thread);
-              WaitForSingleObject(p->gc_suspend_event, INFINITE);
-            } else {
-              p->os_suspended = 1;
-              if (sigismember(&p->os_thread->blocked_signal_set, SIG_STOP_FOR_GC))
-              {
-                char buf[100];
-                sprintf(buf, "thread 0x%p has SIG_STOP_FOR_GC blocked (mask = 0x%x), retrying\n", p->os_thread, p->os_thread->blocked_signal_set);
-                OutputDebugString(buf);
-
-                pthread_np_resume(p->os_thread);
-                Sleep(delay);
-                delay *= 2;
-                if (delay > 1000)
-                  delay = 1000;
-                goto again;
-              }
-            }
+            lose("argh, won't stop thread");
 #else
             /* We already hold all_thread_lock, P can become DEAD but
              * cannot exit, ergo it's safe to use pthread_kill. */
@@ -769,11 +717,7 @@ void gc_start_the_world()
                 FSHOW_SIGNAL((stderr, "/gc_start_the_world: resuming %lu\n",
                               p->os_thread));
 #if defined(LISP_FEATURE_WIN32)
-                if (p->os_suspended) {
-                  pthread_np_resume(p->os_thread);
-                } else {
-                  SetEvent(p->gc_resume_event);
-                }
+                lose("argh, can't resume threads");
 #else
                 set_thread_state(p, STATE_RUNNING);
 #endif
