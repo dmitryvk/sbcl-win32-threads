@@ -72,7 +72,7 @@ int linux_supports_futex=0;
 void odprintf(const char * fmt, ...)
 {
   char buf[512];
-  va_args args;
+  va_list args;
   int thread_id_length;
   thread_id_length = sprintf(buf, "[0x%p] ", pthread_self());
   va_start(args, fmt);
@@ -405,6 +405,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                 if (exception_record->ExceptionInformation[0]) {
                     int index = find_page_index(fault_address);
                     if ((index != -1) && (page_table[index].write_protected)) {
+                        odprintf("wv_violation at EIP = 0x%p", context->Eip);
                         gencgc_handle_wp_violation(fault_address);
                     }
                 }
@@ -412,10 +413,13 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                 return ExceptionContinueExecution;
             }
 
-        } else if (gencgc_handle_wp_violation(fault_address)) {
-            pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-            /* gc accepts the wp violation, so resume where we left off. */
-            return ExceptionContinueExecution;
+        } else {
+            odprintf("exception at EIP = 0x%p", context->Eip);
+            if (gencgc_handle_wp_violation(fault_address)) {
+              pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
+              /* gc accepts the wp violation, so resume where we left off. */
+              return ExceptionContinueExecution;
+          }
         }
 
         /* All else failed, drop through to the lisp-side exception handler. */

@@ -802,6 +802,10 @@ interrupt_handle_pending(os_context_t *context)
      * Note, that if gc_blocked_deferrables is false we may still have
      * to GC. In this case, we are coming out of a WITHOUT-GCING or a
      * pseudo atomic was interrupt be a deferrable first. */
+    #if defined(LISP_FEATURE_WIN32)
+    /* Handle_trap may be called from safepoint */
+    if (context)
+    #endif
     if (data->gc_blocked_deferrables) {
         if (data->pending_handler)
             lose("GC blocked deferrables but still got a pending handler.");

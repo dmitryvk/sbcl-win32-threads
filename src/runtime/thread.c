@@ -147,7 +147,7 @@ initial_thread_trampoline(struct thread *th)
 #endif
 
 #if defined(LISP_FEATURE_X86) || defined(LISP_FEATURE_X86_64)
-    OutputDebugString("call_into_lisp_first_time");
+    odprintf("call_into_lisp_first_time");
     return call_into_lisp_first_time(function,args,0);
 #else
     return funcall0(function);
@@ -355,7 +355,7 @@ create_thread_struct(lispobj initial_function) {
 #ifdef LISP_FEATURE_SB_THREAD
     unsigned int i;
 #endif
-    OutputDebugString("create_thread_struct");
+    odprintf("create_thread_struct");
 
     /* May as well allocate all the spaces at once: it saves us from
      * having to decide what to do if only some of the allocations
@@ -474,6 +474,9 @@ create_thread_struct(lispobj initial_function) {
 #ifdef LISP_FEATURE_SB_THREAD
     bind_variable(STOP_FOR_GC_PENDING,NIL,th);
 #endif
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+    th->os_suspended = 0;
+#endif
 
     th->interrupt_data = (struct interrupt_data *)
         os_validate(0,(sizeof (struct interrupt_data)));
@@ -489,7 +492,7 @@ create_thread_struct(lispobj initial_function) {
     th->no_tls_value_marker=initial_function;
 
     th->stepping = NIL;
-    OutputDebugString("create_thread_struct ok");
+    odprintf("create_thread_struct ok");
     return th;
 }
 
@@ -598,16 +601,56 @@ os_thread_t create_thread(lispobj initial_function) {
  */
 
 #if defined(LISP_FEATURE_WIN32)
+
+/* Stats */
+unsigned int pending_signals = 0;
+unsigned int pai_stopped = 0;
+unsigned int sigmask_stopped = 0;
+unsigned int lisp_code_stopped = 0;
+unsigned int gcs = 0;
+unsigned int retries = 0;
+unsigned int already_suspended_count = 0;
 void pthread_np_safepoint()
 {
 }
 
+void pthread_np_pending_signal_handler(int signum)
+{
+  if (signum == SIG_STOP_FOR_GC) {
+    ++pending_signals;
+    struct thread * p = arch_os_get_current_thread();
+    odprintf("received pending SIG_STOP_FOR_GC");
+    set_thread_state(p, STATE_SUSPENDED);
+    odprintf("suspended in pending signal handler");
+    scrub_control_stack();
+    wait_for_thread_state_change(p, STATE_SUSPENDED);
+    odprintf("woke up in pending signal handler");
+  }
+}
+
 pthread_mutex_t already_in_gc_lock;
+pthread_mutex_t gc_barrier_lock = PTHREAD_MUTEX_INITIALIZER;
 
 void gc_lock_mutex()
 {
   struct thread * p = arch_os_get_current_thread();
-  pthread_mutex_lock(&already_in_gc_lock);
+  while (pthread_mutex_trylock(&already_in_gc_lock) == EBUSY) {
+    odprintf("thread in a gc_lock_mutex");
+    set_thread_state(p, STATE_SUSPENDED);
+    scrub_control_stack();
+    clear_pseudo_atomic_interrupted(p);
+    SetSymbolValue(GC_PENDING, NIL, p);
+    SetSymbolValue(STOP_FOR_GC_PENDING, NIL, p);
+    odprintf("thread in a gc_lock_mutex, waiting for unsuspension");
+    wait_for_thread_state_change(p, STATE_SUSPENDED);
+    odprintf("thread woke up in a gc_lock_mutex");
+    pthread_mutex_lock(&gc_barrier_lock);
+    pthread_mutex_unlock(&gc_barrier_lock);
+    odprintf("past gc_barrier_lock");
+  }
+  odprintf("at gc_barrier_lock");
+  pthread_mutex_lock(&gc_barrier_lock);
+  odprintf("in gc_barrier_lock");
   clear_pseudo_atomic_interrupted(p);
   SetSymbolValue(GC_PENDING, NIL, p);
   SetSymbolValue(STOP_FOR_GC_PENDING, NIL, p);
@@ -617,10 +660,48 @@ void gc_unlock_mutex()
 {
   struct thread * p = arch_os_get_current_thread();
   pthread_mutex_unlock(&already_in_gc_lock);
+  odprintf("releasing gc_barrier_lock");
+  pthread_mutex_unlock(&gc_barrier_lock);
   clear_pseudo_atomic_interrupted(p);
   SetSymbolValue(GC_PENDING, NIL, p);
   SetSymbolValue(STOP_FOR_GC_PENDING, NIL, p);
 }
+
+lispobj fn_by_pc(unsigned int pc)
+{
+  lispobj obj = search_read_only_space(pc);
+  if (!obj)
+    obj = search_static_space(pc);
+  if (!obj)
+    obj = search_dynamic_space(pc);
+  return obj;
+}
+
+int pc_in_lisp_code(unsigned int pc)
+{
+  return
+    search_read_only_space(pc) != NULL ||
+    search_static_space(pc) != NULL ||
+    search_dynamic_space(pc) != NULL;
+}
+
+int thread_get_pc(struct thread *th)
+{
+  CONTEXT ctx;
+  pthread_np_get_thread_context(th->os_thread, &ctx);
+  return ctx.Eip;
+}
+
+int thread_in_lisp_code(struct thread *th)
+{
+  return pc_in_lisp_code(thread_get_pc(th));
+}
+
+const char * fn_name(lispobj fn)
+{
+  return "unknown";
+}
+
 #endif
 
 /* To avoid deadlocks when gc stops the world all clients of each
@@ -630,7 +711,8 @@ void gc_stop_the_world()
 {
     struct thread *p,*th=arch_os_get_current_thread();
     int status, lock_ret;
-    OutputDebugString("stopping the world\n");
+    odprintf("stopping the world\n");
+    ++gcs;
 #ifdef LOCK_CREATE_THREAD
     /* KLUDGE: Stopping the thread during pthread_create() causes deadlock
      * on FreeBSD. */
@@ -653,22 +735,53 @@ void gc_stop_the_world()
         gc_assert(p->os_thread != 0);
         FSHOW_SIGNAL((stderr,"/gc_stop_the_world: thread=%lu, state=%x\n",
                       p->os_thread, thread_state(p)));
+        again:
+        odprintf("looking at 0x%p, state is %s", p->os_thread, get_thread_state_string(thread_state(p)));
+        if (p != th && thread_state(p) == STATE_SUSPENDED)
+          ++already_suspended_count;
         if((p!=th) && ((thread_state(p)==STATE_RUNNING))) {
-            int delay = 50;
             FSHOW_SIGNAL((stderr,"/gc_stop_the_world: suspending thread %lu\n",
                           p->os_thread));
 #if defined(LISP_FEATURE_WIN32)
             pthread_np_suspend(p->os_thread);
+            p->os_suspended = 0;
             if (get_pseudo_atomic_atomic(p) || get_pseudo_atomic_interrupted(p)) {
+              ++pai_stopped;
               if (!get_pseudo_atomic_interrupted(p))
                 set_pseudo_atomic_interrupted(p);
               SetSymbolValue(STOP_FOR_GC_PENDING, T, p);
               pthread_np_resume(p->os_thread);
-              fprintf(stderr, "thread 0x%p stopping with pai\n", p->os_thread);
+              odprintf("0x%p, case 1: stopping with pai", p->os_thread);
               wait_for_thread_state_change(p, STATE_RUNNING);
-              fprintf(stderr, "thread 0x%p stopped with pai\n", p->os_thread);
+              odprintf("0x%p, case 1: stopped with pai", p->os_thread);
+            } else if (sigismember(&p->os_thread->blocked_signal_set, SIG_STOP_FOR_GC)) {
+              ++sigmask_stopped;
+              SetSymbolValue(STOP_FOR_GC_PENDING, T, p);
+              pthread_np_add_pending_signal(p->os_thread, SIG_STOP_FOR_GC);
+              pthread_np_resume(p->os_thread);
+              odprintf("0x%p, case 2: stopping thread with signals masked", p->os_thread);
+              wait_for_thread_state_change(p, STATE_RUNNING);
+              odprintf("0x%p, case 2: stopped thread", p->os_thread);
+            } /* else if (is_gc_safe(p)) {
+            } */ else if (thread_in_lisp_code(p)) {
+              unsigned int pc = thread_get_pc(p);
+              lispobj fn = fn_by_pc(pc);
+              if (1) {
+                odprintf("0x%p, case 4: thread in lisp code, EIP = 0x%p, FN = 0x%p (%s), retrying", p->os_thread, pc, fn, fn_name(fn));
+                pthread_np_resume(p->os_thread);
+                Sleep(100);
+                goto again;
+              }
+              
+              ++lisp_code_stopped;
+              odprintf("0x%p, case 4: thread in lisp code, EIP = 0x%p, FN = 0x%p", p->os_thread, pc, fn);
+              p->os_suspended = 1;
             } else {
-              lose("Argh! Can't stop a thread");
+              ++retries;
+              pthread_np_resume(p->os_thread);
+              odprintf("0x%p, case 3 or 5, can't stop (gc_safe or runtime-code)", p->os_thread);
+              Sleep(100);
+              goto again;
             }
 #else
             /* We already hold all_thread_lock, P can become DEAD but
@@ -703,14 +816,14 @@ void gc_stop_the_world()
     pthread_unlock_structures();
 #endif
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:end\n"));
-    OutputDebugString(" stopped the world\n");
+    odprintf(" stopped the world\n");
 }
 
 void gc_start_the_world()
 {
     struct thread *p,*th=arch_os_get_current_thread();
     int lock_ret;
-    OutputDebugString(" starting the world\n");
+    odprintf(" starting the world\n");
     /* if a resumed thread creates a new thread before we're done with
      * this loop, the new thread will get consed on the front of
      * all_threads, but it won't have been stopped so won't need
@@ -728,7 +841,11 @@ void gc_start_the_world()
                 FSHOW_SIGNAL((stderr, "/gc_start_the_world: resuming %lu\n",
                               p->os_thread));
 #if defined(LISP_FEATURE_WIN32)
-                set_thread_state(p, STATE_RUNNING);
+                odprintf("resuming 0x%p from state %s, os_suspended = %d", p->os_thread, get_thread_state_string(thread_state(p)), p->os_suspended);
+                if (p->os_suspended)
+                  pthread_np_resume(p->os_thread);
+                else
+                  set_thread_state(p, STATE_RUNNING);
 #else
                 set_thread_state(p, STATE_RUNNING);
 #endif
@@ -744,7 +861,9 @@ void gc_start_the_world()
 #endif
 
     FSHOW_SIGNAL((stderr,"/gc_start_the_world:end\n"));
-    OutputDebugString(" started the world\n");
+    odprintf(" started the world\n");
+    
+    odprintf("So far: %d gcs, stopping methods: pai = %d, sigmask = %d, pending signs = %d, lisp_code = %d, retries = %d, already suspended = %d", gcs, pai_stopped, sigmask_stopped, pending_signals, lisp_code_stopped, retries, already_suspended_count);
 }
 #endif
 

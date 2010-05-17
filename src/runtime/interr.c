@@ -53,7 +53,8 @@ void print_message(char *fmt, va_list ap)
 {
     fprintf(stderr, " in SBCL pid %d",getpid());
 #if defined(LISP_FEATURE_SB_THREAD)
-    fprintf(stderr, "(tid %lu)", (unsigned long) GetCurrentThreadId());
+    fprintf(stderr, "(tid 0x%p)", pthread_self());
+    odprintf("lose");
 #endif
     if (fmt) {
         fprintf(stderr, ":\n");

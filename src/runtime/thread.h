@@ -36,13 +36,24 @@ thread_state(struct thread *thread)
     return state;
 }
 
+static const char * get_thread_state_string(lispobj state)
+{
+  if (state == STATE_RUNNING) return "RUNNING";
+  if (state == STATE_SUSPENDED) return "SUSPENDED";
+  if (state == STATE_DEAD) return "DEAD";
+  return "unknown";
+}
+
 static inline void
 set_thread_state(struct thread *thread, lispobj state)
 {
+    lispobj old_state;
     pthread_mutex_lock(thread->state_lock);
+    old_state = thread->state;
     thread->state = state;
     pthread_cond_broadcast(thread->state_cond);
     pthread_mutex_unlock(thread->state_lock);
+    odprintf("changed thread_state(0x%p) from %s to %s", thread->os_thread, get_thread_state_string(old_state), get_thread_state_string(state));
 }
 
 static inline void

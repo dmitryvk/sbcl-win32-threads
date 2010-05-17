@@ -404,6 +404,8 @@
   (alien-stack-start :c-type "lispobj *" :length #!+alpha 2 #!-alpha 1)
   (alien-stack-pointer :c-type "lispobj *" :length #!+alpha 2 #!-alpha 1)
   #!+gencgc (alloc-region :c-type "struct alloc_region" :length 5)
+  #!+(and win32 sb-thread)
+  (os-suspended :c-type "unsigned int" :length 1)
   (this :c-type "struct thread *" :length #!+alpha 2 #!-alpha 1)
   (prev :c-type "struct thread *" :length #!+alpha 2 #!-alpha 1)
   (next :c-type "struct thread *" :length #!+alpha 2 #!-alpha 1)

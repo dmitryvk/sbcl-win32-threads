@@ -3,9 +3,11 @@
   (loop
     (loop repeat 1
       for ar = (make-array (* 1024 1024 1) :initial-element 0)
-      do (setf (aref ar 1000) 112))
+      do (loop for i from 0 below (length ar) do (setf (aref ar i) 123)))
     (format stream "~A" char)
-    (finish-output stream)))
+    (finish-output stream)
+    (sleep 0.1)
+    ))
 
 (defun threaded-cons-lot (n)
   (loop
@@ -15,5 +17,14 @@
     for c = (code-char (+ i (char-code #\A)))
     do (sb-thread:make-thread (lambda () (cons-lot stream c)))))
 
-(threaded-cons-lot 2)
+#+nil
+(with-open-file (f "diasm.txt" :direction :output :if-exists :supersede)
+  (let ((*standard-output* f))
+    (disassemble 'cons-lot)))
+
+(sleep 1)
+(defconstant +n+ 3)
+    
+(threaded-cons-lot (1- +n+))
+(cons-lot *standard-output* (code-char (+ (1- +n+) (char-code #\A))))
 ;(quit)

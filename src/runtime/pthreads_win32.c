@@ -84,6 +84,7 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_
 {
   pthread_t pth = (pthread_t)malloc(sizeof(pthread_thread));
   pthread_t self = pthread_self();
+  int i;
   HANDLE createdThread = CreateThread(NULL, attr ? attr->stack_size : 0, Thread_Function, pth, CREATE_SUSPENDED, NULL);
   if (!createdThread)
     return 1;
@@ -98,6 +99,8 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_
   } else {
     sigemptyset(&pth->blocked_signal_set);
   }
+  for (i = 1; i < NSIG; ++i)
+    pth->signal_is_pending[i] = 0;
   ResumeThread(createdThread);
   if (thread)
     *thread = createdThread;
@@ -150,6 +153,8 @@ int pthread_setspecific(pthread_key_t key, const void *value)
   return TlsSetValue(key, (LPVOID)value) != FALSE;
 }
 
+void odprintf(const char *fmt, ...);
+
 int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset)
 {
   pthread_t self = pthread_self();
@@ -179,6 +184,16 @@ int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset)
       OutputDebugString(buf);
     }
   }
+  {
+    int i;
+    for (i = 1; i < NSIG; ++i) {
+      unsigned int is_pending = InterlockedExchange(&self->signal_is_pending[i], 0);
+      if (is_pending && !sigismember(&self->blocked_signal_set, i)) {
+        odprintf("calling pending signal handler for signal %d", i);
+        pthread_np_pending_signal_handler(i);
+      }
+    }
+  }
   return 0;
 }
 
@@ -196,6 +211,12 @@ int pthread_mutex_destroy(pthread_mutex_t *mutex)
   if (*mutex != PTHREAD_MUTEX_INITIALIZER)
     DeleteCriticalSection(*mutex);
   return 0;
+}
+
+void pthread_np_add_pending_signal(pthread_t thread, int signum)
+{
+  odprintf("adding pending signal %d for thread 0x%p", signum, thread);
+  thread->signal_is_pending[signum] = 1;
 }
 
 void pthread_checkpoint()
@@ -454,6 +475,11 @@ void pthreads_win32_init()
   pth->waiting_cond = NULL;
   pth->in_safepoint = 0;
   sigemptyset(&pth->blocked_signal_set);
+  {
+    int i;
+    for (i = 1; i < NSIG; ++i)
+      pth->signal_is_pending[i] = 0;
+  }
   pthread_mutex_init(&mutex_init_lock, NULL);
   DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &pth->handle, 0, TRUE, DUPLICATE_SAME_ACCESS);
   TlsSetValue(thread_self_tls_index, pth);

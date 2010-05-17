@@ -8,6 +8,38 @@
 #include <windows.h>
 
 /* 0 - Misc */
+
+
+#define SIG_IGN ((void (*)(int, siginfo_t, void*))-1)
+#define SIG_DFL ((void (*)(int, siginfo_t, void*))-2)
+
+#define SIGHUP    1
+#define SIGINT    2 /* Interactive attention */
+#define SIGQUIT   3
+#define SIGILL    4 /* Illegal instruction */
+#define SIGPIPE   5
+#define SIGALRM   6
+#define SIGURG    7
+#define SIGFPE    8 /* Floating point error */
+#define SIGTSTP   9
+#define SIGCHLD   10
+#define SIGSEGV   11 /* Segmentation violation */
+#define SIGIO     12
+#define SIGXCPU   13
+#define SIGXFSZ   14
+#define SIGTERM   15 /* Termination request */
+#define SIGVTALRM 16
+#define SIGPROF   17
+#define SIGWINCH  18
+#define SIGBREAK  21 /* Control-break */
+#define SIGABRT   22 /* Abnormal termination (abort) */
+
+#define SIGRTMIN  23
+
+#define SIG_DEFER SIGHUP
+
+#define NSIG 31     /* maximum signal number + 1 */
+
 void pthreads_win32_init();
 
 /* 1 - Thread */
@@ -121,7 +153,12 @@ typedef struct pthread_thread {
   int uninterruptible_section_nesting;
   unsigned int in_safepoint;
   sigset_t blocked_signal_set;
+  unsigned int signal_is_pending[NSIG];
 } pthread_thread;
+
+void pthread_np_pending_signal_handler(int signum);
+
+void pthread_np_add_pending_signal(pthread_t thread, int signum);
 
 int pthread_np_get_thread_context(pthread_t thread, CONTEXT* context);
 
@@ -132,35 +169,5 @@ int sigdelset(sigset_t *set, int signum);
 int sigismember(const sigset_t *set, int signum);
 
 typedef int sig_atomic_t;
-
-#define SIG_IGN ((void (*)(int, siginfo_t, void*))-1)
-#define SIG_DFL ((void (*)(int, siginfo_t, void*))-2)
-
-#define SIGHUP    1
-#define SIGINT    2 /* Interactive attention */
-#define SIGQUIT   3
-#define SIGILL    4 /* Illegal instruction */
-#define SIGPIPE   5
-#define SIGALRM   6
-#define SIGURG    7
-#define SIGFPE    8 /* Floating point error */
-#define SIGTSTP   9
-#define SIGCHLD   10
-#define SIGSEGV   11 /* Segmentation violation */
-#define SIGIO     12
-#define SIGXCPU   13
-#define SIGXFSZ   14
-#define SIGTERM   15 /* Termination request */
-#define SIGVTALRM 16
-#define SIGPROF   17
-#define SIGWINCH  18
-#define SIGBREAK  21 /* Control-break */
-#define SIGABRT   22 /* Abnormal termination (abort) */
-
-#define SIGRTMIN  23
-
-#define SIG_DEFER SIGHUP
-
-#define NSIG 31     /* maximum signal number + 1 */
 
 #endif

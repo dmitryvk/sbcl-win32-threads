@@ -4839,10 +4839,14 @@ void unhandled_sigmemoryfault(void* addr);
  * we were able to handle, or false if it was abnormal and control
  * should fall through to the general SIGSEGV/SIGBUS/whatever logic. */
 
+void odprintf(const char * fmt, ...);
+ 
 int
 gencgc_handle_wp_violation(void* fault_addr)
 {
     page_index_t page_index = find_page_index(fault_addr);
+    
+    odprintf("wp page fault at 0x%p", fault_addr);
 
 #if QSHOW_SIGNALS
     FSHOW((stderr, "heap WP violation? fault_addr=%x, page_index=%d\n",
@@ -4875,8 +4879,9 @@ gencgc_handle_wp_violation(void* fault_addr)
              * we had better not have the second one lose here if it
              * does this test after the first one has already set wp=0
              */
+            if (0)
             if(page_table[page_index].write_protected_cleared != 1)
-                lose("fault in heap page %d not marked as write-protected\nboxed_region.first_page: %d, boxed_region.last_page %d\n",
+                odprintf("fault in heap page %d not marked as write-protected\nboxed_region.first_page: %d, boxed_region.last_page %d\n",
                      page_index, boxed_region.first_page,
                      boxed_region.last_page);
         }
