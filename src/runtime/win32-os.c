@@ -67,6 +67,20 @@ int linux_sparc_siginfo_bug = 0;
 int linux_supports_futex=0;
 #endif
 
+#include <stdarg.h>
+
+void odprintf(const char * fmt, ...)
+{
+  char buf[512];
+  va_args args;
+  int thread_id_length;
+  thread_id_length = sprintf(buf, "[0x%p] ", pthread_self());
+  va_start(args, fmt);
+  vsprintf(buf + thread_id_length, fmt, args);
+  va_end(args);
+  OutputDebugString(buf);
+}
+
 /* The exception handling function looks like this: */
 EXCEPTION_DISPOSITION handle_exception(EXCEPTION_RECORD *,
                                        struct lisp_exception_frame *,
