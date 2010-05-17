@@ -22,8 +22,8 @@
   (let ((*standard-output* f))
     (disassemble 'cons-lot)))
 
-(sleep 1)
 (defconstant +n+ 3)
+(sleep 1)
     
 (threaded-cons-lot (1- +n+))
 (cons-lot *standard-output* (code-char (+ (1- +n+) (char-code #\A))))

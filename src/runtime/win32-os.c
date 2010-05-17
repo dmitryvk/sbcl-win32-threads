@@ -405,7 +405,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                 if (exception_record->ExceptionInformation[0]) {
                     int index = find_page_index(fault_address);
                     if ((index != -1) && (page_table[index].write_protected)) {
-                        odprintf("wv_violation at EIP = 0x%p", context->Eip);
+                        //odprintf("wv_violation at EIP = 0x%p", context->Eip);
                         gencgc_handle_wp_violation(fault_address);
                     }
                 }
@@ -414,7 +414,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
             }
 
         } else {
-            odprintf("exception at EIP = 0x%p", context->Eip);
+            //odprintf("exception at EIP = 0x%p", context->Eip);
             if (gencgc_handle_wp_violation(fault_address)) {
               pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
               /* gc accepts the wp violation, so resume where we left off. */

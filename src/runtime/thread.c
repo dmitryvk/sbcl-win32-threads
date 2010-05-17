@@ -744,6 +744,7 @@ void gc_stop_the_world()
                           p->os_thread));
 #if defined(LISP_FEATURE_WIN32)
             pthread_np_suspend(p->os_thread);
+            odprintf("0x%p suspended", p->os_thread);
             p->os_suspended = 0;
             if (get_pseudo_atomic_atomic(p) || get_pseudo_atomic_interrupted(p)) {
               ++pai_stopped;
@@ -779,7 +780,7 @@ void gc_stop_the_world()
             } else {
               ++retries;
               pthread_np_resume(p->os_thread);
-              odprintf("0x%p, case 3 or 5, can't stop (gc_safe or runtime-code)", p->os_thread);
+              odprintf("0x%p, case 3 or 5, can't stop (gc_safe or runtime-code, EIP = 0x%p)", p->os_thread, thread_get_pc(p));
               Sleep(100);
               goto again;
             }
