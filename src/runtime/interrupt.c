@@ -1201,11 +1201,7 @@ sig_stop_for_gc_handler(int signal, siginfo_t *info, os_context_t *context)
              fixnum_value(thread->state));
     }
 
-#if defined(LISP_FEATURE_WIN32)
-    lose("Argh, don't know how to suspend myself");
-#else
     set_thread_state(thread,STATE_SUSPENDED);
-#endif
     FSHOW_SIGNAL((stderr,"suspended\n"));
 
     /* While waiting for gc to finish occupy ourselves with zeroing
@@ -1214,11 +1210,7 @@ sig_stop_for_gc_handler(int signal, siginfo_t *info, os_context_t *context)
      * actually a must. */
     scrub_control_stack();
 
-#if defined(LISP_FEATURE_WIN32)
-    lose("Argh, don't know how to wait for wake");
-#else
     wait_for_thread_state_change(thread, STATE_SUSPENDED);
-#endif
     FSHOW_SIGNAL((stderr,"resumed\n"));
 
     if(thread_state(thread)!=STATE_RUNNING) {

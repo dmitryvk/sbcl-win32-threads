@@ -658,7 +658,18 @@ void gc_stop_the_world()
             FSHOW_SIGNAL((stderr,"/gc_stop_the_world: suspending thread %lu\n",
                           p->os_thread));
 #if defined(LISP_FEATURE_WIN32)
-            lose("argh, won't stop thread");
+            pthread_np_suspend(p->os_thread);
+            if (get_pseudo_atomic_atomic(p) || get_pseudo_atomic_interrupted(p)) {
+              if (!get_pseudo_atomic_interrupted(p))
+                set_pseudo_atomic_interrupted(p);
+              SetSymbolValue(STOP_FOR_GC_PENDING, T, p);
+              pthread_np_resume(p->os_thread);
+              fprintf(stderr, "thread 0x%p stopping with pai\n", p->os_thread);
+              wait_for_thread_state_change(p, STATE_RUNNING);
+              fprintf(stderr, "thread 0x%p stopped with pai\n", p->os_thread);
+            } else {
+              lose("Argh! Can't stop a thread");
+            }
 #else
             /* We already hold all_thread_lock, P can become DEAD but
              * cannot exit, ergo it's safe to use pthread_kill. */
@@ -717,7 +728,7 @@ void gc_start_the_world()
                 FSHOW_SIGNAL((stderr, "/gc_start_the_world: resuming %lu\n",
                               p->os_thread));
 #if defined(LISP_FEATURE_WIN32)
-                lose("argh, can't resume threads");
+                set_thread_state(p, STATE_RUNNING);
 #else
                 set_thread_state(p, STATE_RUNNING);
 #endif
