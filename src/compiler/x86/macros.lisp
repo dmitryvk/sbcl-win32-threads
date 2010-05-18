@@ -388,7 +388,8 @@
        ;; if PAI was set, interrupts were disabled at the same time
        ;; using the process signal mask.
        (inst break pending-interrupt-trap)
-       (emit-label ,label))))
+       (emit-label ,label)
+       (inst call (make-fixup "check_for_gc_suspension")))))
 
 #!-sb-thread
 (defmacro pseudo-atomic (&rest forms)

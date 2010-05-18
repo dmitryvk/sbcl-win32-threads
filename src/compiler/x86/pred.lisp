@@ -18,6 +18,8 @@
 (define-vop (branch)
   (:info dest)
   (:generator 5
+     (when (label-position dest)
+       (inst call (make-fixup "check_for_gc_suspension" :foreign)))
     (inst jmp dest)))
 
 
@@ -37,6 +39,8 @@
 (define-vop (branch-if)
   (:info dest flags not-p)
   (:generator 0
+     (when (label-position dest)
+       (inst call (make-fixup "check_for_gc_suspension" :foreign)))
      (flet ((negate-condition (name)
               (let ((code (logxor 1 (conditional-opcode name))))
                 (aref *condition-name-vec* code))))

@@ -897,6 +897,25 @@ Lend_base:
         pop %eax
 	ret
 	SIZE(GNAME(fast_bzero_base))
+  
+	.text
+	.align	align_16byte,0x90
+	.globl GNAME(check_for_gc_suspension)
+	TYPE(GNAME(check_for_gc_suspension))
+        
+GNAME(check_for_gc_suspension):
+        pushf
+        cmpl $0, GNAME(stop_for_gc)
+        jne Lenter_gc
+        popf
+        ret
+Lenter_gc:
+        pusha
+        call GNAME(gc_enter_voluntarily)
+        popa
+        popf
+        ret
+	SIZE(GNAME(check_for_gc_suspension))
         
 	
         END()
