@@ -224,6 +224,8 @@ futex_istimeout(struct timeval *timeout)
 
     ret = gettimeofday(&tv, NULL);
     if (ret != 0)
+      odprintf("gettimeofday returned %d", ret);
+    if (ret != 0)
         return ret;
 
     return (tv.tv_sec > timeout->tv_sec) ||
@@ -238,6 +240,8 @@ futex_wait(int *lock_word, int oldval, long sec, unsigned long usec)
     sigset_t oldset;
     struct timeval tv, *timeout;
 
+    odprintf("futex_wait lw = 0x%p, oldval = %d, sec = %ld, usec = 0x%lx", lock_word, oldval, sec, usec);
+    
 again:
     if (sec < 0)
         timeout = NULL;
@@ -273,16 +277,26 @@ again:
         sigset_t pendset;
 #endif
         struct timespec abstime;
+        
+        int istimeout;
 
         ret = futex_relative_to_abs(&abstime, FUTEX_WAIT_NSEC);
         futex_assert(ret == 0);
 
+        odprintf("in futex_wait, doing pthread_cond_timedwait on 0x%p, 0x%p", &futex->cond, &futex->mutex);
         result = pthread_cond_timedwait(&futex->cond, &futex->mutex,
                                         &abstime);
         futex_assert(result == 0 || result == ETIMEDOUT);
 
-        if (result != ETIMEDOUT || futex_istimeout(timeout))
+        istimeout = futex_istimeout(timeout);
+        odprintf("result = %d, istimeout = %d", result, istimeout);        
+        if (result != ETIMEDOUT || istimeout)
             break;
+        if (*(volatile int *)lock_word != oldval) {
+            odprintf("lock_word changed from %d to %d, but code wouldn't notice it", oldval, *(volatile int*)lock_word);
+            result = 0;
+            goto done;
+        }
 
         /* futex system call of Linux returns with EINTR errno when
          * it's interrupted by signals.  Check pending signals here to
@@ -332,10 +346,12 @@ futex_wake(int *lock_word, int n)
         /* The lisp-side code passes N=2**29-1 for a broadcast. */
         if (n >= ((1 << 29) - 1)) {
             /* CONDITION-BROADCAST */
+            odprintf("doing pthread_cond_broadcast on 0x%p", &futex->cond);
             ret = pthread_cond_broadcast(&futex->cond);
             futex_assert(ret == 0);
         } else {
             while (n-- > 0) {
+                odprintf("doing pthread_cond_signal on 0x%p", &futex->cond);
                 ret = pthread_cond_signal(&futex->cond);
                 futex_assert(ret == 0);
             }
