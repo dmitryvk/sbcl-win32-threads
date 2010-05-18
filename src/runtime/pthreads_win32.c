@@ -219,6 +219,12 @@ void pthread_np_add_pending_signal(pthread_t thread, int signum)
   thread->signal_is_pending[signum] = 1;
 }
 
+void pthread_np_remove_pending_signal(pthread_t thread, int signum)
+{
+  odprintf("removing pending signal %d for thread 0x%p", signum, thread);
+  thread->signal_is_pending[signum] = 0;
+}
+
 void pthread_checkpoint()
 {
   pthread_t self = pthread_self();
@@ -315,11 +321,15 @@ int pthread_cond_broadcast(pthread_cond_t *cv)
 {
   int count = 0;
   pthread_mutex_lock(&cv->wakeup_lock);
+  if (!cv->first_wakeup)
+    odprintf("no waiters");
   while (cv->first_wakeup)
   {
     struct thread_wakeup * w = cv->first_wakeup;
+    HANDLE waitevent = w->event;
     cv->first_wakeup = w->next;
-    SetEvent(w->event);
+    SetEvent(waitevent);
+    odprintf("signaled event 0x%p", waitevent);
     ++count;
   }
   cv->last_wakeup = NULL;
@@ -331,12 +341,16 @@ int pthread_cond_signal(pthread_cond_t *cv)
 {
   struct thread_wakeup * w;
   pthread_mutex_lock(&cv->wakeup_lock);
+  if (!cv->first_wakeup)
+    odprintf("no waiters");
   w = cv->first_wakeup;
   if (w) {
+    HANDLE waitevent = w->event;
     cv->first_wakeup = w->next;
     if (!cv->first_wakeup)
       cv->last_wakeup = NULL;
-    SetEvent(w->event);
+    SetEvent(waitevent);
+    odprintf("signaled event 0x%p", waitevent);
   }
   pthread_mutex_unlock(&cv->wakeup_lock);
   return 0;
@@ -402,11 +416,13 @@ int pthread_cond_wait(pthread_cond_t * cv, pthread_mutex_t * cs)
   }
   pthread_self()->waiting_cond = cv;
   pthread_mutex_unlock(cs);
+  odprintf("waiting on event 0x%p", w.event);
   if (cv->alertable) {
     while (WaitForSingleObjectEx(w.event, INFINITE, TRUE) == WAIT_IO_COMPLETION);
   } else {
     WaitForSingleObject(w.event, INFINITE);
   }
+  odprintf("wait returned");
   pthread_self()->waiting_cond = NULL;
   cv->return_fn(w.event);
   pthread_checkpoint();
@@ -433,16 +449,18 @@ int pthread_cond_timedwait(pthread_cond_t * cv, pthread_mutex_t * cs, const stru
     msec = sec * 1000 + abstime->tv_nsec / 1000000 - cur_tm.tv_usec / 1000;
     if (msec < 0)
       msec = 0;
+    odprintf("waiting on event 0x%p for %d msec", w.event, msec);
     if (cv->alertable) {
       while ((rv = WaitForSingleObjectEx(w.event, msec, TRUE)) == WAIT_IO_COMPLETION);
     } else {
       rv = WaitForSingleObject(w.event, msec);
     }
   }
+  odprintf("wait returned 0x%lx", rv);
   pthread_self()->waiting_cond = NULL;
-  cv->return_fn(w.event);
   if (rv == WAIT_TIMEOUT)
     cv_wakeup_remove(cv, &w);
+  cv->return_fn(w.event);
   pthread_checkpoint();
   pthread_mutex_lock(cs);
   if (rv == WAIT_TIMEOUT)

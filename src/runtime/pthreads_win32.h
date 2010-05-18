@@ -159,6 +159,7 @@ typedef struct pthread_thread {
 void pthread_np_pending_signal_handler(int signum);
 
 void pthread_np_add_pending_signal(pthread_t thread, int signum);
+void pthread_np_remove_pending_signal(pthread_t thread, int signum);
 
 int pthread_np_get_thread_context(pthread_t thread, CONTEXT* context);
 
