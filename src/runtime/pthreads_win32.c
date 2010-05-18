@@ -376,8 +376,10 @@ void cv_wakeup_remove(struct pthread_cond_t* cv, struct thread_wakeup* w)
       struct thread_wakeup * prev = cv->first_wakeup;
       while (prev && prev->next != w)
         prev = prev->next;
-      if (!prev)
+      if (!prev) {
+        pthread_mutex_unlock(&cv->wakeup_lock);
         return;
+      }
       prev->next = w->next;
       if (cv->last_wakeup == w)
         cv->last_wakeup = prev;
