@@ -69,6 +69,13 @@ int linux_supports_futex=0;
 
 #include <stdarg.h>
 
+void odprint(const char * msg)
+{
+  char buf[512];
+  sprintf(buf, "[0x%p] %s", pthread_self(), msg);
+  OutputDebugString(buf);
+}
+
 void odprintf(const char * fmt, ...)
 {
   char buf[512];
@@ -434,6 +441,8 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     if (internal_errors_enabled) {
         lispobj context_sap;
         lispobj exception_record_sap;
+    
+        odprintf("handle_exception dropping to lisp-side handler; code = 0x%lx, addr = 0x%p, EIP = 0x%p", exception_record->ExceptionCode, fault_address, context->Eip);
 
         /* We're making the somewhat arbitrary decision that having
          * internal errors enabled means that lisp has sufficient
