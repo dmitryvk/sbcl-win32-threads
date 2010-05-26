@@ -240,9 +240,6 @@ main(int argc, char *argv[], char *envp[])
     #if defined(LISP_FEATURE_WIN32)
     OutputDebugString("pthreads_win32_init");
     pthreads_win32_init();
-    OutputDebugString("pthread_mutex_init already_in_gc_lock");
-    pthread_mutex_init(&already_in_gc_lock, NULL);
-    OutputDebugString("pthread_mutex_init already_in_gc_lock ok");
     #endif
 
     interrupt_init();

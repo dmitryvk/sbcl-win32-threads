@@ -609,20 +609,9 @@ os_thread_t create_thread(lispobj initial_function) {
 
 unsigned int stop_for_gc = 0;
 
-/* Stats */
-unsigned int voluntary_suspends = 0;
-unsigned int pending_signals = 0;
-unsigned int pai_stopped = 0;
-unsigned int sigmask_stopped = 0;
-unsigned int lisp_code_stopped = 0;
-unsigned int gcs = 0;
-unsigned int retries = 0;
-unsigned int already_suspended_count = 0;
-
 void gc_enter_voluntarily()
 {
   struct thread * p = arch_os_get_current_thread();
-  ++voluntary_suspends;
   set_thread_state(p, STATE_SUSPENDED);
   odprintf("voluntarily suspended");
   scrub_control_stack();
@@ -665,7 +654,6 @@ void pthread_np_safepoint()
 void pthread_np_pending_signal_handler(int signum)
 {
   if (signum == SIG_STOP_FOR_GC) {
-    ++pending_signals;
     gc_maybe_enter_voluntarily();
 #if 0
     struct thread * p = arch_os_get_current_thread();
@@ -677,29 +665,6 @@ void pthread_np_pending_signal_handler(int signum)
     odprintf("woke up in pending signal handler");
 #endif
   }
-}
-
-pthread_mutex_t already_in_gc_lock;
-
-void gc_lock_mutex()
-{
-  struct thread * p = arch_os_get_current_thread();
-  odprintf("Suspending myself");
-  p->gc_safe = 1;
-  odprintf("Waiting for already_in_gc");
-  pthread_mutex_lock(&already_in_gc_lock);
-  p->gc_safe = 0;
-  odprintf("Acquired already_in_gc");
-  clear_pseudo_atomic_interrupted(p);
-  SetSymbolValue(GC_PENDING, NIL, p);
-  SetSymbolValue(STOP_FOR_GC_PENDING, NIL, p);
-  gc_safepoint();
-}
-
-void gc_unlock_mutex()
-{
-  pthread_mutex_unlock(&already_in_gc_lock);
-  odprintf("Released already_in_gc");
 }
 
 lispobj fn_by_pc(unsigned int pc)
@@ -757,7 +722,6 @@ void gc_stop_the_world()
     int status, lock_ret;
     odprintf("stopping the world\n");
     stop_for_gc = 1;
-    ++gcs;
 #ifdef LOCK_CREATE_THREAD
     /* KLUDGE: Stopping the thread during pthread_create() causes deadlock
      * on FreeBSD. */
@@ -781,8 +745,6 @@ void gc_stop_the_world()
         FSHOW_SIGNAL((stderr,"/gc_stop_the_world: thread=%lu, state=%x\n",
                       p->os_thread, thread_state(p)));
         odprintf("looking at 0x%p, state is %s, gc_safe = %d", p->os_thread, get_thread_state_string(thread_state(p)), p->gc_safe);
-        if (p != th && thread_state(p) == STATE_SUSPENDED)
-          ++already_suspended_count;
         if((p!=th) && ((thread_state(p)==STATE_RUNNING)) && !p->gc_safe) {
             FSHOW_SIGNAL((stderr,"/gc_stop_the_world: suspending thread %lu\n",
                           p->os_thread));
@@ -865,8 +827,6 @@ void gc_start_the_world()
 
     FSHOW_SIGNAL((stderr,"/gc_start_the_world:end\n"));
     odprintf(" started the world\n");
-    
-    odprintf("So far: %d gcs, stopping methods: pai = %d, voluntary = %d, sigmask = %d, signs = %d, lisp_code = %d, retries = %d, already = %d", gcs, pai_stopped, voluntary_suspends, sigmask_stopped, pending_signals, lisp_code_stopped, retries, already_suspended_count);
 }
 #endif
 

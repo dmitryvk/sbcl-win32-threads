@@ -149,10 +149,6 @@ run in any thread.")
 
 #!+sb-thread
 (progn
-  #!+win32
-  (progn
-    (sb!alien:define-alien-routine gc-lock-mutex sb!alien:void)
-    (sb!alien:define-alien-routine gc-unlock-mutex sb!alien:void))
   (sb!alien:define-alien-routine gc-stop-the-world sb!alien:void)
   (sb!alien:define-alien-routine gc-start-the-world sb!alien:void))
 #!-sb-thread
@@ -178,7 +174,6 @@ run in any thread.")
 
 ;;; For GENCGC all generations < GEN will be GC'ed.
 
-#!-win32
 (defvar *already-in-gc* (sb!thread:make-mutex :name "GC lock"))
 
 ;;; A unique GC id. This is supplied for code that needs to detect
@@ -220,9 +215,7 @@ run in any thread.")
            (let ((sb!impl::*in-without-gcing* t)
                  (sb!impl::*deadline* nil)
                  (sb!impl::*deadline-seconds* nil))
-             (#!-win32 sb!thread:with-mutex #!-win32 (*already-in-gc*)
-               #!+win32 progn
-               #!+win32 (gc-lock-mutex)
+             (sb!thread:with-mutex (*already-in-gc*)
                (let ((*gc-inhibit* t))
                  (let ((old-usage (dynamic-usage))
                        (new-usage 0))
@@ -247,7 +240,6 @@ run in any thread.")
                      ;; normal order of things and not a bug.
                      (when (plusp freed)
                        (incf *n-bytes-freed-or-purified* freed)))))))
-           #!+win32 (gc-unlock-mutex)
            ;; While holding the mutex we were protected from
            ;; SIG_STOP_FOR_GC and recursive GCs. Now, in order to
            ;; preserve the invariant (*GC-PENDING* ->
