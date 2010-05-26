@@ -389,7 +389,7 @@
        ;; using the process signal mask.
        (inst break pending-interrupt-trap)
        (emit-label ,label)
-       (inst call (make-fixup "check_for_gc_suspension")))))
+       (inst call (make-fixup "check_for_gc_suspension" :foreign)))))
 
 #!-sb-thread
 (defmacro pseudo-atomic (&rest forms)

@@ -1207,7 +1207,8 @@
 
     (let ((lab (gen-label)))
       (setf (ir2-physenv-environment-start env) lab)
-      (vop note-environment-start node block lab)))
+      (vop note-environment-start node block lab)
+      (vop sb!vm::insert-gc-safepoint node block)))
 
   (values))
 
@@ -1664,6 +1665,7 @@
       (vop count-me node block *dynamic-counts-tn*
            (block-number (ir2-block-block block))))
 
+
     (vop* restore-dynamic-state node block
           ((reference-tn-list (cdr (ir2-nlx-info-dynamic-state 2info)) nil))
           (nil))
@@ -1729,6 +1731,21 @@
                        2block
                        #!+sb-dyncount *dynamic-counts-tn* #!-sb-dyncount nil
                        num))))
+              (let ((first-node (block-start-node block)))
+                (unless (or (and (bind-p first-node)
+                                 (xep-p (bind-lambda first-node)))
+                            (and (valued-node-p first-node)
+                                 (node-lvar first-node)
+                                 (eq (lvar-fun-name
+                                      (node-lvar first-node))
+                                     '%nlx-entry)))
+                  (when (and (rest (block-pred block))
+                             (member (loop-kind (block-loop block))
+                                     '(:natural :strange))
+                             (eq block (loop-head (block-loop block))))
+                    (vop sb!vm::insert-gc-safepoint
+                         first-node
+                         2block))))
             (ir2-convert-block block)
             (incf num))))))
   (values))
