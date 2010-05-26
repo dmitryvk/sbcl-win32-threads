@@ -239,6 +239,9 @@ futex_wait(int *lock_word, int oldval, long sec, unsigned long usec)
     struct futex *futex;
     sigset_t oldset;
     struct timeval tv, *timeout;
+#if defined(LISP_FEATURE_WIN32)
+	gc_enter_safe_region();
+#endif
 
     odprintf("futex_wait lw = 0x%p, oldval = %d, sec = %ld, usec = 0x%lx", lock_word, oldval, sec, usec);
     
@@ -322,6 +325,10 @@ done:
         sched_yield();
         goto again;
     }
+	
+#if defined(LISP_FEATURE_WIN32)
+	gc_leave_safe_region();
+#endif
 
     if (result == ETIMEDOUT)
         return 1;

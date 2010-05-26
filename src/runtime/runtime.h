@@ -111,6 +111,9 @@ typedef unsigned long pointer_sized_uint_t ;
 
 #if defined(LISP_FEATURE_SB_THREAD)
 #if defined(LISP_FEATURE_WIN32)
+void gc_safepoint();
+void gc_enter_safe_region();
+void gc_leave_safe_region();
 void odprintf(const char * fmt, ...);
 #include "pthreads_win32.h"
 #else

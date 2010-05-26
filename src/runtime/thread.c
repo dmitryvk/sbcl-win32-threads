@@ -638,6 +638,26 @@ void gc_maybe_enter_voluntarily()
     gc_enter_voluntarily();
   }
 }
+
+void gc_enter_safe_region()
+{
+  struct thread * p = arch_os_get_current_thread();
+  p->gc_safe++;
+}
+
+void gc_leave_safe_region()
+{
+  struct thread * p = arch_os_get_current_thread();
+  p->gc_safe--;
+  if (p->gc_safe == 0)
+	gc_safepoint();
+}
+
+void gc_safepoint()
+{
+	gc_maybe_enter_voluntarily();
+}
+
 void pthread_np_safepoint()
 {
 }
@@ -673,6 +693,7 @@ void gc_lock_mutex()
   clear_pseudo_atomic_interrupted(p);
   SetSymbolValue(GC_PENDING, NIL, p);
   SetSymbolValue(STOP_FOR_GC_PENDING, NIL, p);
+  gc_safepoint();
 }
 
 void gc_unlock_mutex()
