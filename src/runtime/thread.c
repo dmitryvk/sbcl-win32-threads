@@ -480,7 +480,7 @@ create_thread_struct(lispobj initial_function) {
     bind_variable(STOP_FOR_GC_PENDING,NIL,th);
 #endif
 #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
-    th->os_suspended = 0;
+    th->gc_safe = 0;
 #endif
 
     th->interrupt_data = (struct interrupt_data *)
@@ -665,13 +665,11 @@ void gc_lock_mutex()
 {
   struct thread * p = arch_os_get_current_thread();
   odprintf("Suspending myself");
-  p->os_suspended = 1;
-  set_thread_state(p, STATE_SUSPENDED);
+  p->gc_safe = 1;
   odprintf("Waiting for already_in_gc");
   pthread_mutex_lock(&already_in_gc_lock);
-  p->os_suspended = 0;
+  p->gc_safe = 0;
   odprintf("Acquired already_in_gc");
-  set_thread_state(p, STATE_RUNNING);
   clear_pseudo_atomic_interrupted(p);
   SetSymbolValue(GC_PENDING, NIL, p);
   SetSymbolValue(STOP_FOR_GC_PENDING, NIL, p);
@@ -761,16 +759,15 @@ void gc_stop_the_world()
         gc_assert(p->os_thread != 0);
         FSHOW_SIGNAL((stderr,"/gc_stop_the_world: thread=%lu, state=%x\n",
                       p->os_thread, thread_state(p)));
-        again:
-        odprintf("looking at 0x%p, state is %s", p->os_thread, get_thread_state_string(thread_state(p)));
+        odprintf("looking at 0x%p, state is %s, gc_safe = %d", p->os_thread, get_thread_state_string(thread_state(p)), p->gc_safe);
         if (p != th && thread_state(p) == STATE_SUSPENDED)
           ++already_suspended_count;
-        if((p!=th) && ((thread_state(p)==STATE_RUNNING))) {
+        if((p!=th) && ((thread_state(p)==STATE_RUNNING)) && !p->gc_safe) {
             FSHOW_SIGNAL((stderr,"/gc_stop_the_world: suspending thread %lu\n",
                           p->os_thread));
 #if defined(LISP_FEATURE_WIN32)
             odprintf("Waiting until 0x%p suspends, eip = 0x%p", p->os_thread, thread_get_pc_susp(p));
-            wait_for_thread_state_change(p, STATE_RUNNING);
+			wait_for_thread_state_change(p, STATE_RUNNING);
             odprintf("0x%p is suspended", p->os_thread);
 #else
             /* We already hold all_thread_lock, P can become DEAD but
@@ -831,10 +828,9 @@ void gc_start_the_world()
                 FSHOW_SIGNAL((stderr, "/gc_start_the_world: resuming %lu\n",
                               p->os_thread));
 #if defined(LISP_FEATURE_WIN32)
-                odprintf("resuming 0x%p from state %s, os_suspended = %d", p->os_thread, get_thread_state_string(thread_state(p)), p->os_suspended);
+                odprintf("resuming 0x%p from state %s, gc_safe = %d", p->os_thread, get_thread_state_string(thread_state(p)), p->gc_safe);
 #endif
-                if (!p->os_suspended)
-                  set_thread_state(p, STATE_RUNNING);
+                set_thread_state(p, STATE_RUNNING);
             }
         }
     }
