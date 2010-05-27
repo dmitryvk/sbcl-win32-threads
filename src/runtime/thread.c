@@ -638,7 +638,6 @@ void gc_leave_safe_region()
 {
   struct thread * p = arch_os_get_current_thread();
   p->gc_safe--;
-  if (p->gc_safe == 0)
 	gc_safepoint();
 }
 

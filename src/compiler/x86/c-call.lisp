@@ -272,7 +272,13 @@
     ;; c-call.lisp. If you modify this, modify that one too...
     (cond ((policy node (> space speed))
            (move eax function)
-           (inst call (make-fixup "call_into_c" :foreign)))
+           (inst pusha)
+           (inst call (make-fixup "gc_enter_safe_region" :foreign))
+           (inst popa)
+           (inst call (make-fixup "call_into_c" :foreign))
+           (inst pusha)
+           (inst call (make-fixup "gc_leave_safe_region" :foreign))
+           (inst popa))
           (t
            ;; Setup the NPX for C; all the FP registers need to be
            ;; empty; pop them all.
@@ -283,7 +289,13 @@
            ;; this, and it should not hurt others either.
            (inst cld)
 
+           (inst pusha)
+           (inst call (make-fixup "gc_enter_safe_region" :foreign))
+           (inst popa)
            (inst call function)
+           (inst pusha)
+           (inst call (make-fixup "gc_leave_safe_region" :foreign))
+           (inst popa)
            ;; To give the debugger a clue. FIXME: not really internal-error?
            (note-this-location vop :internal-error)
 
