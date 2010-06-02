@@ -633,18 +633,19 @@ void gc_enter_safe_region()
 {
   struct thread * p = arch_os_get_current_thread();
   p->gc_safe++;
+  gc_safepoint();
 }
 
 void gc_leave_safe_region()
 {
   struct thread * p = arch_os_get_current_thread();
   p->gc_safe--;
-	gc_safepoint();
+  gc_safepoint();
 }
 
 void gc_safepoint()
 {
-	gc_maybe_enter_voluntarily();
+  gc_maybe_enter_voluntarily();
 }
 
 void pthread_np_safepoint()
@@ -721,6 +722,7 @@ void gc_stop_the_world()
     struct thread *p,*th=arch_os_get_current_thread();
     int status, lock_ret;
     odprintf("stopping the world\n");
+    gc_thread = th;
     stop_for_gc = 1;
 #ifdef LOCK_CREATE_THREAD
     /* KLUDGE: Stopping the thread during pthread_create() causes deadlock
@@ -785,7 +787,6 @@ void gc_stop_the_world()
 #if defined(LISP_FEATURE_WIN32)
     pthread_unlock_structures();
 #endif
-    stop_for_gc = 0;
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:end\n"));
     odprintf(" stopped the world\n");
 }
@@ -795,6 +796,8 @@ void gc_start_the_world()
     struct thread *p,*th=arch_os_get_current_thread();
     int lock_ret;
     odprintf(" starting the world\n");
+    stop_for_gc = 0;
+    gc_thread = NULL;
     /* if a resumed thread creates a new thread before we're done with
      * this loop, the new thread will get consed on the front of
      * all_threads, but it won't have been stopped so won't need
