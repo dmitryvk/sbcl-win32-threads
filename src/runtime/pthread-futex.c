@@ -286,17 +286,17 @@ again:
         ret = futex_relative_to_abs(&abstime, FUTEX_WAIT_NSEC);
         futex_assert(ret == 0);
 
-        odprintf("in futex_wait, doing pthread_cond_timedwait on 0x%p, 0x%p", &futex->cond, &futex->mutex);
+        //odprintf("in futex_wait, doing pthread_cond_timedwait on 0x%p, 0x%p", &futex->cond, &futex->mutex);
         result = pthread_cond_timedwait(&futex->cond, &futex->mutex,
                                         &abstime);
         futex_assert(result == 0 || result == ETIMEDOUT);
 
         istimeout = futex_istimeout(timeout);
-        odprintf("result = %d, istimeout = %d", result, istimeout);        
+        //odprintf("result = %d, istimeout = %d", result, istimeout);        
         if (result != ETIMEDOUT || istimeout)
             break;
         if (*(volatile int *)lock_word != oldval) {
-            odprintf("lock_word changed from %d to %d, but code wouldn't notice it", oldval, *(volatile int*)lock_word);
+            //odprintf("lock_word changed from %d to %d, but code wouldn't notice it", oldval, *(volatile int*)lock_word);
             result = 0;
             goto done;
         }
