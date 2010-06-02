@@ -911,7 +911,7 @@ GNAME(check_for_gc_suspension):
         ret
 Lenter_gc:
         pusha
-        call GNAME(gc_enter_voluntarily)
+        call GNAME(gc_maybe_enter_voluntarily)
         popa
         popf
         ret
