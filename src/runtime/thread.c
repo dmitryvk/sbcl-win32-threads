@@ -608,12 +608,13 @@ os_thread_t create_thread(lispobj initial_function) {
 #if defined(LISP_FEATURE_WIN32)
 
 unsigned int stop_for_gc = 0;
+struct thread * gc_thread = NULL;
 
 void gc_enter_voluntarily()
 {
   struct thread * p = arch_os_get_current_thread();
   set_thread_state(p, STATE_SUSPENDED);
-  odprintf("voluntarily suspended");
+  odprintf("voluntarily suspended, stop_for_gc = %d, gc_thread->os_thread = 0x%p", stop_for_gc, (gc_thread ? gc_thread->os_thread : NULL));
   scrub_control_stack();
   pthread_np_remove_pending_signal(p->os_thread, SIG_STOP_FOR_GC);
   wait_for_thread_state_change(p, STATE_SUSPENDED);
@@ -623,7 +624,7 @@ void gc_enter_voluntarily()
 void gc_maybe_enter_voluntarily()
 {
   struct thread * p = arch_os_get_current_thread();
-  if (stop_for_gc && !sigismember(&p->os_thread->blocked_signal_set, SIG_STOP_FOR_GC)) {
+  if (stop_for_gc && p != gc_thread && !sigismember(&p->os_thread->blocked_signal_set, SIG_STOP_FOR_GC)) {
     gc_enter_voluntarily();
   }
 }
@@ -743,7 +744,8 @@ void gc_stop_the_world()
         gc_assert(p->os_thread != 0);
         FSHOW_SIGNAL((stderr,"/gc_stop_the_world: thread=%lu, state=%x\n",
                       p->os_thread, thread_state(p)));
-        odprintf("looking at 0x%p, state is %s, gc_safe = %d", p->os_thread, get_thread_state_string(thread_state(p)), p->gc_safe);
+        if (p != th)
+          odprintf("looking at 0x%p, state is %s, gc_safe = %d", p->os_thread, get_thread_state_string(thread_state(p)), p->gc_safe);
         if((p!=th) && ((thread_state(p)==STATE_RUNNING)) && !p->gc_safe) {
             FSHOW_SIGNAL((stderr,"/gc_stop_the_world: suspending thread %lu\n",
                           p->os_thread));
