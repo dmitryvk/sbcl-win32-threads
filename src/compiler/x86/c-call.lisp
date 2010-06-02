@@ -425,6 +425,11 @@ pointer to the arguments."
               (inst push eax)                       ; arg1
               (inst push (ash index 2))             ; arg0
 
+              (inst pusha)
+              (inst mov eax (foreign-symbol-address "gc_leave_safe_region"))
+              (inst call eax)
+              (inst popa)
+              
               ;; Indirect the access to ENTER-ALIEN-CALLBACK through
               ;; the symbol-value slot of SB-ALIEN::*ENTER-ALIEN-CALLBACK*
               ;; to ensure it'll work even if the GC moves ENTER-ALIEN-CALLBACK.
@@ -434,6 +439,11 @@ pointer to the arguments."
               (inst push eax) ; function
               (inst mov  eax (foreign-symbol-address "funcall3"))
               (inst call eax)
+              
+              (inst pusha)
+              (inst mov eax (foreign-symbol-address "gc_enter_safe_region"))
+              (inst call eax)
+              (inst popa)
               ;; now put the result into the right register
               (cond
                 ((and (alien-integer-type-p return-type)
