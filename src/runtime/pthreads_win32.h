@@ -145,6 +145,12 @@ void pthread_unlock_structures();
 
 typedef void *(*pthread_fn)(void*);
 
+typedef enum {
+  pthread_state_running,
+  pthread_state_finished,
+  pthread_state_joined
+} pthread_thread_state;
+
 typedef struct pthread_thread {
   pthread_fn start_routine;
   void* arg;
@@ -154,6 +160,12 @@ typedef struct pthread_thread {
   unsigned int in_safepoint;
   sigset_t blocked_signal_set;
   unsigned int signal_is_pending[NSIG];
+  void * retval;
+  
+  pthread_mutex_t lock;
+  pthread_cond_t cond;
+  int detached;
+  pthread_thread_state state;
 } pthread_thread;
 
 void pthread_np_pending_signal_handler(int signum);

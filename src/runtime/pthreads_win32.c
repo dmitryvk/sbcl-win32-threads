@@ -4,6 +4,8 @@
 #include <time.h>
 #include <sys/time.h>
 
+void odprintf(const char *fmt, ...);
+
 int pthread_attr_init(pthread_attr_t *attr)
 {
   attr->stack_size = 0;
@@ -68,6 +70,15 @@ pthread_t pthread_self()
   return (pthread_t)TlsGetValue(thread_self_tls_index);
 }
 
+const char * state_to_str(pthread_thread_state state)
+{
+  switch (state) {
+    case pthread_state_running: return "running";
+    case pthread_state_finished: return "finished";
+    case pthread_state_joined: return "joined";
+  }
+}
+
 DWORD WINAPI Thread_Function(LPVOID param)
 {
   pthread_t self = (pthread_t)param;
@@ -75,9 +86,24 @@ DWORD WINAPI Thread_Function(LPVOID param)
   void* retval = NULL;
   pthread_fn fn = self->start_routine;
   TlsSetValue(thread_self_tls_index, self);
-  retval = fn(arg);
+  self->retval = fn(arg);
+  pthread_mutex_lock(&self->lock);
+  self->state = pthread_state_finished;
+  odprintf("thread function returned, state is %s", state_to_str(self->state));
+  pthread_cond_broadcast(&self->cond);
+  while (!self->detached && self->state != pthread_state_joined) {
+    pthread_cond_wait(&self->cond, &self->lock);
+    odprintf("detached = %d, state = %s", self->detached, state_to_str(self->state));
+  }
+  pthread_mutex_unlock(&self->lock);
+  
+  odprintf("destroying the thread");
+  
+  pthread_mutex_destroy(&self->lock);
+  pthread_cond_destroy(&self->cond);
+  CloseHandle(self->handle);
   free(self);
-  return (DWORD)retval;
+  return 0;
 }
 
 int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine) (void *), void *arg)
@@ -101,6 +127,10 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_
   }
   for (i = 1; i < NSIG; ++i)
     pth->signal_is_pending[i] = 0;
+  pth->state = pthread_state_running;
+  pthread_mutex_init(&pth->lock, NULL);
+  pthread_cond_init(&pth->cond, NULL);
+  pth->detached = 0;
   ResumeThread(createdThread);
   if (thread)
     *thread = createdThread;
@@ -114,19 +144,35 @@ int pthread_equal(pthread_t thread1, pthread_t thread2)
 
 int pthread_detach(pthread_t thread)
 {
-  // FIXME: What to do??
-  return 0;
+  int retval = 0;
+  pthread_mutex_lock(&thread->lock);
+  if (thread->detached)
+    odprintf("thread_detach on 0x%p, already detached", thread);
+  thread->detached = 1;
+  pthread_cond_broadcast(&thread->cond);
+  pthread_mutex_unlock(&thread->lock);
+  return retval;
 }
 
 int pthread_join(pthread_t thread, void **retval)
 {
-  if (WaitForSingleObject(thread->handle, INFINITE) == WAIT_OBJECT_0) {
-    CloseHandle(thread->handle);
-    return 0;
-  } else {
-    CloseHandle(thread->handle);
-    return 1;
+  odprintf("pthread_join on 0x%p started", thread);
+  pthread_mutex_lock(&thread->lock);
+  if (thread->detached)
+    odprintf("pthread_join on 0x%p, thread is detached", thread);
+  odprintf("joining 0x%p, state is %s", thread, state_to_str(thread->state));
+  while (thread->state != pthread_state_finished) {
+    pthread_cond_wait(&thread->cond, &thread->lock);
+    odprintf("woke up joining 0x%p, state is %s", thread, state_to_str(thread->state));
   }
+  thread->state = pthread_state_joined;
+  pthread_cond_broadcast(&thread->cond);
+  if (retval)
+    *retval = thread->retval;
+  odprintf("done joining 0x%p, state is %s", thread, state_to_str(thread->state));
+  pthread_mutex_unlock(&thread->lock);
+  odprintf("pthread_join on 0x%p returned", thread);
+  return 0;
 }
 
 int pthread_key_create(pthread_key_t *key, void (*destructor)(void*))
@@ -152,8 +198,6 @@ int pthread_setspecific(pthread_key_t key, const void *value)
 {
   return TlsSetValue(key, (LPVOID)value) != FALSE;
 }
-
-void odprintf(const char *fmt, ...);
 
 int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset)
 {
