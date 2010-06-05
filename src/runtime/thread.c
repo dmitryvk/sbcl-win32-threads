@@ -16,6 +16,7 @@
 #include <string.h>
 #ifndef LISP_FEATURE_WIN32
 #include <sched.h>
+#include "win32-os.h"
 #endif
 #include "pthreads_win32.h"
 #include <stddef.h>
@@ -200,14 +201,19 @@ plan_thread_post_mortem(struct thread *corpse)
 static void
 perform_thread_post_mortem(struct thread_post_mortem *post_mortem)
 {
-#if defined(CREATE_POST_MORTEM_THREAD) && !defined(LISP_FEATURE_WIN32)
+#if defined(CREATE_POST_MORTEM_THREAD)
     pthread_detach(pthread_self());
 #endif
+    odprintf("perform_thread_post_mortem(0x%p)", post_mortem);
     if (post_mortem) {
         gc_assert(!pthread_join(post_mortem->os_thread, NULL));
         gc_assert(!pthread_attr_destroy(post_mortem->os_attr));
         free(post_mortem->os_attr);
+#if defined(LISP_FEATURE_WIN32)
+        os_invalidate_free(post_mortem->os_address, THREAD_STRUCT_SIZE);
+#else
         os_invalidate(post_mortem->os_address, THREAD_STRUCT_SIZE);
+#endif
         free(post_mortem);
     }
 }
@@ -216,6 +222,7 @@ static void
 schedule_thread_post_mortem(struct thread *corpse)
 {
     struct thread_post_mortem *post_mortem = NULL;
+    odprintf("schedule_thread_post_mortem(0x%p)", corpse);
     if (corpse) {
         post_mortem = plan_thread_post_mortem(corpse);
 
@@ -315,8 +322,13 @@ new_thread_trampoline(struct thread *th)
     pthread_mutex_destroy(th->state_lock);
     pthread_cond_destroy(th->state_cond);
 
+#if defined(LISP_FEATURE_WIN32)
+    os_invalidate_free((os_vm_address_t)th->interrupt_data,
+                  (sizeof (struct interrupt_data)));
+#else
     os_invalidate((os_vm_address_t)th->interrupt_data,
                   (sizeof (struct interrupt_data)));
+#endif
 
 #ifdef LISP_FEATURE_MACH_EXCEPTION_HANDLER
     FSHOW((stderr, "Deallocating mach port %x\n", THREAD_STRUCT_TO_EXCEPTION_PORT(th)));
@@ -339,11 +351,20 @@ new_thread_trampoline(struct thread *th)
 static void
 free_thread_struct(struct thread *th)
 {
+    odprintf("free_thread_struct 0x%p (0x%p)", th, th->os_thread);
+#if defined(LIS_FEATURE_WIN32)
+    if (th->interrupt_data)
+        os_invalidate_free((os_vm_address_t) th->interrupt_data,
+                      (sizeof (struct interrupt_data)));
+    os_invalidate_free((os_vm_address_t) th->os_address,
+                  THREAD_STRUCT_SIZE);
+#else
     if (th->interrupt_data)
         os_invalidate((os_vm_address_t) th->interrupt_data,
                       (sizeof (struct interrupt_data)));
     os_invalidate((os_vm_address_t) th->os_address,
                   THREAD_STRUCT_SIZE);
+#endif
 }
 
 /* this is called from any other thread to create the new one, and
@@ -371,8 +392,10 @@ create_thread_struct(lispobj initial_function) {
      * assume the current (e.g. 4k) pagesize, while we calculate with
      * the biggest (e.g. 64k) pagesize allowed by the ABI. */
     spaces=os_validate(0, THREAD_STRUCT_SIZE);
-    if(!spaces)
+    if(!spaces) {
+        odprintf("spaces == null");
         return NULL;
+    }
     /* Aligning up is safe as THREAD_STRUCT_SIZE has
      * THREAD_ALIGNMENT_BYTES padding. */
     aligned_spaces = (void *)((((unsigned long)(char *)spaces)
@@ -486,6 +509,7 @@ create_thread_struct(lispobj initial_function) {
     th->interrupt_data = (struct interrupt_data *)
         os_validate(0,(sizeof (struct interrupt_data)));
     if (!th->interrupt_data) {
+        odprintf("th->interrupt_data == null");
         free_thread_struct(th);
         return 0;
     }
@@ -592,7 +616,10 @@ os_thread_t create_thread(lispobj initial_function) {
      * without fear of gc lossage. initial_function violates this
      * assumption and must stay pinned until the child starts up. */
     th = create_thread_struct(initial_function);
+    if (!th)
+      odprintf("create_thread_struct failed");
     if (th && !create_os_thread(th,&kid_tid)) {
+        odprintf("create_os_thread failed");
         free_thread_struct(th);
         memset(&kid_tid, 0, sizeof(kid_tid));
     }

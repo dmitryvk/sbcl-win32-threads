@@ -48,3 +48,4 @@ struct lisp_exception_frame {
 void wos_install_interrupt_handlers(struct lisp_exception_frame *handler);
 char *dirname(char *path);
 
+void os_invalidate_free(os_vm_address_t addr, os_vm_size_t len);

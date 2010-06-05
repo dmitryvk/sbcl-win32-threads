@@ -219,6 +219,14 @@ os_invalidate(os_vm_address_t addr, os_vm_size_t len)
     }
 }
 
+void
+os_invalidate_free(os_vm_address_t addr, os_vm_size_t len)
+{
+    if (!VirtualFree(addr, 0, MEM_RELEASE)) {
+        fprintf(stderr, "VirtualFree: 0x%lx.\n", GetLastError());
+    }
+}
+
 /*
  * os_map() is called to map a chunk of the core file into memory.
  *
