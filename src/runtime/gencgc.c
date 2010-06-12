@@ -4103,6 +4103,12 @@ garbage_collect_generation(generation_index_t generation, int raise)
                 win32_preserve_context_registers(&context);
                 pthread_np_resume(th->os_thread);
                 esp = (void**)context.Esp;
+                
+                pthread_mutex_lock(&th->interrupt_data->win32_data.lock);
+                for (i = 0; i < th->interrupt_data->win32_data.interrupts_count; ++i) {
+                  preserve_pointer((void*)th->interrupt_data->win32_data.interrupts[i]);
+                }
+                pthread_mutex_unlock(&th->interrupt_data->win32_data.lock);
 #else
                 void **esp1;
                 free=fixnum_value(SymbolValue(FREE_INTERRUPT_CONTEXT_INDEX,th));

@@ -323,6 +323,9 @@ new_thread_trampoline(struct thread *th)
     pthread_cond_destroy(th->state_cond);
 
 #if defined(LISP_FEATURE_WIN32)
+  #if defined(LISP_FEATURE_SB_THREAD)
+    pthread_mutex_destroy(&th->interrupt_data->win32_data.lock);
+  #endif
     os_invalidate_free((os_vm_address_t)th->interrupt_data,
                   (sizeof (struct interrupt_data)));
 #else
@@ -353,9 +356,13 @@ free_thread_struct(struct thread *th)
 {
     odprintf("free_thread_struct 0x%p (0x%p)", th, th->os_thread);
 #if defined(LIS_FEATURE_WIN32)
-    if (th->interrupt_data)
+    if (th->interrupt_data) {
+        #if defined(LISP_FEATURE_WIN32)
+        pthread_mutex_destroy(&th->interrupt_data->win32_data.lock);
+        #endif
         os_invalidate_free((os_vm_address_t) th->interrupt_data,
                       (sizeof (struct interrupt_data)));
+    }
     os_invalidate_free((os_vm_address_t) th->os_address,
                   THREAD_STRUCT_SIZE);
 #else
@@ -519,6 +526,11 @@ create_thread_struct(lispobj initial_function) {
     th->interrupt_data->allocation_trap_context = 0;
 #endif
     th->no_tls_value_marker=initial_function;
+    
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+    th->interrupt_data->win32_data.interrupts_count = 0;
+    pthread_mutex_init(&th->interrupt_data->win32_data.lock, NULL);
+#endif
 
     th->stepping = NIL;
     odprintf("create_thread_struct ok");
@@ -634,9 +646,85 @@ os_thread_t create_thread(lispobj initial_function) {
 
 #if defined(LISP_FEATURE_WIN32)
 
+pthread_mutex_t world_stop_lock = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t stop_for_gc_lock = PTHREAD_MUTEX_INITIALIZER;
 unsigned int stop_for_gc = 0;
 struct thread * gc_thread = NULL;
+
+// returns: 0 if all is ok
+// -1 if max interrupts reached
+int schedule_thread_interrupt(struct thread * th, lispobj interrupt_fn)
+{
+  odprintf("Locking 0x%p (th->interrupt_data = 0x%p)", &th->interrupt_data->win32_data.lock, th->interrupt_data);
+  pthread_mutex_lock(&th->interrupt_data->win32_data.lock);
+  odprintf("Locked 0x%p", &th->interrupt_data->win32_data.lock);
+  if (th->interrupt_data->win32_data.interrupts_count == MAX_INTERRUPTS) {
+    pthread_mutex_unlock(&th->interrupt_data->win32_data.lock);
+    odprintf("Max interrupts");
+    return -1;
+  } else {
+    ++th->interrupt_data->win32_data.interrupts_count;
+    th->interrupt_data->win32_data.interrupts[th->interrupt_data->win32_data.interrupts_count - 1] = interrupt_fn;
+    odprintf("Thread now has %d interrupts", &th->interrupt_data->win32_data.interrupts_count);
+    pthread_mutex_unlock(&th->interrupt_data->win32_data.lock);
+    return 0;
+  }
+}
+
+void gc_stop_the_world();
+void gc_start_the_world();
+
+struct thread * find_thread_by_os_thread(pthread_t thread)
+{
+  struct thread * retval = NULL;
+  struct thread * p;
+  
+  pthread_mutex_lock(&all_threads_lock);
+  for(p = all_threads; p; p = p->next) {
+    if (p->os_thread == thread)
+      retval = p;
+  }
+  pthread_mutex_unlock(&all_threads_lock);
+  
+  return retval;
+}
+
+// returns: 0 if interrupt is queued
+// -1 if max interrupts reached
+int interrupt_lisp_thread(pthread_t thread, lispobj interrupt_fn)
+{
+  struct thread * th = find_thread_by_os_thread(thread);
+  odprintf("Interrupting 0x%p with %d", th, interrupt_fn);
+  if (schedule_thread_interrupt(th, interrupt_fn) != 0) {
+    odprintf("schedule_thread_interrupt returned non-zero");
+    return -1;
+  }
+  
+  odprintf("schedule_thread_interrupt returned zero");
+  
+  gc_stop_the_world();
+  gc_start_the_world();
+  
+  odprintf("restarted the world");
+}
+
+void check_pending_interrupts()
+{
+  struct thread * p = arch_os_get_current_thread();
+  while (1) {
+    pthread_mutex_lock(&p->interrupt_data->win32_data.lock);
+    if (p->interrupt_data->win32_data.interrupts_count > 0) {
+      lispobj fn = p->interrupt_data->win32_data.interrupts[p->interrupt_data->win32_data.interrupts_count - 1];
+      p->interrupt_data->win32_data.interrupts_count--;
+      pthread_mutex_unlock(&p->interrupt_data->win32_data.lock);
+      odprintf("calling interrupt 0x%p", fn);
+      funcall0(fn);
+    } else {
+      pthread_mutex_unlock(&p->interrupt_data->win32_data.lock);
+      break;
+    }
+  }
+}
 
 void gc_enter_voluntarily()
 {
@@ -650,6 +738,7 @@ void gc_enter_voluntarily()
     pthread_mutex_unlock(&stop_for_gc_lock);
     wait_for_thread_state_change(p, STATE_SUSPENDED);
     odprintf("resume from voluntary suspension");
+    check_pending_interrupts();
   } else {
     pthread_mutex_unlock(&stop_for_gc_lock);
   }
@@ -668,6 +757,7 @@ void gc_enter_safe_region()
   struct thread * p = arch_os_get_current_thread();
   p->gc_safe++;
   gc_safepoint();
+  check_pending_interrupts();
 }
 
 void gc_leave_safe_region()
@@ -675,6 +765,7 @@ void gc_leave_safe_region()
   struct thread * p = arch_os_get_current_thread();
   p->gc_safe--;
   gc_safepoint();
+  check_pending_interrupts();
 }
 
 void gc_safepoint()
@@ -704,20 +795,20 @@ void pthread_np_pending_signal_handler(int signum)
 
 lispobj fn_by_pc(unsigned int pc)
 {
-  lispobj obj = search_read_only_space(pc);
+  lispobj obj = search_read_only_space((void*)pc);
   if (!obj)
-    obj = search_static_space(pc);
+    obj = search_static_space((void*)pc);
   if (!obj)
-    obj = search_dynamic_space(pc);
+    obj = search_dynamic_space((void*)pc);
   return obj;
 }
 
 int pc_in_lisp_code(unsigned int pc)
 {
   return
-    search_read_only_space(pc) != NULL ||
-    search_static_space(pc) != NULL ||
-    search_dynamic_space(pc) != NULL;
+    search_read_only_space((void*)pc) != NULL ||
+    search_static_space((void*)pc) != NULL ||
+    search_dynamic_space((void*)pc) != NULL;
 }
 
 int thread_get_pc(struct thread *th)
@@ -756,6 +847,7 @@ void gc_stop_the_world()
     struct thread *p,*th=arch_os_get_current_thread();
     int status, lock_ret;
     odprintf("stopping the world\n");
+    pthread_mutex_lock(&world_stop_lock);
     gc_thread = th;
     pthread_mutex_lock(&stop_for_gc_lock);
     stop_for_gc = 1;
@@ -866,6 +958,7 @@ void gc_start_the_world()
     lock_ret = pthread_mutex_unlock(&create_thread_lock);
     gc_assert(lock_ret == 0);
 #endif
+    pthread_mutex_unlock(&world_stop_lock);
 
     FSHOW_SIGNAL((stderr,"/gc_start_the_world:end\n"));
     odprintf(" started the world\n");

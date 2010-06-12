@@ -1015,6 +1015,11 @@ return DEFAULT if given or else signal JOIN-THREAD-ERROR."
       (kill-safely (thread-os-thread *current-thread*) sb!unix:sigpipe))
     (when interruption
       (funcall interruption))))
+      
+#!+win32
+(sb!alien:define-alien-routine interrupt-lisp-thread sb!alien:int
+  (thread sb!alien:int)
+  (fn sb!alien:int))
 
 (defun interrupt-thread (thread function)
   #!+sb-doc
@@ -1029,10 +1034,8 @@ first thing to do is usually a WITH-INTERRUPTS or a
 WITHOUT-INTERRUPTS. Within a thread interrupts are queued, they are
 run in same the order they were sent."
   #!+win32
-  (declare (ignore thread))
-  #!+win32
-  (with-interrupt-bindings
-    (with-interrupts (funcall function)))
+  (let ((r (interrupt-lisp-thread (thread-os-thread thread) (get-lisp-obj-address function))))
+    (zerop r))
   #!-win32
   (let ((os-thread (thread-os-thread thread)))
     (cond ((not os-thread)
