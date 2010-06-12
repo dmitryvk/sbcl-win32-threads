@@ -634,18 +634,25 @@ os_thread_t create_thread(lispobj initial_function) {
 
 #if defined(LISP_FEATURE_WIN32)
 
+pthread_mutex_t stop_for_gc_lock = PTHREAD_MUTEX_INITIALIZER;
 unsigned int stop_for_gc = 0;
 struct thread * gc_thread = NULL;
 
 void gc_enter_voluntarily()
 {
   struct thread * p = arch_os_get_current_thread();
-  set_thread_state(p, STATE_SUSPENDED);
-  odprintf("voluntarily suspended, stop_for_gc = %d, gc_thread->os_thread = 0x%p", stop_for_gc, (gc_thread ? gc_thread->os_thread : NULL));
-  scrub_control_stack();
-  pthread_np_remove_pending_signal(p->os_thread, SIG_STOP_FOR_GC);
-  wait_for_thread_state_change(p, STATE_SUSPENDED);
-  odprintf("resume from voluntary suspension");
+  pthread_mutex_lock(&stop_for_gc_lock);
+  if (stop_for_gc) {
+    set_thread_state(p, STATE_SUSPENDED);
+    odprintf("voluntarily suspended, stop_for_gc = %d, gc_thread->os_thread = 0x%p", stop_for_gc, (gc_thread ? gc_thread->os_thread : NULL));
+    scrub_control_stack();
+    pthread_np_remove_pending_signal(p->os_thread, SIG_STOP_FOR_GC);
+    pthread_mutex_unlock(&stop_for_gc_lock);
+    wait_for_thread_state_change(p, STATE_SUSPENDED);
+    odprintf("resume from voluntary suspension");
+  } else {
+    pthread_mutex_unlock(&stop_for_gc_lock);
+  }
 }
 
 void gc_maybe_enter_voluntarily()
@@ -750,7 +757,9 @@ void gc_stop_the_world()
     int status, lock_ret;
     odprintf("stopping the world\n");
     gc_thread = th;
+    pthread_mutex_lock(&stop_for_gc_lock);
     stop_for_gc = 1;
+    pthread_mutex_unlock(&stop_for_gc_lock);
 #ifdef LOCK_CREATE_THREAD
     /* KLUDGE: Stopping the thread during pthread_create() causes deadlock
      * on FreeBSD. */
@@ -823,7 +832,9 @@ void gc_start_the_world()
     struct thread *p,*th=arch_os_get_current_thread();
     int lock_ret;
     odprintf(" starting the world\n");
+    pthread_mutex_lock(&stop_for_gc_lock);
     stop_for_gc = 0;
+    pthread_mutex_unlock(&stop_for_gc_lock);
     gc_thread = NULL;
     /* if a resumed thread creates a new thread before we're done with
      * this loop, the new thread will get consed on the front of
