@@ -894,7 +894,17 @@ interrupt_handle_pending(os_context_t *context)
                  original_pending_handler, data->pending_handler);
     }
 
-#ifndef LISP_FEATURE_WIN32
+#if defined(LISP_FEATURE_WIN32)
+  #if defined(LISP_FEATURE_SB_THREAD)
+  if (SymbolValue(INTERRUPTS_ENABLED, thread) != NIL
+      && SymbolValue(INTERRUPT_PENDING, thread) != NIL) {
+    void check_pending_interrupts();
+    
+    odprintf("INTERRUPTS_ENABLED && INTERRUPT_PENDING");
+    check_pending_interrupts();
+  }
+  #endif
+#else
     /* There may be no pending handler, because it was only a gc that
      * had to be executed or because Lisp is a bit too eager to call
      * DO-PENDING-INTERRUPT. */

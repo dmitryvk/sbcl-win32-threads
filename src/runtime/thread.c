@@ -711,6 +711,21 @@ int interrupt_lisp_thread(pthread_t thread, lispobj interrupt_fn)
 void check_pending_interrupts()
 {
   struct thread * p = arch_os_get_current_thread();
+  sigset_t sigset;
+  get_current_sigmask(&sigset);
+  if (sigismember(&sigset, SIGHUP)) {
+    odprintf("SIGHUP is blocked");
+    return;
+  }
+  
+  if (SymbolValue(INTERRUPTS_ENABLED, p) == NIL) {
+    odprintf("INTERRUPTS_ENABLED == NIL");
+    if (p->interrupt_data->win32_data.interrupts_count > 0)
+      SetSymbolValue(INTERRUPT_PENDING, T, p);
+    return;
+  }
+  
+  SetSymbolValue(INTERRUPT_PENDING, NIL, p);
   while (1) {
     pthread_mutex_lock(&p->interrupt_data->win32_data.lock);
     if (p->interrupt_data->win32_data.interrupts_count > 0) {
