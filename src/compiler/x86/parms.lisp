@@ -187,6 +187,8 @@
 #!+win32
 (progn
 
+  (def!constant gc-magic-poll-page    #x21000000)
+
   (def!constant read-only-space-start #x22000000)
   (def!constant read-only-space-end   #x220ff000)
 

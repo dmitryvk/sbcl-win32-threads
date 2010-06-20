@@ -81,6 +81,13 @@ lose(char *fmt, ...)
     /* Block signals to prevent other threads, timers and such from
      * interfering. If only all threads could be stopped somehow. */
     block_blockable_signals(0, 0);
+    {
+      char buf[1000];
+      va_start(ap, fmt);
+      vsprintf(buf, fmt, ap);
+      va_end(ap);
+      odprintf("lose: %s", buf);
+    }
     fprintf(stderr, "fatal error encountered");
     va_start(ap, fmt);
     print_message(fmt, ap);

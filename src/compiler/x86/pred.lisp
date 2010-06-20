@@ -15,7 +15,7 @@
 
 (define-vop (insert-gc-safepoint)
   (:generator 0
-    (inst call (make-fixup "check_for_gc_suspension" :foreign))
+    (inst test eax-tn (make-ea :dword :disp #x21000000))
     ))
 
 ;;; The unconditional branch, emitted when we can't drop through to the desired

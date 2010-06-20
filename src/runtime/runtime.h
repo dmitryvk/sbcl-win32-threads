@@ -29,6 +29,11 @@
 #define thread_mutex_unlock(l) 0
 #endif
 
+#define GC_SAFEPOINT_PAGE_ADDR ((void*)0x21000000UL)
+
+void map_gc_page();
+void unmap_gc_page();
+
 /* Block blockable interrupts for each SHOW, if not 0. */
 #define QSHOW_SIGNAL_SAFE 1
 /* Enable extra-verbose low-level debugging output for signals? (You

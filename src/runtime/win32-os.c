@@ -127,6 +127,38 @@ inline static void *get_stack_frame(void)
 }
 #endif
 
+void alloc_gc_page()
+{
+  void* addr = VirtualAlloc(GC_SAFEPOINT_PAGE_ADDR, 4, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+  if (!addr) {
+    DWORD lastError = GetLastError();
+    odprintf("in alloc_gc_page, VirtualAlloc returned NULL with error 0x%p", (int)lastError);
+    lose("in alloc_gc_page, VirtualAlloc returned NULL");
+  }
+}
+
+void map_gc_page()
+{
+  DWORD oldProt;
+  odprintf("Mapping gc page");
+  if (!VirtualProtect(GC_SAFEPOINT_PAGE_ADDR, 4, PAGE_READWRITE, &oldProt)) {
+    DWORD lastError = GetLastError();
+    odprintf("in map_gc_page, VirtualProtect returned FALSE with error 0x%p", (int)lastError);
+    lose("in map_gc_page, VirtualProtect returned FALSE");
+  }
+}
+
+void unmap_gc_page()
+{
+  DWORD oldProt;
+  odprintf("Unmapping gc page");
+  if (!VirtualProtect(GC_SAFEPOINT_PAGE_ADDR, 4, PAGE_NOACCESS, &oldProt)) {
+    DWORD lastError = GetLastError();
+    odprintf("in unmap_gc_page, VirtualProtect returned FALSE with error 0x%p", (int)lastError);
+    lose("in unmap_gc_page, VirtualProtect returned FALSE");
+  }
+}
+
 void os_init(char *argv[], char *envp[])
 {
     SYSTEM_INFO system_info;
@@ -135,6 +167,8 @@ void os_init(char *argv[], char *envp[])
     os_vm_page_size = system_info.dwPageSize;
 
     base_seh_frame = get_seh_frame();
+    
+    alloc_gc_page();
 }
 
 
@@ -356,16 +390,15 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     os_context_t ctx;
     ctx.win32_context = context;
     self->gc_safe = 0;
-    gc_safepoint();
     pthread_sigmask(SIG_SETMASK, NULL, &ctx.sigmask);
     pthread_sigmask(SIG_BLOCK, &blockable_sigset, NULL);
     if (exception_record->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND)) {
         /* If we're being unwound, be graceful about it. */
 
+        pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
         /* Undo any dynamic bindings. */
         unbind_to_here(exception_frame->bindstack_pointer,
                        arch_os_get_current_thread());
-        pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
         self->gc_safe = gc_safe_count;
         gc_safepoint();
         return ExceptionContinueSearch;
@@ -403,8 +436,14 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         trap = *(unsigned char *)(*os_context_pc_addr(&ctx));
         handle_trap(&ctx, trap);
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
+        gc_safepoint();
         /* Done, we're good to go! */
         return ExceptionContinueExecution;
+    }
+    else if (exception_record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault_address == GC_SAFEPOINT_PAGE_ADDR) {
+      pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
+      gc_safepoint();
+      return ExceptionContinueExecution;
     }
     else if (exception_record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
              (is_valid_lisp_addr(fault_address) ||
@@ -426,7 +465,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
 
             } else {
                 if (stop_for_gc && self != gc_thread)
-                  odprintf("Hmmm, gcing = 1, doing gencgc_handle_wp_violation");
+                  odprintf("Hmmm, gcing = 1, addr = 0x%p, doing gencgc_handle_wp_violation", fault_address);
                 /*
                  * Now, if the page is supposedly write-protected and this
                  * is a write, tell the gc that it's been hit.

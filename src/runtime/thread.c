@@ -665,7 +665,7 @@ int schedule_thread_interrupt(struct thread * th, lispobj interrupt_fn)
   } else {
     ++th->interrupt_data->win32_data.interrupts_count;
     th->interrupt_data->win32_data.interrupts[th->interrupt_data->win32_data.interrupts_count - 1] = interrupt_fn;
-    odprintf("Thread now has %d interrupts", &th->interrupt_data->win32_data.interrupts_count);
+    odprintf("Thread now has %d interrupts", th->interrupt_data->win32_data.interrupts_count);
     pthread_mutex_unlock(&th->interrupt_data->win32_data.lock);
     return 0;
   }
@@ -694,7 +694,7 @@ struct thread * find_thread_by_os_thread(pthread_t thread)
 int interrupt_lisp_thread(pthread_t thread, lispobj interrupt_fn)
 {
   struct thread * th = find_thread_by_os_thread(thread);
-  odprintf("Interrupting 0x%p with %d", th, interrupt_fn);
+  odprintf("Interrupting 0x%p with 0x%p", thread, interrupt_fn);
   if (schedule_thread_interrupt(th, interrupt_fn) != 0) {
     odprintf("schedule_thread_interrupt returned non-zero");
     return -1;
@@ -712,16 +712,21 @@ void check_pending_interrupts()
 {
   struct thread * p = arch_os_get_current_thread();
   sigset_t sigset;
+  if (p->interrupt_data->win32_data.interrupts_count == 0) {
+    return;
+  }
   get_current_sigmask(&sigset);
   if (sigismember(&sigset, SIGHUP)) {
     odprintf("SIGHUP is blocked");
+    pthread_np_add_pending_signal(p->os_thread, SIGHUP);
     return;
   }
   
   if (SymbolValue(INTERRUPTS_ENABLED, p) == NIL) {
-    odprintf("INTERRUPTS_ENABLED == NIL");
-    if (p->interrupt_data->win32_data.interrupts_count > 0)
+    if (p->interrupt_data->win32_data.interrupts_count > 0) {
       SetSymbolValue(INTERRUPT_PENDING, T, p);
+      odprintf("INTERRUPTS_ENABLED == NIL");
+    }
     return;
   }
   
@@ -762,7 +767,7 @@ void gc_enter_voluntarily()
 void gc_maybe_enter_voluntarily()
 {
   struct thread * p = arch_os_get_current_thread();
-  if (stop_for_gc && p != gc_thread && !sigismember(&p->os_thread->blocked_signal_set, SIG_STOP_FOR_GC)) {
+  if (stop_for_gc && p != gc_thread) {
     gc_enter_voluntarily();
   }
 }
@@ -867,6 +872,7 @@ void gc_stop_the_world()
     pthread_mutex_lock(&stop_for_gc_lock);
     stop_for_gc = 1;
     pthread_mutex_unlock(&stop_for_gc_lock);
+    unmap_gc_page();
 #ifdef LOCK_CREATE_THREAD
     /* KLUDGE: Stopping the thread during pthread_create() causes deadlock
      * on FreeBSD. */
@@ -930,6 +936,7 @@ void gc_stop_the_world()
 #if defined(LISP_FEATURE_WIN32)
     pthread_unlock_structures();
 #endif
+    map_gc_page();
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:end\n"));
     odprintf(" stopped the world\n");
 }
