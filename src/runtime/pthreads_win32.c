@@ -224,17 +224,19 @@ int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset)
     if (0)
     {
       char buf[100];
-      sprintf(buf, "Thread 0x%p, set signals mask to 0x%x by %s of 0x%x", self, self->blocked_signal_set, action, *set);
+      sprintf(buf, "[0x%p] set signals mask to 0x%x by %s of 0x%x", self, self->blocked_signal_set, action, *set);
       OutputDebugString(buf);
     }
   }
   {
     int i;
     for (i = 1; i < NSIG; ++i) {
-      unsigned int is_pending = InterlockedExchange(&self->signal_is_pending[i], 0);
-      if (is_pending && !sigismember(&self->blocked_signal_set, i)) {
-        odprintf("calling pending signal handler for signal %d", i);
-        pthread_np_pending_signal_handler(i);
+      if (!sigismember(&self->blocked_signal_set, i)) {
+        unsigned int is_pending = InterlockedExchange(&self->signal_is_pending[i], 0);
+        if (is_pending) {
+          odprintf("calling pending signal handler for signal %d", i);
+          pthread_np_pending_signal_handler(i);
+        }
       }
     }
   }
@@ -259,13 +261,15 @@ int pthread_mutex_destroy(pthread_mutex_t *mutex)
 
 void pthread_np_add_pending_signal(pthread_t thread, int signum)
 {
-  odprintf("adding pending signal %d for thread 0x%p", signum, thread);
+  const char * s = thread->signal_is_pending[signum] ? "pending" : "not pending";
+  odprintf("setting signal %d for thread 0x%p to pending (was: %s)", signum, thread, s);
   thread->signal_is_pending[signum] = 1;
 }
 
 void pthread_np_remove_pending_signal(pthread_t thread, int signum)
 {
-  odprintf("removing pending signal %d for thread 0x%p", signum, thread);
+  const char * s = thread->signal_is_pending[signum] ? "pending" : "not pending";
+  odprintf("setting signal %d for thread 0x%p to not pending (was: %s)", signum, thread, s);
   thread->signal_is_pending[signum] = 0;
 }
 
