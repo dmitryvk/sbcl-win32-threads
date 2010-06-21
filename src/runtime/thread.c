@@ -667,6 +667,7 @@ int schedule_thread_interrupt(struct thread * th, lispobj interrupt_fn)
     th->interrupt_data->win32_data.interrupts[th->interrupt_data->win32_data.interrupts_count - 1] = interrupt_fn;
     odprintf("Thread now has %d interrupts", th->interrupt_data->win32_data.interrupts_count);
     pthread_mutex_unlock(&th->interrupt_data->win32_data.lock);
+    SetSymbolValue(INTERRUPT_PENDING, T, th);
     return 0;
   }
 }
@@ -730,7 +731,6 @@ void check_pending_interrupts()
     return;
   }
   
-  SetSymbolValue(INTERRUPT_PENDING, NIL, p);
   while (1) {
     pthread_mutex_lock(&p->interrupt_data->win32_data.lock);
     if (p->interrupt_data->win32_data.interrupts_count > 0) {
@@ -740,6 +740,7 @@ void check_pending_interrupts()
       odprintf("calling interrupt 0x%p", fn);
       funcall0(fn);
     } else {
+      SetSymbolValue(INTERRUPT_PENDING, NIL, p);
       pthread_mutex_unlock(&p->interrupt_data->win32_data.lock);
       break;
     }

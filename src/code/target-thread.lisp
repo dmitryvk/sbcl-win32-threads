@@ -868,6 +868,7 @@ have the foreground next."
 
 ;;;; The beef
 (sb!alien:define-alien-routine ("odprint" odprint) sb!alien:void (msg sb!alien:c-string))
+(sb!alien:define-alien-routine ("gc_safepoint" gc-safepoint) sb!alien:void)
 
 (defun make-thread (function &key name)
   #!+sb-doc
@@ -941,10 +942,12 @@ around and can be retrieved by JOIN-THREAD."
                                ;; other threads, it's time to enable
                                ;; signals.
                                (sb!unix::unblock-deferrable-signals)
-                               (setf (thread-result thread)
-                                     (cons t
+                               (let ((r (cons t
                                            (multiple-value-list
-                                            (funcall real-function))))
+                                            (funcall real-function)))))
+                                  (gc-safepoint)
+                                  (setf (thread-result thread) r)
+                                  (sb!thread::odprint (format nil "normal return, returned ~S" r)))
                                ;; Try to block deferrables. An
                                ;; interrupt may unwind it, but for a
                                ;; normal exit it prevents interrupt
