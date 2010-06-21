@@ -40,7 +40,7 @@
 
 ;;; Terminating a thread that's waiting for the terminal.
 
-#+sb-thread
+#+(and sb-thread (not win32))
 (let ((thread (make-thread (lambda ()
                              (sb-thread::get-foreground)))))
   (sleep 1)
