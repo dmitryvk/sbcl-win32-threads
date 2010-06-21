@@ -1034,7 +1034,7 @@ first thing to do is usually a WITH-INTERRUPTS or a
 WITHOUT-INTERRUPTS. Within a thread interrupts are queued, they are
 run in same the order they were sent."
   #!+win32
-  (let ((r (interrupt-lisp-thread (thread-os-thread thread) (get-lisp-obj-address function))))
+  (let ((r (interrupt-lisp-thread (thread-os-thread thread) (get-lisp-obj-address (lambda () (funcall function))))))
     (zerop r))
   #!-win32
   (let ((os-thread (thread-os-thread thread)))
