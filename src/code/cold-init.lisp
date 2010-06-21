@@ -310,6 +310,7 @@ systems, UNIX-STATUS is used as the status code."
   ;; FIXME: Windows is not "unix-like", but still has the same
   ;; unix-status... maybe we should just revert to calling it :STATUS?
   (/show0 "entering QUIT")
+  (sb!thread::odprint "called sb-ext:quit")
   (if recklessly-p
       (sb!unix:unix-exit unix-status)
       (throw '%end-of-the-world unix-status))
