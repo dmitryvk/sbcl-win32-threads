@@ -379,6 +379,8 @@ extern struct thread * gc_thread;
  * http://win32assembly.online.fr/Exceptionhandling.html .
  */
 
+int set_gc_safe(int gc_safe);
+ 
 EXCEPTION_DISPOSITION
 handle_exception(EXCEPTION_RECORD *exception_record,
                  struct lisp_exception_frame *exception_frame,
@@ -386,10 +388,10 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                  void *dispatcher_context)
 {
     struct thread * self = arch_os_get_current_thread();
-    unsigned int gc_safe_count = self->gc_safe;
+    unsigned int gc_safe_count;
     os_context_t ctx;
     ctx.win32_context = context;
-    self->gc_safe = 0;
+    gc_safe_count = set_gc_safe(0);
     pthread_sigmask(SIG_SETMASK, NULL, &ctx.sigmask);
     pthread_sigmask(SIG_BLOCK, &blockable_sigset, NULL);
     if (exception_record->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND)) {
@@ -399,7 +401,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         /* Undo any dynamic bindings. */
         unbind_to_here(exception_frame->bindstack_pointer,
                        arch_os_get_current_thread());
-        self->gc_safe = gc_safe_count;
+        set_gc_safe(gc_safe_count);
         gc_safepoint();
         return ExceptionContinueSearch;
     }
@@ -413,7 +415,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
          * end breakpoints uses this. */
         restore_breakpoint_from_single_step(&ctx);
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-        self->gc_safe = gc_safe_count;
+        set_gc_safe(gc_safe_count);
         gc_safepoint();
         return ExceptionContinueExecution;
     }
@@ -421,8 +423,8 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     if (IS_TRAP_EXCEPTION(exception_record, ctx)) {
         unsigned char trap;
         
-        if (stop_for_gc && self != gc_thread)
-          odprintf("Hmmm, gcing = 1, doing handle_trap");
+        if (suspend_info.suspend && self != suspend_info.gc_thread)
+          odprintf("Hmmm, gcing and doing handle_trap");
         
         /* This is just for info in case the monitor wants to print an
          * approximation. */
@@ -442,7 +444,9 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     }
     else if (exception_record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault_address == GC_SAFEPOINT_PAGE_ADDR) {
       pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
+      odprintf("entering safepoint from GC page handler");
       gc_safepoint();
+      set_gc_safe(gc_safe_count);
       return ExceptionContinueExecution;
     }
     else if (exception_record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
@@ -464,7 +468,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                 lose("handle_exception: VirtualAlloc failure");
 
             } else {
-                if (stop_for_gc && self != gc_thread)
+            if (suspend_info.suspend && self != suspend_info.gc_thread)
                   odprintf("Hmmm, gcing = 1, addr = 0x%p, doing gencgc_handle_wp_violation", fault_address);
                 /*
                  * Now, if the page is supposedly write-protected and this
@@ -481,18 +485,18 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                     }
                 }
                 pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-                self->gc_safe = gc_safe_count;
+                set_gc_safe(gc_safe_count);
                 gc_safepoint();
                 return ExceptionContinueExecution;
             }
 
         } else {
             //odprintf("exception at EIP = 0x%p", context->Eip);
-            if (stop_for_gc && self != gc_thread)
+            if (suspend_info.suspend && self != suspend_info.gc_thread)
               odprintf("Hmmm, gcing = 1, doing gencgc_handle_wp_violation");
             if (gencgc_handle_wp_violation(fault_address)) {
               pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-              self->gc_safe = gc_safe_count;
+              set_gc_safe(gc_safe_count);
               gc_safepoint();
               /* gc accepts the wp violation, so resume where we left off. */
               return ExceptionContinueExecution;
@@ -568,7 +572,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
 
     /* FIXME: WTF? How are we supposed to end up here? */
     pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-    self->gc_safe = gc_safe_count;
+    set_gc_safe(gc_safe_count);
     gc_safepoint();
     return ExceptionContinueSearch;
 }

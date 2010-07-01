@@ -1863,11 +1863,21 @@ unhandled_trap_error(os_context_t *context)
 void
 handle_trap(os_context_t *context, int trap)
 {
+    struct thread * self = arch_os_get_current_thread();
     switch(trap) {
     case trap_PendingInterrupt:
         FSHOW((stderr, "/<trap pending interrupt>\n"));
         arch_skip_instruction(context);
+        #if defined(LISP_FEATURE_WIN32)
+        odprintf("entering safepoint from trap with pc = 0x%p, GC_PENDING = 0x%p, STOP_FOR_GC_PENDING = 0x%p, INTERRUPT_PENDING = 0x%p",
+          os_context_pc_addr(context),
+          SymbolValue(GC_PENDING,self),
+          SymbolValue(STOP_FOR_GC_PENDING, self),
+          SymbolValue(INTERRUPT_PENDING, self));
+        gc_safepoint();
+        #else
         interrupt_handle_pending(context);
+        #endif
         break;
     case trap_Error:
     case trap_Cerror:

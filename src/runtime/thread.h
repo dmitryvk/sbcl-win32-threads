@@ -22,8 +22,29 @@ struct alloc_region { };
 #define STATE_RUNNING (make_fixnum(1))
 #define STATE_SUSPENDED (make_fixnum(2))
 #define STATE_DEAD (make_fixnum(3))
+#define STATE_SUSPENDED_BRIEFLY (make_fixnum(4))
 
 #ifdef LISP_FEATURE_SB_THREAD
+
+#ifdef LISP_FEATURE_WIN32
+
+#define GC_SAFE_CHANGING (0xFFFFFFFFU)
+
+enum threads_suspend_reason { SUSPEND_REASON_NONE, SUSPEND_REASON_GC, SUSPEND_REASON_INTERRUPT };
+
+struct threads_suspend_info {
+  int suspend;
+  pthread_mutex_t world_lock;
+  pthread_mutex_t lock;
+  enum threads_suspend_reason reason;
+  int phase;
+  struct thread * gc_thread;
+  struct thread * interrupted_thread;
+};
+
+extern struct threads_suspend_info suspend_info;
+
+#endif
 
 /* Only access thread state with blockables blocked. */
 static inline lispobj
@@ -41,6 +62,7 @@ static const char * get_thread_state_string(lispobj state)
   if (state == STATE_RUNNING) return "RUNNING";
   if (state == STATE_SUSPENDED) return "SUSPENDED";
   if (state == STATE_DEAD) return "DEAD";
+  if (state == STATE_SUSPENDED_BRIEFLY) return "SUSPENDED_BRIEFLY";
   return "unknown";
 }
 

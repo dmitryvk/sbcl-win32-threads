@@ -646,10 +646,10 @@ os_thread_t create_thread(lispobj initial_function) {
 
 #if defined(LISP_FEATURE_WIN32)
 
-pthread_mutex_t world_stop_lock = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t stop_for_gc_lock = PTHREAD_MUTEX_INITIALIZER;
-unsigned int stop_for_gc = 0;
-struct thread * gc_thread = NULL;
+struct threads_suspend_info suspend_info = {
+  0, PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
+  SUSPEND_REASON_NONE, 0, NULL, NULL
+};
 
 // returns: 0 if all is ok
 // -1 if max interrupts reached
@@ -690,6 +690,44 @@ struct thread * find_thread_by_os_thread(pthread_t thread)
   return retval;
 }
 
+void roll_thread_to_safepoint(struct thread * thread)
+{
+  int gc_safe;
+  struct thread * p;
+  pthread_mutex_lock(&all_threads_lock);
+  pthread_mutex_lock(&suspend_info.world_lock);
+  
+  pthread_mutex_lock(&suspend_info.lock);
+  suspend_info.reason = SUSPEND_REASON_INTERRUPT;
+  suspend_info.interrupted_thread = thread;
+  suspend_info.phase = 1;
+  suspend_info.suspend = 1;
+  pthread_mutex_unlock(&suspend_info.lock);
+  
+  unmap_gc_page();
+  
+  // Phase 1: Make sure that th is in gc-safe code or noted the need to interrupt
+  
+  while ((gc_safe = thread->gc_safe) == GC_SAFE_CHANGING) Sleep(0);
+  if (!gc_safe) {
+    wait_for_thread_state_change(thread, STATE_RUNNING);
+  }
+  
+  map_gc_page();
+  
+  pthread_mutex_lock(&suspend_info.lock);
+  suspend_info.suspend = 0;
+  pthread_mutex_unlock(&suspend_info.lock);
+  
+  for (p = all_threads; p; p = p->next) {
+    if (thread_state(p) != STATE_DEAD)
+      set_thread_state(p, STATE_RUNNING);
+  }
+  
+  pthread_mutex_unlock(&suspend_info.world_lock);
+  pthread_mutex_unlock(&all_threads_lock);
+}
+
 // returns: 0 if interrupt is queued
 // -1 if max interrupts reached
 int interrupt_lisp_thread(pthread_t thread, lispobj interrupt_fn)
@@ -707,6 +745,8 @@ int interrupt_lisp_thread(pthread_t thread, lispobj interrupt_fn)
   gc_start_the_world();
   
   odprintf("restarted the world");
+  
+  return 0;
 }
 
 void check_pending_interrupts()
@@ -747,51 +787,159 @@ void check_pending_interrupts()
   }
 }
 
-void gc_enter_voluntarily()
+// returns old gc_safe
+int set_gc_safe(int gc_safe)
 {
-  struct thread * p = arch_os_get_current_thread();
-  pthread_mutex_lock(&stop_for_gc_lock);
-  if (stop_for_gc) {
-    set_thread_state(p, STATE_SUSPENDED);
-    odprintf("voluntarily suspended, stop_for_gc = %d, gc_thread->os_thread = 0x%p", stop_for_gc, (gc_thread ? gc_thread->os_thread : NULL));
-    scrub_control_stack();
-    pthread_np_remove_pending_signal(p->os_thread, SIG_STOP_FOR_GC);
-    pthread_mutex_unlock(&stop_for_gc_lock);
-    wait_for_thread_state_change(p, STATE_SUSPENDED);
-    odprintf("resume from voluntary suspension");
-    check_pending_interrupts();
-  } else {
-    pthread_mutex_unlock(&stop_for_gc_lock);
+  struct thread * self = arch_os_get_current_thread();
+  int old_gc_safe = self->gc_safe;
+  self->gc_safe = GC_SAFE_CHANGING;
+  if (suspend_info.suspend) {
+    odprintf("entering safepoint from set_gc_safe(%d) from %d", gc_safe, old_gc_safe);
+    gc_safepoint();
   }
-}
-
-void gc_maybe_enter_voluntarily()
-{
-  struct thread * p = arch_os_get_current_thread();
-  if (stop_for_gc && p != gc_thread) {
-    gc_enter_voluntarily();
-  }
+  self->gc_safe = gc_safe;
+  return old_gc_safe;
 }
 
 void gc_enter_safe_region()
 {
-  struct thread * p = arch_os_get_current_thread();
-  p->gc_safe++;
-  gc_safepoint();
-  check_pending_interrupts();
+  struct thread * self = arch_os_get_current_thread();
+  set_gc_safe(self->gc_safe + 1);
 }
 
 void gc_leave_safe_region()
 {
-  struct thread * p = arch_os_get_current_thread();
-  p->gc_safe--;
-  gc_safepoint();
-  check_pending_interrupts();
+  struct thread * self = arch_os_get_current_thread();
+  set_gc_safe(self->gc_safe - 1);
+}
+
+void safepoint_cycle_state(int state)
+{
+  struct thread * self = arch_os_get_current_thread();
+  odprintf("safepoint_cycle_state(%s) begin", get_thread_state_string(state));
+  set_thread_state(self, state);
+  pthread_mutex_unlock(&suspend_info.lock);
+  odprintf("waiting for state change from %s", get_thread_state_string(state));
+  wait_for_thread_state_change(self, state);
+  odprintf("state changed from %s to %s", get_thread_state_string(state), get_thread_state_string(thread_state(self)));
+  odprintf("safepoint_cycle_state(%s) end", get_thread_state_string(state));
+}
+
+void suspend()
+{
+  odprintf("suspend() begin");
+  safepoint_cycle_state(STATE_SUSPENDED);
+  odprintf("suspend() end");
+}
+
+void suspend_briefly()
+{
+  odprintf("suspend_briefly() begin");
+  if (suspend_info.phase == 1 || suspend_info.reason == SUSPEND_REASON_INTERRUPT) {
+    safepoint_cycle_state(STATE_SUSPENDED_BRIEFLY);
+  } else {
+    pthread_mutex_unlock(&suspend_info.lock);
+  }
+  odprintf("suspend_briefly() end");
+}
+
+int thread_may_gc()
+{
+  // Thread may gc if all of these are true:
+  // 1) SIG_STOP_FOR_GC is unblocked
+  // 2) GC_INHIBIT is NIL
+  // 3) INTERRUPTS_ENABLED is not-NIL
+
+  struct thread * self = arch_os_get_current_thread();
+  
+  sigset_t ss;
+  pthread_sigmask(SIG_BLOCK, NULL, &ss);
+  if (sigismember(&ss, SIG_STOP_FOR_GC)) {
+    odprintf("SIG_STOP_FOR_GC is blocked");
+    SetSymbolValue(STOP_FOR_GC_PENDING, T, self);
+    return 0;
+  }
+    
+  if (SymbolValue(GC_INHIBIT, self) != NIL) {
+    odprintf("GC_INHIBIT != NIL");
+    SetSymbolValue(STOP_FOR_GC_PENDING, T, self);
+    return 0;
+  }
+    
+  if (SymbolValue(INTERRUPTS_ENABLED, self) == NIL) {
+    odprintf("INTERRUPTS_ENABLED == NIL");
+    SetSymbolValue(STOP_FOR_GC_PENDING, T, self);
+    SetSymbolValue(INTERRUPT_PENDING, T, self);
+    return 0;
+  }
+    
+  return 1;
+}
+
+int thread_may_interrupt()
+{
+  // Thread may be interrupted if all of these are true:
+  // 1) SIGUSR1 is unblocked
+  // 2) INTERRUPTS_ENABLED is not-nil
+  struct thread * self = arch_os_get_current_thread();
+  
+  sigset_t ss;
+  pthread_sigmask(SIG_BLOCK, NULL, &ss);
+  if (sigismember(&ss, SIGHUP))
+    return 0;
+    
+  if (SymbolValue(INTERRUPTS_ENABLED, self) == NIL)
+    return 0;
+  
+  return 1;
 }
 
 void gc_safepoint()
 {
-  gc_maybe_enter_voluntarily();
+  struct thread * self = arch_os_get_current_thread();
+  if (!suspend_info.suspend) {
+    check_pending_interrupts();
+    SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
+    SetSymbolValue(INTERRUPT_PENDING, NIL, self);
+    return;
+  }
+  pthread_mutex_lock(&suspend_info.lock);
+  if (!suspend_info.suspend) {
+    pthread_mutex_unlock(&suspend_info.lock);
+    check_pending_interrupts();
+  }
+  odprintf("gc_safepoint, suspend_info.suspend = 1");
+  if (suspend_info.reason == SUSPEND_REASON_GC) {
+    odprintf("suspend_info.reason == SUSPEND_REASON_GC");
+    if (self == suspend_info.gc_thread) {
+      odprintf("suspend_info.gc_thread == self");
+      pthread_mutex_unlock(&suspend_info.lock);
+    } else
+    if (thread_may_gc()) {
+      odprintf("thread_may_gc() is true");
+      suspend();
+      check_pending_interrupts();
+    } else {
+      odprintf("thread_may_gc() is false");
+      if (suspend_info.phase == 1) {
+        odprintf("suspend_info.phase == 1");
+        suspend_briefly();
+      } else {
+        pthread_mutex_unlock(&suspend_info.lock);
+      }
+    }
+  } else
+  if (suspend_info.reason == SUSPEND_REASON_INTERRUPT) {
+    if (suspend_info.interrupted_thread != self) {
+      suspend_briefly();
+    } else
+    if (thread_may_interrupt()) {
+      suspend();
+      check_pending_interrupts();
+    } else {
+      suspend_briefly();
+    }
+  }
 }
 
 void pthread_np_safepoint()
@@ -800,17 +948,8 @@ void pthread_np_safepoint()
 
 void pthread_np_pending_signal_handler(int signum)
 {
-  if (signum == SIG_STOP_FOR_GC) {
-    gc_maybe_enter_voluntarily();
-#if 0
-    struct thread * p = arch_os_get_current_thread();
-    odprintf("received pending SIG_STOP_FOR_GC");
-    set_thread_state(p, STATE_SUSPENDED);
-    odprintf("suspended in pending signal handler");
-    scrub_control_stack();
-    wait_for_thread_state_change(p, STATE_SUSPENDED);
-    odprintf("woke up in pending signal handler");
-#endif
+  if (signum == SIG_STOP_FOR_GC || signum == SIGHUP) {
+    gc_safepoint();
   }
 }
 
@@ -860,6 +999,111 @@ const char * fn_name(lispobj fn)
 
 #endif
 
+#if defined(LISP_FEATURE_WIN32)
+/* To avoid deadlocks when gc stops the world all clients of each
+ * mutex must enable or disable SIG_STOP_FOR_GC for the duration of
+ * holding the lock, but they must agree on which. */
+void gc_stop_the_world()
+{
+    struct thread *p,*th=arch_os_get_current_thread();
+    int lock_ret;
+    int gc_safe;
+    odprintf("gc_stop_the_world() begin");
+    
+#ifdef LOCK_CREATE_THREAD
+    lock_ret = pthread_mutex_lock(&create_thread_lock);
+    gc_assert(lock_ret == 0);
+#endif
+    pthread_mutex_lock(&suspend_info.world_lock);
+    
+    odprintf("begin phase 1");
+    
+    pthread_mutex_lock(&suspend_info.lock);
+    suspend_info.reason = SUSPEND_REASON_GC;
+    suspend_info.gc_thread = arch_os_get_current_thread();
+    suspend_info.phase = 1;
+    suspend_info.suspend = 1;
+    pthread_mutex_unlock(&suspend_info.lock);
+    
+    unmap_gc_page();
+
+    lock_ret = pthread_mutex_lock(&all_threads_lock);
+    gc_assert(lock_ret == 0);
+
+    // Phase 1, make sure that all threads are: 1) have noted the need to interrupt; or 2) in gc-safe code
+    
+    for(p=all_threads; p; p=p->next) {
+        gc_assert(p->os_thread != 0);
+        if (p != th) {
+          odprintf("looking at 0x%p, state is %s, gc_safe = %d", p->os_thread, get_thread_state_string(thread_state(p)), p->gc_safe);
+          while ((gc_safe = th->gc_safe) == GC_SAFE_CHANGING) Sleep(0);
+          if (gc_safe) continue;
+          odprintf("Waiting until 0x%p suspends, eip = 0x%p", p->os_thread, thread_get_pc_susp(p));
+          wait_for_thread_state_change(p, STATE_RUNNING);
+          odprintf("0x%p is suspended", p->os_thread);
+        }
+    }
+    
+    // Phase 2, wait until all threads 1) suspend themselves; or 2) are in gc-safe code
+    
+    odprintf("begin phase 2");
+    
+    pthread_mutex_lock(&suspend_info.lock);
+    map_gc_page();
+    suspend_info.phase = 2;
+    pthread_mutex_unlock(&suspend_info.lock);
+    
+    for (p = all_threads; p; p = p->next) {
+      int gc_safe;
+      gc_assert(p->os_thread != 0);
+      if (p == th) continue;
+      while ((gc_safe = th->gc_safe) == GC_SAFE_CHANGING) Sleep(0);
+      if (!gc_safe) {
+        if (thread_state(th) == STATE_SUSPENDED_BRIEFLY) {
+          set_thread_state(th, STATE_RUNNING);
+          wait_for_thread_state_change(th, STATE_RUNNING);
+        }
+      }
+    }
+
+    odprintf("gc_stop_the_world() end");
+}
+
+void gc_start_the_world()
+{
+  struct thread * self = arch_os_get_current_thread();
+  struct thread * p;
+  lispobj state;
+  int lock_ret;
+  
+  odprintf("gc_start_the_world() begin");
+
+  pthread_mutex_lock(&suspend_info.lock);
+  suspend_info.suspend = 0;
+  pthread_mutex_unlock(&suspend_info.lock);
+  
+  for(p = all_threads; p; p=p->next) {
+    gc_assert(p->os_thread != 0);
+    if (p == self) continue;
+    state = thread_state(p);
+    
+    if (state == STATE_DEAD) continue;
+    
+    set_thread_state(p, STATE_RUNNING);
+  }
+
+  lock_ret = pthread_mutex_unlock(&all_threads_lock);
+  gc_assert(lock_ret == 0);
+  pthread_mutex_unlock(&suspend_info.world_lock);
+#ifdef LOCK_CREATE_THREAD
+  lock_ret = pthread_mutex_unlock(&create_thread_lock);
+  gc_assert(lock_ret == 0);
+#endif
+  odprintf("gc_start_the_world() end");
+}
+
+#else
+
 /* To avoid deadlocks when gc stops the world all clients of each
  * mutex must enable or disable SIG_STOP_FOR_GC for the duration of
  * holding the lock, but they must agree on which. */
@@ -868,12 +1112,17 @@ void gc_stop_the_world()
     struct thread *p,*th=arch_os_get_current_thread();
     int status, lock_ret;
     odprintf("stopping the world\n");
-    pthread_mutex_lock(&world_stop_lock);
-    gc_thread = th;
-    pthread_mutex_lock(&stop_for_gc_lock);
-    stop_for_gc = 1;
-    pthread_mutex_unlock(&stop_for_gc_lock);
+    pthread_mutex_lock(&suspend_info.world_lock);
+    
+    pthread_mutex_lock(&suspend_info.lock);
+    suspend_info.reason = SUSPEND_REASON_GC;
+    suspend_info.gc_thread = arch_os_get_current_thread();
+    suspend_info.phase = 1;
+    suspend_info.suspend = 1;
+    pthread_mutex_unlock(&suspend_info.lock);
+    
     unmap_gc_page();
+    
 #ifdef LOCK_CREATE_THREAD
     /* KLUDGE: Stopping the thread during pthread_create() causes deadlock
      * on FreeBSD. */
@@ -898,12 +1147,15 @@ void gc_stop_the_world()
                       p->os_thread, thread_state(p)));
         if (p != th)
           odprintf("looking at 0x%p, state is %s, gc_safe = %d", p->os_thread, get_thread_state_string(thread_state(p)), p->gc_safe);
-        if((p!=th) && ((thread_state(p)==STATE_RUNNING)) && !p->gc_safe) {
+        if((p!=th)) {
+            int gc_safe;
             FSHOW_SIGNAL((stderr,"/gc_stop_the_world: suspending thread %lu\n",
                           p->os_thread));
 #if defined(LISP_FEATURE_WIN32)
+            while ((gc_safe = th->gc_safe) == GC_SAFE_CHANGING) sleep(0);
+            if (gc_safe) continue;
             odprintf("Waiting until 0x%p suspends, eip = 0x%p", p->os_thread, thread_get_pc_susp(p));
-			wait_for_thread_state_change(p, STATE_RUNNING);
+            wait_for_thread_state_change(p, STATE_RUNNING);
             odprintf("0x%p is suspended", p->os_thread);
 #else
             /* We already hold all_thread_lock, P can become DEAD but
@@ -986,6 +1238,7 @@ void gc_start_the_world()
     FSHOW_SIGNAL((stderr,"/gc_start_the_world:end\n"));
     odprintf(" started the world\n");
 }
+#endif
 #endif
 
 int
