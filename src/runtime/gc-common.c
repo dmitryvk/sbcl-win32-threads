@@ -2409,6 +2409,7 @@ maybe_gc(os_context_t *context)
     lispobj gc_happened;
     struct thread *thread = arch_os_get_current_thread();
 
+    if (context)
     fake_foreign_function_call(context);
     /* SUB-GC may return without GCing if *GC-INHIBIT* is set, in
      * which case we will be running with no gc trigger barrier
@@ -2432,6 +2433,7 @@ maybe_gc(os_context_t *context)
      * A kludgy alternative is to propagate the sigmask change to the
      * outer context.
      */
+    if (context)
     check_gc_signals_unblocked_or_lose(os_context_sigmask_addr(context));
     unblock_gc_signals(0, 0);
     FSHOW((stderr, "/maybe_gc: calling SUB_GC\n"));
@@ -2451,7 +2453,9 @@ maybe_gc(os_context_t *context)
          * here. */
         ((SymbolValue(INTERRUPTS_ENABLED,thread) != NIL) ||
          (SymbolValue(ALLOW_WITH_INTERRUPTS,thread) != NIL))) {
-        sigset_t *context_sigmask = os_context_sigmask_addr(context);
+        sigset_t sigset;
+        get_current_sigmask(&sigset);
+        sigset_t *context_sigmask = context ? os_context_sigmask_addr(context) : &sigset;
         if (!deferrables_blocked_p(context_sigmask)) {
             thread_sigmask(SIG_SETMASK, context_sigmask, 0);
             check_gc_signals_unblocked_or_lose(0);
@@ -2461,6 +2465,7 @@ maybe_gc(os_context_t *context)
             FSHOW((stderr, "/maybe_gc: punting on POST_GC due to blockage\n"));
         }
     }
+    if (context)
     undo_fake_foreign_function_call(context);
     FSHOW((stderr, "/maybe_gc: returning\n"));
     return (gc_happened != NIL);

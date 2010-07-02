@@ -468,8 +468,8 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                 lose("handle_exception: VirtualAlloc failure");
 
             } else {
-            if (suspend_info.suspend && self != suspend_info.gc_thread)
-                  odprintf("Hmmm, gcing = 1, addr = 0x%p, doing gencgc_handle_wp_violation", fault_address);
+            //if (suspend_info.suspend && self != suspend_info.gc_thread)
+              //    odprintf("Hmmm, gcing = 1, addr = 0x%p, doing gencgc_handle_wp_violation", fault_address);
                 /*
                  * Now, if the page is supposedly write-protected and this
                  * is a write, tell the gc that it's been hit.
