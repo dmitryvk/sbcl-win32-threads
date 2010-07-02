@@ -763,8 +763,7 @@ int interrupt_lisp_thread(pthread_t thread, lispobj interrupt_fn)
   
   odprintf("schedule_thread_interrupt returned zero");
   
-  gc_stop_the_world();
-  gc_start_the_world();
+  roll_thread_to_safepoint(th);
   
   odprintf("restarted the world");
   
@@ -812,11 +811,21 @@ void check_pending_interrupts()
   while (1) {
     pthread_mutex_lock(&p->interrupt_data->win32_data.lock);
     if (p->interrupt_data->win32_data.interrupts_count > 0) {
-      lispobj fn = p->interrupt_data->win32_data.interrupts[p->interrupt_data->win32_data.interrupts_count - 1];
-      p->interrupt_data->win32_data.interrupts_count--;
+			lispobj objs[MAX_INTERRUPTS];
+			int i, n;
+			n = p->interrupt_data->win32_data.interrupts_count;
+			for (i = 0; i < p->interrupt_data->win32_data.interrupts_count; ++i)
+				objs[i] = p->interrupt_data->win32_data.interrupts[i];
+
+			p->interrupt_data->win32_data.interrupts_count = 0;
       pthread_mutex_unlock(&p->interrupt_data->win32_data.lock);
-      odprintf("calling interrupt 0x%p", fn);
-      funcall0(fn);
+      for (i = 0; i < n; ++i) {
+				lispobj fn = objs[i];
+				objs[i] = 0;
+				odprintf("calling interrupt 0x%p", fn);
+				funcall0(fn);
+				fn = 0;
+			}
     } else {
       SetSymbolValue(INTERRUPT_PENDING, NIL, p);
       pthread_mutex_unlock(&p->interrupt_data->win32_data.lock);
