@@ -796,6 +796,7 @@ void check_pending_interrupts()
   get_current_sigmask(&sigset);
   if (sigismember(&sigset, SIGHUP)) {
     odprintf("SIGHUP is blocked");
+    SetSymbolValue(INTERRUPT_PENDING, T, p);
     pthread_np_add_pending_signal(p->os_thread, SIGHUP);
     return;
   }
@@ -934,7 +935,6 @@ void gc_safepoint()
   if (!suspend_info.suspend) {
     check_pending_interrupts();
     SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
-    SetSymbolValue(INTERRUPT_PENDING, NIL, self);
     return;
   }
   pthread_mutex_lock(&suspend_info.lock);
