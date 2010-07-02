@@ -992,11 +992,11 @@ void pthread_np_pending_signal_handler(int signum)
 
 lispobj fn_by_pc(unsigned int pc)
 {
-  lispobj obj = search_read_only_space((void*)pc);
+  lispobj obj = (lispobj)search_read_only_space((void*)pc);
   if (!obj)
-    obj = search_static_space((void*)pc);
+    obj = (lispobj)search_static_space((void*)pc);
   if (!obj)
-    obj = search_dynamic_space((void*)pc);
+    obj = (lispobj)search_dynamic_space((void*)pc);
   return obj;
 }
 
