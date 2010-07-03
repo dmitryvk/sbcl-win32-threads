@@ -99,13 +99,6 @@
 (defun directory-id (name)
   (id (format nil "Directory_~A" (enough-namestring name *sbcl-source-root*))))
 
-(defun directory-names (pathname)
-  (let ((name (car (last (pathname-directory pathname)))))
-    (if (< 8 (length name))
-        (list "Name" (subseq name 0 8)
-              "LongName" name)
-        (list "Name" name))))
-
 (defun file-id (pathname)
   (id (format nil "File_~A" (enough-namestring pathname *sbcl-source-root*))))
 
@@ -118,24 +111,6 @@
     ("texinfo" . "tfo")
     ("lisp-temp" . "lmp")
     ("html" . "htm")))
-
-(defun file-names (pathname)
-  (if (or (< 8 (length (pathname-name pathname)))
-          (< 3 (length (pathname-type pathname))))
-      (let ((short-name (let ((name (pathname-name pathname)))
-                          (if (< 8 (length name))
-                              (subseq name 0 8)
-                              name)))
-            (short-type (let ((type (pathname-type pathname)))
-                          (if (< 3 (length type))
-                              (or (cdr (assoc type *pathname-type-abbrevs* :test #'equalp))
-                                  (error "No abbreviation for type: ~A" type))
-                              type))))
-        (list "Name" (if short-type
-                         (format nil "~A.~A" short-name short-type)
-                         short-name)
-              "LongName" (file-namestring pathname)))
-      (list "Name" (file-namestring pathname))))
 
 (defparameter *components* nil)
 
@@ -152,16 +127,16 @@
     (setf *components* nil)))
 
 (defun collect-1-component (root)
-  `("Directory" ("Id" ,(directory-id root)
-                 ,@(directory-names root))
+  `("Directory" ("Name" ,(car (last (pathname-directory root)))
+                 "Id" ,(directory-id root))
     ("Component" ("Id" ,(component-id root)
                   "Guid" ,(make-guid)
                   "DiskId" 1)
      ,@(loop for file in (directory
                           (make-pathname :name :wild :type :wild :defaults root))
              when (or (pathname-name file) (pathname-type file))
-             collect `("File" ("Id" ,(file-id file)
-                               ,@(file-names file)
+             collect `("File" ("Name" ,(file-namestring file)
+                               "Id" ,(file-id file)
                                "Source" ,(enough-namestring file)))))))
 
 (defun collect-components (root)
@@ -189,34 +164,70 @@
              "Argument" "--core \"[#sbcl.core]\" --load \"%1\""
              "Command" "Load with SBCL"
              "Target" "[#sbcl.exe]"))))
+             
+(defun split-by-periods (string)
+  (let* ((c nil)
+         (r (loop
+               for char across string
+               when (char= #\. char)
+               collecting (prog1 c (setf c nil))
+               else
+               do (setf c (concatenate 'string c (string char))))))
+    (append r (when c (list c)))))
+
+(defun sanitize-version-string (string)
+  (let* ((parts (split-by-periods string))
+         (nums (loop
+                  for part in parts
+                  for n = (parse-integer part :junk-allowed t)
+                  when n collecting n)))
+    (when (> (length nums) 4)
+      (setf nums (subseq nums 0 4)))
+    (reduce (lambda (x y)
+              (format nil "~A.~A" x y))
+            nums)))
+
+(defun sanitized-lisp-implementation-version ()
+  (sanitize-version-string (lisp-implementation-version)))
 
 (defun write-wxs (pathname)
   ;; both :INVERT and :PRESERVE could be used here, but this seemed
   ;; better at the time
   (xml-1.0
    pathname
-   `("Wix" ("xmlns" "http://schemas.microsoft.com/wix/2003/01/wi")
-     ("Product" ("Id" "????????-????-????-????-????????????"
+   `("Wix" ("xmlns" "http://schemas.microsoft.com/wix/2006/wi")
+     ("Product" ("Id" "*"
                  "Name" ,(application-name)
-                 "Version" ,(lisp-implementation-version)
+                 "Version" ,(sanitized-lisp-implementation-version)
                  "Manufacturer" "http://www.sbcl.org"
+                 "UpgradeCode" "BFF1D4CA-0153-4AAC-BB21-06DC4B8EAD7D"
                  "Language" 1033)
-      ("Package" ("Id" "????????-????-????-????-????????????"
+      ("Package" ("Id" "*"
                   "Manufacturer" "http://www.sbcl.org"
                   "InstallerVersion" 200
-                  "Compressed" "yes"))
+                  "Compressed" "yes"
+                  "InstallScope" "perMachine"))
       ("Media" ("Id" 1
                 "Cabinet" "sbcl.cab"
                 "EmbedCab" "yes"))
       ("Directory" ("Id" "TARGETDIR"
                     "Name" "SourceDir")
-       ("Directory" ("Id" "ProgramMenuFolder"
-                     "Name" "PMFolder"))
+       ("Directory" ("Id" "ProgramMenuFolder")
+        ("Component" ("Id" "SBCL_Shortcut")
+         ("Shortcut" ("Id" "sbcl.lnk"
+                      "Name" ,(application-name)
+                      "Target" "[INSTALLDIR]sbcl.exe"
+                      "Arguments" "--core \"[#sbcl.core]\""))
+         ("RegistryValue" ("Root" "HKCU"
+                           "Key" "Software\\Steel Bank Common Lisp"
+                           "Name" "installed"
+                           "Type" "integer"
+                           "Value" "1"
+                           "KeyPath" "yes"))))
        ("Directory" ("Id" "ProgramFilesFolder"
                      "Name" "PFiles")
         ("Directory" ("Id" "BaseFolder"
-                      "Name" "SBCL"
-                      "LongName" "Steel Bank Common Lisp")
+                      "Name" "Steel Bank Common Lisp")
          ("Directory" ("Id" "VersionFolder"
                        "Name" ,(lisp-implementation-version))
           ("Directory" ("Id" "INSTALLDIR")
@@ -224,11 +235,13 @@
                          "Guid" ,(make-guid)
                          "DiskId" 1)
             ("Environment" ("Id" "Env_SBCL_HOME"
+                            "System" "yes"
                             "Action" "set"
                             "Name" "SBCL_HOME"
                             "Part" "all"
                             "Value" "[INSTALLDIR]"))
             ("Environment" ("Id" "Env_PATH"
+                            "System" "yes"
                             "Action" "set"
                             "Name" "PATH"
                             "Part" "first"
@@ -240,23 +253,18 @@
             ;; how to make WiX ask for permission for this...
             ;; ,(make-extension "fasl" "application/x-lisp-fasl")
             ;; ,(make-extension "lisp" "text/x-lisp-source")
-            ("File" ("Id" "sbcl.exe"
-                     "Name" "sbcl.exe"
-                     "Source" "../src/runtime/sbcl.exe")
-             ("Shortcut" ("Id" "sbcl.lnk"
-                          "Directory" "ProgramMenuFolder"
-                          "Name" "SBCL"
-                          "LongName" ,(application-name)
-                          "Arguments" "--core \"[#sbcl.core]\"")))
-            ("File" ("Id" "sbcl.core"
-                     "Name" "sbcl.cre"
-                     "LongName" "sbcl.core"
+            ("File" ("Name" "sbcl.exe"
+                     "Source" "../src/runtime/sbcl.exe"))
+            ("File" ("Name" "sbcl.core"
                      "Source" "sbcl.core")))
            ,@(collect-contrib-components))))))
       ("Feature" ("Id" "Minimal"
                   "ConfigurableDirectory" "INSTALLDIR"
                   "Level" 1)
        ("ComponentRef" ("Id" "SBCL_Base"))
+       ("ComponentRef" ("Id" "SBCL_Shortcut"))
        ,@(ref-all-components))
+      ("WixVariable" ("Id" "WixUILicenseRtf"
+                      "Value" "License.rtf"))
       ("Property" ("Id" "WIXUI_INSTALLDIR" "Value" "INSTALLDIR"))
       ("UIRef" ("Id" "WixUI_InstallDir"))))))
