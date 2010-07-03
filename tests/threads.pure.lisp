@@ -103,8 +103,10 @@
     (mapcar #'sb-thread:join-thread threads)
     (assert (not oops))))
 
+;; win32 doesn't have signal timers
 #+sb-thread
-(with-test (:name :semaphore-multiple-waiters)
+(with-test (:name :semaphore-multiple-waiters
+            :fails-on :win32)
   (let ((semaphore (make-semaphore :name "test sem")))
     (labels ((make-readers (n i)
                (values
@@ -184,7 +186,9 @@
 ;;; wich _appear_ to be caused by malloc() and free() not being thread safe: an
 ;;; interrupted malloc in one thread can apparently block a free in another. There
 ;;; are also some indications that pthread_mutex_lock is not re-entrant.
-#+(and sb-thread (not darwin))
+
+;;; On win32, thread creation is slow, so use less iterations
+#+(and sb-thread (not win32) (not darwin))
 (with-test (:name symbol-value-in-thread.3)
   (let* ((parent *current-thread*)
          (semaphore (make-semaphore))
@@ -218,6 +222,41 @@
     (setf running nil)
     (join-thread noise)))
 
+#+(and sb-thread win32)
+(with-test (:name symbol-value-in-thread.3/win32)
+  (let* ((parent *current-thread*)
+         (semaphore (make-semaphore))
+         (running t)
+         (noise (make-thread (lambda ()
+                               (loop while running
+                                     do (setf * (make-array 1024))
+                                     ;; Busy-wait a bit so we don't TOTALLY flood the
+                                     ;; system with GCs: a GC occurring in the middle of
+                                     ;; S-V-I-T causes it to start over -- we want that
+                                     ;; to occur occasionally, but not _all_ the time.
+                                        (loop repeat (random 128)
+                                              do (setf ** *)))))))
+    (write-string "; ")
+    (dotimes (i 200)
+      (when (zerop (mod i 20))
+        (write-char #\.)
+        (force-output))
+      (let* ((mom-mark (cons t t))
+             (kid-mark (cons t t))
+             (child (make-thread (lambda ()
+                                   (wait-on-semaphore semaphore)
+                                   (let ((old (symbol-value-in-thread 'this-is-new parent)))
+                                     (setf (symbol-value-in-thread 'this-is-new parent)
+                                           (make-array 24 :initial-element kid-mark))
+                                     old)))))
+        (progv '(this-is-new) (list (make-array 24 :initial-element mom-mark))
+          (signal-semaphore semaphore)
+          (assert (eq mom-mark (aref (join-thread child) 0)))
+          (assert (eq kid-mark (aref (symbol-value 'this-is-new) 0))))))
+    (setf running nil)
+    (join-thread noise)))
+
+    
 #+sb-thread
 (with-test (:name symbol-value-in-thread.4)
   (let* ((parent *current-thread*)
