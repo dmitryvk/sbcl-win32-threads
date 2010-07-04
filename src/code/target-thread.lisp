@@ -867,6 +867,7 @@ have the foreground next."
 
 
 ;;;; The beef
+#!+(and win32 sb-thread)
 (sb!alien:define-alien-routine ("gc_safepoint" gc-safepoint) sb!alien:void)
 
 (defun make-thread (function &key name)
@@ -942,6 +943,7 @@ around and can be retrieved by JOIN-THREAD."
                                (let ((r (cons t
                                            (multiple-value-list
                                             (funcall real-function)))))
+                                  #!+win32
                                   (gc-safepoint)
                                   (setf (thread-result thread) r))
                                ;; Try to block deferrables. An
