@@ -804,24 +804,6 @@ Lrestore:
         
 	SIZE(GNAME(fast_bzero_detect))
         
-        
-  .text
-  .globl	GNAME(planted_trampoline)
-  TYPE(GNAME(planted_trampoline))
-  .align	2,0x90
-GNAME(planted_trampoline):
-  #now function pointer is on stack
-  # pushfl - made by plant_call
-  # pushal - made by plant_call
-  #now the planted function pointer is now offset at 32 + 4 (32 bytes from pusha, 4 bytes from pushf)
-  call *36(%esp)
-  popfl
-  popal
-  #pop the planted function pointer and argument
-  leal 4(%esp), %esp
-  #return to original place
-  ret
-  SIZE(GNAME(planted_trampoline))
 
 	.text
 	.align	align_16byte,0x90
