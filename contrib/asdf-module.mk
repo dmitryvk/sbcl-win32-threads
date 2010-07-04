@@ -17,6 +17,7 @@ ifeq (CYGWIN,$(findstring CYGWIN,$(UNAME)))
   # SBCL can't read cygwin symlinks, and cygwin likes to symlink
   # gcc.  To further complicate things, SBCL can't handle cygwin
   # paths, either.
+  CC:=gcc-3
   CC:=$(shell cygpath -m $(shell readlink -fn $(shell which $(CC))))
 endif
 
