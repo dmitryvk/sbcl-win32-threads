@@ -272,13 +272,17 @@
     ;; c-call.lisp. If you modify this, modify that one too...
     (cond ((policy node (> space speed))
            (move eax function)
-           (inst pusha)
-           (inst call (make-fixup "gc_enter_safe_region" :foreign))
-           (inst popa)
+           #!+(and win32 sb-thread)
+           (progn
+             (inst pusha)
+             (inst call (make-fixup "gc_enter_safe_region" :foreign))
+             (inst popa))
            (inst call (make-fixup "call_into_c" :foreign))
-           (inst pusha)
-           (inst call (make-fixup "gc_leave_safe_region" :foreign))
-           (inst popa))
+           #!+(and win32 sb-thread)
+           (progn
+             (inst pusha)
+             (inst call (make-fixup "gc_leave_safe_region" :foreign))
+             (inst popa)))
           (t
            ;; Setup the NPX for C; all the FP registers need to be
            ;; empty; pop them all.
@@ -289,13 +293,17 @@
            ;; this, and it should not hurt others either.
            (inst cld)
 
-           (inst pusha)
-           (inst call (make-fixup "gc_enter_safe_region" :foreign))
-           (inst popa)
+           #!+(and win32 sb-thread)
+           (progn
+             (inst pusha)
+             (inst call (make-fixup "gc_enter_safe_region" :foreign))
+             (inst popa))
            (inst call function)
-           (inst pusha)
-           (inst call (make-fixup "gc_leave_safe_region" :foreign))
-           (inst popa)
+           #!+(and win32 sb-thread)
+           (progn
+             (inst pusha)
+             (inst call (make-fixup "gc_leave_safe_region" :foreign))
+             (inst popa))
            ;; To give the debugger a clue. FIXME: not really internal-error?
            (note-this-location vop :internal-error)
 
@@ -358,9 +366,11 @@
     (aver (not (location= result esp-tn)))
     (unless (zerop amount)
       (let ((delta (logandc2 (+ amount 3) 3)))
-        (inst mov temp (make-ea-for-symbol-tls-index *alien-stack*))
+        (inst mov temp
+              (make-ea-for-symbol-tls-index *alien-stack*))
+        #!+(and win32 sb-thread)
         (inst add temp (make-ea :dword :disp #x14) :fs)
-        (inst sub (make-ea :dword :base temp) delta)))
+        (inst sub (make-ea :dword :base temp) delta #!-(and win32 sb-thread) :fs)))
     (load-tl-symbol-value result *alien-stack*))
   #!-sb-thread
   (:generator 0
@@ -378,9 +388,11 @@
   (:generator 0
     (unless (zerop amount)
       (let ((delta (logandc2 (+ amount 3) 3)))
-        (inst mov temp (make-ea-for-symbol-tls-index *alien-stack*))
+        (inst mov temp
+              (make-ea-for-symbol-tls-index *alien-stack*))
+        #!+(and win32 sb-thread)
         (inst add temp (make-ea :dword :disp #x14) :fs)
-        (inst add (make-ea :dword :base temp) delta))))
+        (inst add (make-ea :dword :base temp) delta #!-(and win32 sb-thread) :fs))))
   #!-sb-thread
   (:generator 0
     (unless (zerop amount)
@@ -425,10 +437,12 @@ pointer to the arguments."
               (inst push eax)                       ; arg1
               (inst push (ash index 2))             ; arg0
 
-              (inst pusha)
-              (inst mov eax (foreign-symbol-address "gc_leave_safe_region"))
-              (inst call eax)
-              (inst popa)
+              #!+(and win32 sb-thread)
+              (progn
+                (inst pusha)
+                (inst mov eax (foreign-symbol-address "gc_leave_safe_region"))
+                (inst call eax)
+                (inst popa))
               
               ;; Indirect the access to ENTER-ALIEN-CALLBACK through
               ;; the symbol-value slot of SB-ALIEN::*ENTER-ALIEN-CALLBACK*
@@ -440,10 +454,12 @@ pointer to the arguments."
               (inst mov  eax (foreign-symbol-address "funcall3"))
               (inst call eax)
               
-              (inst pusha)
-              (inst mov eax (foreign-symbol-address "gc_enter_safe_region"))
-              (inst call eax)
-              (inst popa)
+              #!+(and win32 sb-thread)
+              (progn
+                (inst pusha)
+                (inst mov eax (foreign-symbol-address "gc_enter_safe_region"))
+                (inst call eax)
+                (inst popa))
               ;; now put the result into the right register
               (cond
                 ((and (alien-integer-type-p return-type)
