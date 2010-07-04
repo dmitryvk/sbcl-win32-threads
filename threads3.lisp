@@ -14,7 +14,7 @@
                                               do (setf ** *)))))))
     (write-string "; ")
     (dotimes (i 600000)
-      (when (zerop (mod i 1))
+      (when (zerop (mod i 20))
         (write-char #\.)
         (force-output))
       (let* ((mom-mark (cons t t))
