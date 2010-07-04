@@ -92,69 +92,42 @@
   ;; !UNIX-COLD-INIT. And *TYPE-SYSTEM-INITIALIZED* could be changed to
   ;; *TYPE-SYSTEM-INITIALIZED-WHEN-BOUND* so that it doesn't need to
   ;; be explicitly set in order to be meaningful.
-  (setf *after-gc-hooks* nil)
-  (/show0 "1")
-  (setf *in-without-gcing* nil)
-  (/show0 "2")
-  (setf *gc-inhibit* t)
-  (/show0 "3")
-  (setf *gc-pending* nil)
-  (/show0 "4")
-  (setf #!+sb-thread *stop-for-gc-pending* #!+sb-thread nil)
-  (/show0 "5")
-  (setf *allow-with-interrupts* t)
-  (/show0 "6")
-  (setf sb!unix::*unblock-deferrables-on-enabling-interrupts-p* nil)
-  (/show0 "7")
-  (setf *interrupts-enabled* t)
-  (/show0 "8")
-  (setf *interrupt-pending* nil)
-  (/show0 "9")
-  (setf *break-on-signals* nil)
-  (/show0 "10")
-  (setf *maximum-error-depth* 10)
-  (/show0 "11")
-  (setf *current-error-depth* 0)
-  (/show0 "12")
-  (setf *cold-init-complete-p* nil)
-  (/show0 "13")
-  (setf *type-system-initialized* nil)
-  (/show0 "14")
-  (setf sb!vm:*alloc-signal* nil)
-  (/show0 "15")
-  (let ((e (cons nil nil)))
-    (/show "15-cons")
-    (setf sb!kernel::*gc-epoch* e))
-  (/show0 "16")
+  (setf *after-gc-hooks* nil
+        *in-without-gcing* nil
+        *gc-inhibit* t
+        *gc-pending* nil
+        #!+sb-thread *stop-for-gc-pending* #!+sb-thread nil
+        *allow-with-interrupts* t
+        sb!unix::*unblock-deferrables-on-enabling-interrupts-p* nil
+        *interrupts-enabled* t
+        *interrupt-pending* nil
+        *break-on-signals* nil
+        *maximum-error-depth* 10
+        *current-error-depth* 0
+        *cold-init-complete-p* nil
+        *type-system-initialized* nil
+        sb!vm:*alloc-signal* nil
+        sb!kernel::*gc-epoch* (cons nil nil))
 
   ;; I'm not sure where eval is first called, so I put this first.
   (show-and-call !eval-cold-init)
-  (/show0 "17")
 
   (show-and-call thread-init-or-reinit)
-  (/show0 "18")
   (show-and-call !typecheckfuns-cold-init)
-  (/show0 "19")
 
   ;; Anyone might call RANDOM to initialize a hash value or something;
   ;; and there's nothing which needs to be initialized in order for
   ;; this to be initialized, so we initialize it right away.
   (show-and-call !random-cold-init)
-  (/show0 "20")
 
   ;; Must be done before any non-opencoded array references are made.
   (show-and-call !hairy-data-vector-reffer-init)
-  (/show0 "21")
 
   (show-and-call !character-database-cold-init)
-  (/show0 "22")
   (show-and-call !character-name-database-cold-init)
-  (/show0 "23")
 
   (show-and-call !early-package-cold-init)
-  (/show0 "24")
   (show-and-call !package-cold-init)
-  (/show0 "25")
 
   ;; All sorts of things need INFO and/or (SETF INFO).
   (/show0 "about to SHOW-AND-CALL !GLOBALDB-COLD-INIT")
@@ -310,7 +283,6 @@ systems, UNIX-STATUS is used as the status code."
   ;; FIXME: Windows is not "unix-like", but still has the same
   ;; unix-status... maybe we should just revert to calling it :STATUS?
   (/show0 "entering QUIT")
-  (sb!thread::odprint "called sb-ext:quit")
   (if recklessly-p
       (sb!unix:unix-exit unix-status)
       (throw '%end-of-the-world unix-status))
