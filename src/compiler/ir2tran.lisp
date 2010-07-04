@@ -1665,7 +1665,6 @@
       (vop count-me node block *dynamic-counts-tn*
            (block-number (ir2-block-block block))))
 
-
     (vop* restore-dynamic-state node block
           ((reference-tn-list (cdr (ir2-nlx-info-dynamic-state 2info)) nil))
           (nil))
