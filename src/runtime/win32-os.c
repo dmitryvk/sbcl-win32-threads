@@ -78,13 +78,17 @@ void odprint(const char * msg)
 
 void odprintf(const char * fmt, ...)
 {
-  char buf[512];
+  char buf[1024];
   va_list args;
-  int thread_id_length;
-  thread_id_length = sprintf(buf, "[0x%p] ", pthread_self());
+  int n;
+  sprintf(buf, "[0x%p] ", pthread_self());
+  n = strlen(buf);
   va_start(args, fmt);
-  vsprintf(buf + thread_id_length, fmt, args);
+  vsprintf(buf + n, fmt, args);
   va_end(args);
+  n = strlen(buf);
+  buf[n] = '\n';
+  buf[n + 1] = 0;
   OutputDebugString(buf);
 }
 
