@@ -95,7 +95,6 @@ Includes both \"system\" and \"user\" time."
   #!+sb-doc
   "Return a single integer for the current time of day in universal time
 format."
-  (/show0 "Getting universal time")
   (+ (get-time-of-day) unix-to-universal-time))
 
 (defun get-decoded-time ()
