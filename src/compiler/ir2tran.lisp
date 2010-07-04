@@ -1208,6 +1208,7 @@
     (let ((lab (gen-label)))
       (setf (ir2-physenv-environment-start env) lab)
       (vop note-environment-start node block lab)
+      #!+(and win32 sb-thread)
       (vop sb!vm::insert-gc-safepoint node block)))
 
   (values))
@@ -1730,6 +1731,7 @@
                        2block
                        #!+sb-dyncount *dynamic-counts-tn* #!-sb-dyncount nil
                        num))))
+              #!+(and win32 sb-thread)
               (let ((first-node (block-start-node block)))
                 (unless (or (and (bind-p first-node)
                                  (xep-p (bind-lambda first-node)))
