@@ -112,9 +112,7 @@
 (defmacro load-tl-symbol-value (reg symbol)
   `(progn
     (inst mov ,reg (make-ea-for-symbol-tls-index ,symbol))
-    (inst pushf)
     (inst add ,reg (make-ea :dword :disp #x14) :fs)
-    (inst popf)
     (inst mov ,reg (make-ea :dword :base ,reg))))
 #!-sb-thread
 (defmacro load-tl-symbol-value (reg symbol) `(load-symbol-value ,reg ,symbol))
@@ -123,9 +121,7 @@
 (defmacro store-tl-symbol-value (reg symbol temp)
   `(progn
     (inst mov ,temp (make-ea-for-symbol-tls-index ,symbol))
-    (inst pushf)
     (inst add ,temp (make-ea :dword :disp #x14) :fs)
-    (inst popf)
     (inst mov (make-ea :dword :base ,temp) ,reg)))
 #!-sb-thread
 (defmacro store-tl-symbol-value (reg symbol temp)
