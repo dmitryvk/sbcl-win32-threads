@@ -867,7 +867,6 @@ have the foreground next."
 
 
 ;;;; The beef
-(sb!alien:define-alien-routine ("odprint" odprint) sb!alien:void (msg sb!alien:c-string))
 (sb!alien:define-alien-routine ("gc_safepoint" gc-safepoint) sb!alien:void)
 
 (defun make-thread (function &key name)
@@ -883,7 +882,6 @@ around and can be retrieved by JOIN-THREAD."
          (real-function (coerce function 'function))
          (initial-function
           (named-lambda initial-thread-function ()
-                        (odprint "in initial-thread-function")
             ;; In time we'll move some of the binding presently done in C
             ;; here too.
             ;;
@@ -922,7 +920,6 @@ around and can be retrieved by JOIN-THREAD."
                 (with-session-lock (*session*)
                   (push thread (session-threads *session*)))
                 (setf (thread-%alive-p thread) t)
-                (odprint "signalling setup-sem")
                 (signal-semaphore setup-sem)
                 ;; can't use handling-end-of-the-world, because that flushes
                 ;; output streams, and we don't necessarily have any (or we
@@ -946,8 +943,7 @@ around and can be retrieved by JOIN-THREAD."
                                            (multiple-value-list
                                             (funcall real-function)))))
                                   (gc-safepoint)
-                                  (setf (thread-result thread) r)
-                                  (sb!thread::odprint (format nil "normal return, returned ~S" r)))
+                                  (setf (thread-result thread) r))
                                ;; Try to block deferrables. An
                                ;; interrupt may unwind it, but for a
                                ;; normal exit it prevents interrupt
@@ -978,9 +974,7 @@ around and can be retrieved by JOIN-THREAD."
                 (get-lisp-obj-address initial-function))))
           (when (zerop os-thread)
             (error "Can't create a new thread"))
-          (odprint "waiting on setup-sem")
           (wait-on-semaphore setup-sem)
-          (odprint "resumed on setup-sem")
           thread)))))
 
 (defun join-thread (thread &key (default nil defaultp))
