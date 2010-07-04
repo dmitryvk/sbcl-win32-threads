@@ -156,9 +156,6 @@ run in any thread.")
   (defun gc-stop-the-world ())
   (defun gc-start-the-world ()))
 
-(sb!alien:define-alien-routine gc-log-state sb!alien:void
-  (descr sb!alien:c-string))
-
 
 ;;;; SUB-GC
 
@@ -201,9 +198,7 @@ run in any thread.")
          nil)
         (t
          (without-interrupts
-           ;(gc-log-state "before gc 1")
            (setf *gc-pending* :in-progress)
-           ;(gc-log-state "before gc 2")
            ;; Tricks to to prevent triggerring a recursive gc. This is
            ;; like a WITHOUT-GCING inside the lock except that we
            ;; cannot call MAYBE-HANDLE-PENDING-GC at the end, because
@@ -225,13 +220,9 @@ run in any thread.")
                  (let ((old-usage (dynamic-usage))
                        (new-usage 0))
                    (unsafe-clear-roots)
-                   ;(gc-log-state "before stopping the world")
                    (gc-stop-the-world)
-                   ;(gc-log-state "after stopping the world")
                    (let ((start-time (get-internal-run-time)))
-                     ;(gc-log-state "before collecting")
                      (collect-garbage gen)
-                     ;(gc-log-state "after collecting")
                      (setf *gc-epoch* (cons nil nil))
                      (incf *gc-run-time*
                            (- (get-internal-run-time) start-time)))
@@ -240,7 +231,6 @@ run in any thread.")
                    #!+sb-thread
                    (assert (not *stop-for-gc-pending*))
                    (gc-start-the-world)
-                   ;(gc-log-state "after started the world")
                    ;; In a multithreaded environment the other threads
                    ;; will see *n-b-f-o-p* change a little late, but
                    ;; that's OK.
@@ -257,7 +247,6 @@ run in any thread.")
            ;; explicitly for a pending gc before interrupts are
            ;; enabled again.
            (maybe-handle-pending-gc))
-           ;(gc-log-state "after gc")
          t)))
 
 (defun post-gc ()
