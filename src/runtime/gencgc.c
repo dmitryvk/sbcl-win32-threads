@@ -26,7 +26,11 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
 #include "pthreads_win32.h"
+#else
+#include <signal.h>
+#endif
 #include <errno.h>
 #include <string.h>
 #include "sbcl.h"
@@ -54,9 +58,6 @@
 #include "gencgc.h"
 #if defined(LUTEX_WIDETAG)
 #include "pthread-lutex.h"
-#endif
-#if defined(LISP_FEATURE_WIN32)
-#include "pthreads_win32.h"
 #endif
 
 /* forward declarations */
@@ -4845,14 +4846,10 @@ void unhandled_sigmemoryfault(void* addr);
  * we were able to handle, or false if it was abnormal and control
  * should fall through to the general SIGSEGV/SIGBUS/whatever logic. */
 
-void odprintf(const char * fmt, ...);
- 
 int
 gencgc_handle_wp_violation(void* fault_addr)
 {
     page_index_t page_index = find_page_index(fault_addr);
-    
-    //odprintf("wp page fault at 0x%p", fault_addr);
 
 #if QSHOW_SIGNALS
     FSHOW((stderr, "heap WP violation? fault_addr=%x, page_index=%d\n",
@@ -4885,11 +4882,12 @@ gencgc_handle_wp_violation(void* fault_addr)
              * we had better not have the second one lose here if it
              * does this test after the first one has already set wp=0
              */
-            if (0)
+            #if !(defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD))
             if(page_table[page_index].write_protected_cleared != 1)
-                odprintf("fault in heap page %d not marked as write-protected\nboxed_region.first_page: %d, boxed_region.last_page %d\n",
+                lose("fault in heap page %d not marked as write-protected\nboxed_region.first_page: %d, boxed_region.last_page %d\n",
                      page_index, boxed_region.first_page,
                      boxed_region.last_page);
+            #endif
         }
         ret = thread_mutex_unlock(&free_pages_lock);
         gc_assert(ret == 0);
