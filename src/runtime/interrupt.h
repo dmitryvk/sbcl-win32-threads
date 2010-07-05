@@ -12,7 +12,11 @@
 #if !defined(_INCLUDE_INTERRUPT_H_)
 #define _INCLUDE_INTERRUPT_H_
 
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
 #include "pthreads_win32.h"
+#else
+#include <signal.h>
+#endif
 #include <string.h>
 
 /*
