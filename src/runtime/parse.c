@@ -14,7 +14,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
 #include "pthreads_win32.h"
+#else
+#include <signal.h>
+#endif
 
 #include "sbcl.h"
 #include "runtime.h"
