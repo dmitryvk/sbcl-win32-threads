@@ -269,12 +269,17 @@
   (:result-types system-area-pointer)
   (:translate current-thread-offset-sap)
   (:args (n :scs (unsigned-reg) :target sap))
+  #!+win32
   (:temporary (:sc unsigned-reg) tmp)
   (:arg-types unsigned-num)
   (:policy :fast-safe)
   (:generator 2
-    (inst mov tmp (make-ea :dword :disp #x14) :fs)
-    (inst mov sap (make-ea :dword :base tmp :disp 0 :index n :scale 4))))
+    #!+win32
+    (progn
+      (inst mov tmp (make-ea :dword :disp #x14) :fs)
+      (inst mov sap (make-ea :dword :base tmp :disp 0 :index n :scale 4)))
+    #!-win32
+    (inst mov sap (make-ea :dword :disp 0 :index n :scale 4) :fs)))
 
 (define-vop (halt)
   (:generator 1
