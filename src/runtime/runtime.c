@@ -29,7 +29,11 @@
 #include <sys/file.h>
 #include <sys/param.h>
 #include <sys/stat.h>
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
 #include "pthreads_win32.h"
+#else
+#include <signal.h>
+#endif
 #ifndef LISP_FEATURE_WIN32
 #include <sched.h>
 #endif
@@ -38,6 +42,10 @@
 
 #if defined(SVR4) || defined(__linux__)
 #include <time.h>
+#endif
+
+#if !(defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD))
+#include "signal.h"
 #endif
 
 #include "runtime.h"
@@ -208,7 +216,7 @@ char *core_string;
 
 struct runtime_options *runtime_options;
 
-#if defined(LISP_FEATURE_WIN32)
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
 void pthreads_win32_init();
 extern pthread_mutex_t already_in_gc_lock;
 #endif
@@ -237,7 +245,7 @@ main(int argc, char *argv[], char *envp[])
     lispobj initial_function;
     const char *sbcl_home = getenv("SBCL_HOME");
 
-    #if defined(LISP_FEATURE_WIN32)
+    #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     OutputDebugString("pthreads_win32_init");
     pthreads_win32_init();
     #endif
