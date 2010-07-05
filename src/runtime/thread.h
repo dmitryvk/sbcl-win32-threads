@@ -22,7 +22,9 @@ struct alloc_region { };
 #define STATE_RUNNING (make_fixnum(1))
 #define STATE_SUSPENDED (make_fixnum(2))
 #define STATE_DEAD (make_fixnum(3))
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
 #define STATE_SUSPENDED_BRIEFLY (make_fixnum(4))
+#endif
 
 #ifdef LISP_FEATURE_SB_THREAD
 
@@ -57,6 +59,7 @@ thread_state(struct thread *thread)
     return state;
 }
 
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
 static const char * get_thread_state_string(lispobj state)
 {
   if (state == STATE_RUNNING) return "RUNNING";
@@ -65,17 +68,24 @@ static const char * get_thread_state_string(lispobj state)
   if (state == STATE_SUSPENDED_BRIEFLY) return "SUSPENDED_BRIEFLY";
   return "unknown";
 }
+#endif
 
 static inline void
 set_thread_state(struct thread *thread, lispobj state)
 {
+    #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     lispobj old_state;
+    #endif
     pthread_mutex_lock(thread->state_lock);
+    #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     old_state = thread->state;
+    #endif
     thread->state = state;
     pthread_cond_broadcast(thread->state_cond);
     pthread_mutex_unlock(thread->state_lock);
+    #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     odprintf("changed thread_state(0x%p) from %s to %s", thread->os_thread, get_thread_state_string(old_state), get_thread_state_string(state));
+    #endif
 }
 
 static inline void
@@ -217,7 +227,7 @@ static inline struct thread *arch_os_get_current_thread(void)
 #if defined(LISP_FEATURE_SB_THREAD)
 #if defined(LISP_FEATURE_X86)
     register struct thread *me=0;
-#if defined(LISP_FEATURE_WIN32)
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     __asm__ __volatile__ ("movl %%fs:0x14, %0" : "=r"(me) :);
     return me;
 #endif
