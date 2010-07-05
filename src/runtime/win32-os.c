@@ -45,7 +45,11 @@
 #include "dynbind.h"
 
 #include <sys/types.h>
+#if defined(LISP_FEATURE_SB_THREAD)
 #include "pthreads_win32.h"
+#else
+#include <signal.h>
+#endif
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -71,7 +75,7 @@ int linux_supports_futex=0;
 
 void odprint(const char * msg)
 {
-  char buf[512];
+  char buf[1024];
   sprintf(buf, "[0x%p] %s", pthread_self(), msg);
   OutputDebugString(buf);
 }
@@ -131,6 +135,7 @@ inline static void *get_stack_frame(void)
 }
 #endif
 
+#if defined(LISP_FEATURE_SB_THREAD)
 void alloc_gc_page()
 {
   void* addr = VirtualAlloc(GC_SAFEPOINT_PAGE_ADDR, 4, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -162,6 +167,7 @@ void unmap_gc_page()
     lose("in unmap_gc_page, VirtualProtect returned FALSE");
   }
 }
+#endif
 
 void os_init(char *argv[], char *envp[])
 {
@@ -171,8 +177,9 @@ void os_init(char *argv[], char *envp[])
     os_vm_page_size = system_info.dwPageSize;
 
     base_seh_frame = get_seh_frame();
-    
+#if defined(LISP_FEATURE_SB_THREAD)
     alloc_gc_page();
+#endif
 }
 
 
@@ -365,9 +372,15 @@ is_valid_lisp_addr(os_vm_address_t addr)
 extern boolean internal_errors_enabled;
 
 #ifdef LISP_FEATURE_UD2_BREAKPOINTS
+#if defined(LISP_FEATURE_SB_THREAD)
 #define IS_TRAP_EXCEPTION(exception_record, context) \
     (((exception_record)->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION) && \
      (((unsigned short *)((context.win32_context)->Eip))[0] == 0x0b0f))
+#else
+#define IS_TRAP_EXCEPTION(exception_record, context) \
+    (((exception_record)->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION) && \
+     (((unsigned short *)((context)->Eip))[0] == 0x0b0f))
+#endif
 #define TRAP_CODE_WIDTH 2
 #else
 #define IS_TRAP_EXCEPTION(exception_record, context) \
@@ -375,15 +388,14 @@ extern boolean internal_errors_enabled;
 #define TRAP_CODE_WIDTH 1
 #endif
 
-extern unsigned int stop_for_gc;
-extern struct thread * gc_thread;
-
 /*
  * A good explanation of the exception handling semantics is
  * http://win32assembly.online.fr/Exceptionhandling.html .
  */
 
+#if defined(LISP_FEATURE_SB_THREAD)
 int set_gc_safe(int gc_safe);
+#endif
  
 EXCEPTION_DISPOSITION
 handle_exception(EXCEPTION_RECORD *exception_record,
@@ -391,6 +403,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                  CONTEXT *context,
                  void *dispatcher_context)
 {
+#if defined(LISP_FEATURE_SB_THREAD)
     struct thread * self = arch_os_get_current_thread();
     unsigned int gc_safe_count;
     os_context_t ctx;
@@ -398,15 +411,20 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     gc_safe_count = set_gc_safe(0);
     pthread_sigmask(SIG_SETMASK, NULL, &ctx.sigmask);
     pthread_sigmask(SIG_BLOCK, &blockable_sigset, NULL);
+#endif
     if (exception_record->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND)) {
         /* If we're being unwound, be graceful about it. */
 
+#if defined(LISP_FEATURE_SB_THREAD)
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
+#endif
         /* Undo any dynamic bindings. */
         unbind_to_here(exception_frame->bindstack_pointer,
                        arch_os_get_current_thread());
+#if defined(LISP_FEATURE_SB_THREAD)
         set_gc_safe(gc_safe_count);
         gc_safepoint();
+#endif
         return ExceptionContinueSearch;
     }
 
@@ -417,35 +435,58 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         exception_record->ExceptionCode == EXCEPTION_SINGLE_STEP) {
         /* We are doing a displaced instruction. At least function
          * end breakpoints uses this. */
+        #if defined(LISP_FEATURE_SB_THREAD)
         restore_breakpoint_from_single_step(&ctx);
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
         set_gc_safe(gc_safe_count);
         gc_safepoint();
+        #else
+        restore_breakpoint_from_single_step(context);
+        #endif
         return ExceptionContinueExecution;
     }
 
+    #if defined(LISP_FEATURE_SB_THREAD)
     if (IS_TRAP_EXCEPTION(exception_record, ctx)) {
+    #else
+    if (IS_TRAP_EXCEPTION(exception_record, context)) {
+    #endif
         unsigned char trap;
-        
+        #if defined(LISP_FEATURE_SB_THREAD)
         if (suspend_info.suspend && self != suspend_info.gc_thread)
           odprintf("Hmmm, gcing and doing handle_trap");
+        #endif
         
         /* This is just for info in case the monitor wants to print an
          * approximation. */
         current_control_stack_pointer =
+        #if defined(LISP_FEATURE_SB_THREAD)
             (lispobj *)*os_context_sp_addr(&ctx);
+        #else
+            (lispobj *)*os_context_sp_addr(context);
+        #endif
         /* Unlike some other operating systems, Win32 leaves EIP
          * pointing to the breakpoint instruction. */
+        #if defined(LISP_FEATURE_SB_THREAD)
         ctx.win32_context->Eip += TRAP_CODE_WIDTH;
+        #else
+        context->Eip += TRAP_CODE_WIDTH;
+        #endif
         /* Now EIP points just after the INT3 byte and aims at the
          * 'kind' value (eg trap_Cerror). */
+        #if defined(LISP_FEATURE_SB_THREAD)
         trap = *(unsigned char *)(*os_context_pc_addr(&ctx));
         handle_trap(&ctx, trap);
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
         gc_safepoint();
+        #else
+        trap = *(unsigned char *)(*os_context_pc_addr(context));
+        handle_trap(context, trap);
+        #endif
         /* Done, we're good to go! */
         return ExceptionContinueExecution;
     }
+    #if defined(LISP_FEATURE_SB_THREAD)
     else if (exception_record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault_address == GC_SAFEPOINT_PAGE_ADDR) {
       pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
       odprintf("entering safepoint from GC page handler");
@@ -453,6 +494,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
       set_gc_safe(gc_safe_count);
       return ExceptionContinueExecution;
     }
+    #endif
     else if (exception_record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
              (is_valid_lisp_addr(fault_address) ||
               is_linkage_table_addr(fault_address))) {
@@ -472,8 +514,6 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                 lose("handle_exception: VirtualAlloc failure");
 
             } else {
-            //if (suspend_info.suspend && self != suspend_info.gc_thread)
-              //    odprintf("Hmmm, gcing = 1, addr = 0x%p, doing gencgc_handle_wp_violation", fault_address);
                 /*
                  * Now, if the page is supposedly write-protected and this
                  * is a write, tell the gc that it's been hit.
@@ -484,18 +524,19 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                 if (exception_record->ExceptionInformation[0]) {
                     int index = find_page_index(fault_address);
                     if ((index != -1) && (page_table[index].write_protected)) {
-                        //odprintf("wv_violation at EIP = 0x%p", context->Eip);
                         gencgc_handle_wp_violation(fault_address);
                     }
                 }
+                #if defined(LISP_FEATURE_SB_THREAD)
                 pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
                 set_gc_safe(gc_safe_count);
                 gc_safepoint();
+                #endif
                 return ExceptionContinueExecution;
             }
 
+        #if defined(LISP_FEATURE_SB_THREAD)
         } else {
-            //odprintf("exception at EIP = 0x%p", context->Eip);
             if (suspend_info.suspend && self != suspend_info.gc_thread)
               odprintf("Hmmm, gcing = 1, doing gencgc_handle_wp_violation");
             if (gencgc_handle_wp_violation(fault_address)) {
@@ -506,6 +547,12 @@ handle_exception(EXCEPTION_RECORD *exception_record,
               return ExceptionContinueExecution;
           }
         }
+        #else
+        } else if (gencgc_handle_wp_violation(fault_address)) {
+            /* gc accepts the wp violation, so resume where we left off. */
+            return ExceptionContinueExecution;
+        }
+        #endif
 
         /* All else failed, drop through to the lisp-side exception handler. */
     }
@@ -519,15 +566,14 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     if (internal_errors_enabled) {
         lispobj context_sap;
         lispobj exception_record_sap;
-    
-        odprintf("handle_exception dropping to lisp-side handler; code = 0x%lx, addr = 0x%p, EIP = 0x%p", exception_record->ExceptionCode, fault_address, context->Eip);
 
         /* We're making the somewhat arbitrary decision that having
          * internal errors enabled means that lisp has sufficient
          * marbles to be able to handle exceptions, but exceptions
          * aren't supposed to happen during cold init or reinit
          * anyway. */
-         
+
+        #if defined(LISP_FEATURE_SB_THREAD)
         fake_foreign_function_call(&ctx);
 
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
@@ -535,6 +581,13 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         /* Allocate the SAP objects while the "interrupts" are still
          * disabled. */
         context_sap = alloc_sap(&ctx);
+        #else
+        fake_foreign_function_call(context);
+
+        /* Allocate the SAP objects while the "interrupts" are still
+         * disabled. */
+        context_sap = alloc_sap(context);
+        #endif
         exception_record_sap = alloc_sap(exception_record);
 
         /* The exception system doesn't automatically clear pending
@@ -547,9 +600,13 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                  exception_record_sap);
 
         /* If Lisp doesn't nlx, we need to put things back. */
+        #if defined(LISP_FEATURE_SB_THREAD)
         undo_fake_foreign_function_call(&ctx);
         self->gc_safe = gc_safe_count;
         gc_safepoint();
+        #else
+        undo_fake_foreign_function_call(context);
+        #endif
 
         /* FIXME: HANDLE-WIN32-EXCEPTION should be allowed to decline */
         return ExceptionContinueExecution;
@@ -571,13 +628,19 @@ handle_exception(EXCEPTION_RECORD *exception_record,
 
     fflush(stderr);
 
+    #if defined(LISP_FEATURE_SB_THREAD)
     fake_foreign_function_call(&ctx);
+    #else
+    fake_foreign_function_call(context);
+    #endif
     lose("Exception too early in cold init, cannot continue.");
 
+    #if defined(LISP_FEATURE_SB_THREAD)
     /* FIXME: WTF? How are we supposed to end up here? */
     pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
     set_gc_safe(gc_safe_count);
     gc_safepoint();
+    #endif
     return ExceptionContinueSearch;
 }
 
