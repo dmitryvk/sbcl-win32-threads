@@ -19,7 +19,11 @@
 
 #include "sbcl.h"
 #include "arch.h"
+#if defined(LISP_FEATURE_WIN32)
 #include "pthreads_win32.h"
+#else
+#include <signal.h>
+#endif
 
 #include "runtime.h"
 #include "interr.h"
@@ -53,8 +57,10 @@ void print_message(char *fmt, va_list ap)
 {
     fprintf(stderr, " in SBCL pid %d",getpid());
 #if defined(LISP_FEATURE_SB_THREAD)
-    fprintf(stderr, "(tid 0x%p)", pthread_self());
+    fprintf(stderr, "(tid %lu)", (unsigned long) thread_self());
+    #if defined(LISP_FEATURE_WIN32)
     odprintf("lose");
+    #endif
 #endif
     if (fmt) {
         fprintf(stderr, ":\n");
@@ -81,6 +87,7 @@ lose(char *fmt, ...)
     /* Block signals to prevent other threads, timers and such from
      * interfering. If only all threads could be stopped somehow. */
     block_blockable_signals(0, 0);
+    #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     {
       char buf[1000];
       va_start(ap, fmt);
@@ -88,6 +95,7 @@ lose(char *fmt, ...)
       va_end(ap);
       odprintf("lose: %s", buf);
     }
+    #endif
     fprintf(stderr, "fatal error encountered");
     va_start(ap, fmt);
     print_message(fmt, ap);
@@ -103,8 +111,10 @@ void
 corruption_warning_and_maybe_lose(char *fmt, ...)
 {
     va_list ap;
+    #if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
     sigset_t oldset;
     block_blockable_signals(0, &oldset);
+    #endif
     fprintf(stderr, "CORRUPTION WARNING");
     va_start(ap, fmt);
     print_message(fmt, ap);
@@ -117,8 +127,10 @@ corruption_warning_and_maybe_lose(char *fmt, ...)
     fflush(stderr);
     if (lose_on_corruption_p)
         call_lossage_handler();
+    #if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
     else
         thread_sigmask(SIG_SETMASK,&oldset,0);
+    #endif
 }
 
 char *internal_error_descriptions[] = {INTERNAL_ERROR_NAMES};
