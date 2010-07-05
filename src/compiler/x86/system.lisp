@@ -254,6 +254,11 @@
   (:generator 1
     (inst break pending-interrupt-trap)))
 
+#!+(and sb-thread win32)
+(define-vop (insert-gc-safepoint)
+  (:generator 0
+    (inst test eax-tn (make-ea :dword :disp #x21000000))))
+
 #!+sb-thread
 (defknown current-thread-offset-sap ((unsigned-byte 32))
   system-area-pointer (flushable))
