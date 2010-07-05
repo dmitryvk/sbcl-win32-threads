@@ -29,10 +29,12 @@
 #define thread_mutex_unlock(l) 0
 #endif
 
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
 #define GC_SAFEPOINT_PAGE_ADDR ((void*)0x21000000UL)
 
 void map_gc_page();
 void unmap_gc_page();
+#endif
 
 /* Block blockable interrupts for each SHOW, if not 0. */
 #define QSHOW_SIGNAL_SAFE 1
@@ -56,7 +58,11 @@ void unmap_gc_page();
 
 #if QSHOW_SIGNAL_SAFE == 1 && !defined(LISP_FEATURE_WIN32)
 
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
 #include "pthreads_win32.h"
+#else
+#include <signal.h>
+#endif
 extern sigset_t blockable_sigset;
 
 #define QSHOW_BLOCK                                             \
@@ -284,10 +290,5 @@ struct runtime_options {
     size_t dynamic_space_size;
     size_t thread_control_stack_size;
 };
-
-#if defined(LISP_FEATURE_WIN32)
-typedef void (*planted_function_t)();
-void plant_call(HANDLE thread, planted_function_t fn);
-#endif
 
 #endif /* _SBCL_RUNTIME_H_ */
