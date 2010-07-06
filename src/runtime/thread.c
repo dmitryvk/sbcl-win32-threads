@@ -1243,7 +1243,11 @@ int
 thread_yield()
 {
 #ifdef LISP_FEATURE_SB_THREAD
+#if defined(LISP_FEATURE_WIN32)
+    SwitchToThread();
+#else
     return sched_yield();
+#endif
 #else
     return 0;
 #endif
