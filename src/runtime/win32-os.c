@@ -76,8 +76,12 @@ int linux_supports_futex=0;
 void odprint(const char * msg)
 {
   char buf[1024];
+  #if defined(LISP_FEATURE_SB_THREAD)
   sprintf(buf, "[0x%p] %s", pthread_self(), msg);
   OutputDebugString(buf);
+  #else
+  OutputDebugString(msg);
+  #endif
 }
 
 void odprintf(const char * fmt, ...)
@@ -85,7 +89,11 @@ void odprintf(const char * fmt, ...)
   char buf[1024];
   va_list args;
   int n;
+  #if defined(LISP_FEATURE_SB_THREAD)
   sprintf(buf, "[0x%p] ", pthread_self());
+  #else
+  buf[0] = 0;
+  #endif
   n = strlen(buf);
   va_start(args, fmt);
   vsprintf(buf + n, fmt, args);

@@ -1015,7 +1015,7 @@ return DEFAULT if given or else signal JOIN-THREAD-ERROR."
     (when interruption
       (funcall interruption))))
       
-#!+win32
+#!+(and sb-thread win32)
 (sb!alien:define-alien-routine interrupt-lisp-thread sb!alien:int
   (thread sb!alien:int)
   (fn sb!alien:int))
@@ -1032,9 +1032,14 @@ enable interrupts (GET-MUTEX when contended, for instance) so the
 first thing to do is usually a WITH-INTERRUPTS or a
 WITHOUT-INTERRUPTS. Within a thread interrupts are queued, they are
 run in same the order they were sent."
-  #!+win32
+  #!+(and sb-thread win32)
   (let ((r (interrupt-lisp-thread (thread-os-thread thread) (get-lisp-obj-address (lambda () (funcall function))))))
     (zerop r))
+  #!+(and (not sb-thread) win32)
+  (progn
+    (declare (ignore thread))
+    (with-interrupt-bindings
+      (with-interrupts (funcall function))))
   #!-win32
   (let ((os-thread (thread-os-thread thread)))
     (cond ((not os-thread)

@@ -1,3 +1,6 @@
+#include "sbcl.h"
+
+#if defined(LISP_FEATURE_SB_THREAD)
 #include "pthreads_win32.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -581,4 +584,4 @@ int sigismember(const sigset_t *set, int signum)
 {
   return (*set & (1 << signum)) != 0;
 }
-
+#endif
