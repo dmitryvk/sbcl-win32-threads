@@ -187,16 +187,17 @@
 #!+win32
 (progn
 
-  (def!constant gc-magic-poll-page    #x21000000)
+  #!+sb-thread
+  (def!constant gc-safepoint-page-addr #x21000000)
 
-  (def!constant read-only-space-start #x22000000)
-  (def!constant read-only-space-end   #x220ff000)
+  (def!constant read-only-space-start  #x22000000)
+  (def!constant read-only-space-end    #x220ff000)
 
-  (def!constant static-space-start    #x22100000)
-  (def!constant static-space-end      #x221ff000)
+  (def!constant static-space-start     #x22100000)
+  (def!constant static-space-end       #x221ff000)
 
-  (def!constant dynamic-space-start   #x22300000)
-  (def!constant dynamic-space-end     #x42300000)
+  (def!constant dynamic-space-start    #x22300000)
+  (def!constant dynamic-space-end      #x42300000)
 
   (def!constant linkage-table-space-start #x22200000)
   (def!constant linkage-table-space-end   #x222ff000))

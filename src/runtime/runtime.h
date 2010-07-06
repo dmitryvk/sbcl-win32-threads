@@ -30,7 +30,6 @@
 #endif
 
 #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
-#define GC_SAFEPOINT_PAGE_ADDR ((void*)0x21000000UL)
 
 void map_gc_page();
 void unmap_gc_page();
