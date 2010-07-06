@@ -260,8 +260,8 @@ Ldone:
 
 #ifdef LISP_FEATURE_WIN32
 	/* Establish an SEH frame. */
-	/* Save binding stack pointer */
 #ifdef LISP_FEATURE_SB_THREAD
+	/* Save binding stack pointer */
 	subl $4, %esp
 	pushl %eax
 	movl %fs:0x14, %eax
