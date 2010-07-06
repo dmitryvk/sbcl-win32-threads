@@ -526,7 +526,6 @@ create_thread_struct(lispobj initial_function) {
 #endif
 
     th->stepping = NIL;
-    odprintf("create_thread_struct ok");
     return th;
 }
 
