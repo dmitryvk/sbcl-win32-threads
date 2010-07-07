@@ -4368,6 +4368,8 @@ collect_garbage(generation_index_t last_gen)
     /* The largest value of last_free_page seen since the time
      * remap_free_pages was called. */
     static page_index_t high_water_mark = 0;
+    
+    odprintf("collect_garbage(%d) begin", last_gen);
 
     FSHOW((stderr, "/entering collect_garbage(%d)\n", last_gen));
 
@@ -4493,8 +4495,9 @@ collect_garbage(generation_index_t last_gen)
     }
 
     gc_active_p = 0;
-
+    
     SHOW("returning from collect_garbage");
+    odprintf("collect_garbage(%d) end", last_gen);
 }
 
 /* This is called by Lisp PURIFY when it is finished. All live objects
@@ -4882,12 +4885,12 @@ gencgc_handle_wp_violation(void* fault_addr)
              * we had better not have the second one lose here if it
              * does this test after the first one has already set wp=0
              */
-            #if !(defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD))
+            /*#if !(defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD))*/
             if(page_table[page_index].write_protected_cleared != 1)
                 lose("fault in heap page %d not marked as write-protected\nboxed_region.first_page: %d, boxed_region.last_page %d\n",
                      page_index, boxed_region.first_page,
                      boxed_region.last_page);
-            #endif
+            /*#endif*/
         }
         ret = thread_mutex_unlock(&free_pages_lock);
         gc_assert(ret == 0);

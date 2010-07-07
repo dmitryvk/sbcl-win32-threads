@@ -767,7 +767,9 @@ void check_pending_gc()
 			sigset_t sigset;
 			get_current_sigmask(&sigset);
 			if (sigismember(&sigset, SIG_STOP_FOR_GC)) return;
+      odprintf("GC was pending, calling maybe_gc");
 			maybe_gc(NULL);
+      odprintf("maybe_gc returned");
 		}
   }
 }
@@ -827,6 +829,7 @@ int set_gc_safe(int gc_safe)
 {
   struct thread * self = arch_os_get_current_thread();
   int old_gc_safe = self->gc_safe;
+  odprintf("Changing gc_safe from %d to %d", old_gc_safe, gc_safe);
   self->gc_safe = gc_safe;
   gc_safepoint();
   return old_gc_safe;
@@ -929,26 +932,25 @@ void gc_safepoint()
     pthread_mutex_unlock(&suspend_info.lock);
     check_pending_interrupts();
     SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
-    SetSymbolValue(INTERRUPT_PENDING, NIL, self);
+    return;
   }
-  //gc_log_state("safepoint");
-  //odprintf("gc_safepoint, suspend_info.suspend = 1");
+  gc_log_state("safepoint");
+  odprintf("gc_safepoint, suspend_info.suspend = 1");
   if (suspend_info.reason == SUSPEND_REASON_GC) {
-    //odprintf("suspend_info.reason == SUSPEND_REASON_GC");
+    odprintf("suspend_info.reason == SUSPEND_REASON_GC");
     if (self == suspend_info.gc_thread) {
-      //odprintf("suspend_info.gc_thread == self");
+      odprintf("suspend_info.gc_thread == self");
       pthread_mutex_unlock(&suspend_info.lock);
     } else
     if (suspend_info.phase == 1) {
 			if (thread_may_gc()) {
-				//odprintf("thread_may_gc = T");
+				odprintf("thread_may_gc = T");
 				suspend();
 				check_pending_interrupts();
-				SetSymbolValue(STOP_FOR_GC_PENDING, T, self);
-				SetSymbolValue(INTERRUPT_PENDING, T, self);
+				SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
 				gc_log_state("leaving safepoint 1");
 			} else {
-				//odprintf("thread_may_gc = NIL");
+				odprintf("thread_may_gc = NIL");
 				suspend_briefly();
 				SetSymbolValue(STOP_FOR_GC_PENDING, T, self);
 				SetSymbolValue(INTERRUPT_PENDING, T, self);
