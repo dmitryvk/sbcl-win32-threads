@@ -171,7 +171,10 @@
 ;;; The current code doesn't seem to quite match that.
 (def!method print-object ((x condition) stream)
   (if *print-escape*
-      (print-unreadable-object (x stream :type t :identity t))
+      (if (and (typep x 'simple-condition) (slot-boundp x 'format-control))
+          (print-unreadable-object (x stream :type t :identity t)
+            (format stream "~S" (simple-condition-format-control x)))
+          (print-unreadable-object (x stream :type t :identity t)))
       ;; KLUDGE: A comment from CMU CL here said
       ;;   7/13/98 BUG? CPL is not sorted and results here depend on order of
       ;;   superclasses in define-condition call!
@@ -941,6 +944,9 @@
                    '(:ansi-cl :function sb!xc:upgraded-array-element-type))))
 
 (define-condition type-warning (reference-condition simple-warning)
+  ()
+  (:default-initargs :references (list '(:sbcl :node "Handling of Types"))))
+(define-condition type-style-warning (reference-condition simple-style-warning)
   ()
   (:default-initargs :references (list '(:sbcl :node "Handling of Types"))))
 

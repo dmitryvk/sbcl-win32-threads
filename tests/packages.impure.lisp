@@ -245,6 +245,17 @@ if a restart was invoked."
       (is (eql 1 (length conflict-sets)))
       (is (eql 3 (length (first conflict-sets)))))))
 
+;;; Make sure that resolving a name-conflict in IMPORT doesn't leave
+;;; multiple symbols of the same name in the package (this particular
+;;; scenario found in 1.0.38.9, but clearly a longstanding issue).
+(with-test (:name import-conflict-resolution)
+  (with-packages (("FOO" (:export "NIL"))
+                  ("BAR" (:use)))
+    (with-name-conflict-resolution ((sym "FOO" "NIL"))
+      (import (list 'CL:NIL (sym "FOO" "NIL")) "BAR"))
+    (do-symbols (sym "BAR")
+      (assert (eq sym (sym "FOO" "NIL"))))))
+
 ;;; UNINTERN
 (with-test (:name unintern.1)
   (with-packages (("FOO" (:export "SYM"))
@@ -267,3 +278,16 @@ if a restart was invoked."
                 ((and simple-condition program-error) (c)
                   (assert (equal (list :foo) (simple-condition-format-arguments c)))
                   :good)))))
+
+;;; MAKE-PACKAGE error in another thread blocking FIND-PACKAGE & FIND-SYMBOL
+#+sb-thread
+(with-test (:name :bug-511072)
+  (let* ((p (make-package :bug-511072))
+         (sem (sb-thread:make-semaphore))
+         (t2 (sb-thread:make-thread (lambda ()
+                                      (handler-bind ((error (lambda (c)
+                                                              (sb-thread:signal-semaphore sem)
+                                                              (signal c))))
+                                        (make-package :bug-511072))))))
+    (sb-thread:wait-on-semaphore sem)
+    (assert (eq 'cons (read-from-string "CL:CONS")))))

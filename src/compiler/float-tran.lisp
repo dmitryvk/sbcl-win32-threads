@@ -343,21 +343,26 @@
                   (if (minusp y)
                       '(%negate x)
                       'x)))))
-  (def * single-float 1.0 -1.0)
-  (def * double-float 1.0d0 -1.0d0))
+  (def single-float 1.0 -1.0)
+  (def double-float 1.0d0 -1.0d0))
 
 ;;; Return the reciprocal of X if it can be represented exactly, NIL otherwise.
 (defun maybe-exact-reciprocal (x)
   (unless (zerop x)
-    (multiple-value-bind (significand exponent sign)
-        ;; Signals an error for NaNs and infinities.
-        (handler-case (integer-decode-float x)
-          (error () (return-from maybe-exact-reciprocal nil)))
-      (let ((expected (/ sign significand (expt 2 exponent))))
-        (let ((reciprocal (/ 1 x)))
-          (multiple-value-bind (significand exponent sign) (integer-decode-float reciprocal)
-            (when (eql expected (* sign significand (expt 2 exponent)))
-              reciprocal)))))))
+    (handler-case
+        (multiple-value-bind (significand exponent sign)
+            (integer-decode-float x)
+          ;; only powers of 2 can be inverted exactly
+          (unless (zerop (logand significand (1- significand)))
+            (return-from maybe-exact-reciprocal nil))
+          (let ((expected   (/ sign significand (expt 2 exponent)))
+                (reciprocal (/ x)))
+            (multiple-value-bind (significand exponent sign)
+                (integer-decode-float reciprocal)
+              ;; Denorms can't be inverted safely.
+              (and (eql expected (* sign significand (expt 2 exponent)))
+                   reciprocal))))
+      (error () (return-from maybe-exact-reciprocal nil)))))
 
 ;;; Replace constant division by multiplication with exact reciprocal,
 ;;; if one exists.
@@ -377,7 +382,7 @@
   (def single-float)
   (def double-float))
 
-;;; Optimize addition and subsctraction of zero
+;;; Optimize addition and subtraction of zero
 (macrolet ((def (op type &rest args)
              `(deftransform ,op ((x y) (,type (constant-arg (member ,@args))) *
                                  ;; Beware the SNaN!
@@ -532,27 +537,27 @@
                 (deftransform ,name ((x) (single-float) *)
                   #!+x86 (cond ((csubtypep (lvar-type x)
                                            (specifier-type '(single-float
-                                                             (#.(- (expt 2f0 64)))
-                                                             (#.(expt 2f0 64)))))
+                                                             (#.(- (expt 2f0 63)))
+                                                             (#.(expt 2f0 63)))))
                                 `(coerce (,',prim-quick (coerce x 'double-float))
                                   'single-float))
                                (t
                                 (compiler-notify
                                  "unable to avoid inline argument range check~@
-                                  because the argument range (~S) was not within 2^64"
+                                  because the argument range (~S) was not within 2^63"
                                  (type-specifier (lvar-type x)))
                                 `(coerce (,',prim (coerce x 'double-float)) 'single-float)))
                   #!-x86 `(coerce (,',prim (coerce x 'double-float)) 'single-float))
                (deftransform ,name ((x) (double-float) *)
                  #!+x86 (cond ((csubtypep (lvar-type x)
                                           (specifier-type '(double-float
-                                                            (#.(- (expt 2d0 64)))
-                                                            (#.(expt 2d0 64)))))
+                                                            (#.(- (expt 2d0 63)))
+                                                            (#.(expt 2d0 63)))))
                                `(,',prim-quick x))
                               (t
                                (compiler-notify
                                 "unable to avoid inline argument range check~@
-                                 because the argument range (~S) was not within 2^64"
+                                 because the argument range (~S) was not within 2^63"
                                 (type-specifier (lvar-type x)))
                                `(,',prim x)))
                  #!-x86 `(,',prim x)))))
@@ -1517,16 +1522,19 @@
                                         (,type
                                          &optional (or ,type ,@other-float-arg-types integer))
                                         * :result result)
-                  (let ((result-type (lvar-derived-type result)))
+                  (let* ((result-type (and result
+                                           (lvar-derived-type result)))
+                         (compute-all (and (values-type-p result-type)
+                                           (not (type-single-value-p result-type)))))
                     (if (or (not y)
                             (and (constant-lvar-p y) (= 1 (lvar-value y))))
-                        (if (values-type-p result-type)
+                        (if compute-all
                             `(let ((res (,',unary x)))
                                (values res (- x (,',coerce res))))
                             `(let ((res (,',unary x)))
                                ;; Dummy secondary value!
                                (values res x)))
-                        (if (values-type-p result-type)
+                        (if compute-all
                             `(let* ((f (,',coerce y))
                                     (res (,',unary (/ x f))))
                                (values res (- x (* f (,',coerce res)))))

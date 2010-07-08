@@ -284,6 +284,9 @@
     (tai 42 :immediate nil)
   t)
 
+;;; Skip the whole damn test on GENCGC PPC -- the combination is just
+;;; to flaky for this to make too much sense.
+#-(and ppc gencgc)
 (deftest allocation-information.4
     #+gencgc
     (tai #'cons :heap
@@ -413,6 +416,7 @@
 
 ;; Interpreted functions
 
+#+sb-eval
 (deftest function-type.8
     (type-equal (function-type (interpret (lambda (x) (declare (fixnum x)) x)))
                 '(function (&rest t) *))

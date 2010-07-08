@@ -536,7 +536,7 @@
 (sb!alien:define-alien-routine component-ptr-from-pc (system-area-pointer)
   (pc system-area-pointer))
 
-#!+(or x86 x86-64)
+#!+gencgc
 (sb!alien:define-alien-routine valid-lisp-pointer-p sb!alien:int
   (pointer system-area-pointer))
 
@@ -1970,12 +1970,12 @@ register."
        ;; unbound marker
        (= val sb!vm:unbound-marker-widetag)
        ;; pointer
-       #!+(or x86 x86-64)
+       #!+gencgc
        (not (zerop (valid-lisp-pointer-p (int-sap val))))
        ;; FIXME: There is no fundamental reason not to use the above
        ;; function on other platforms as well, but I didn't have
        ;; others available while doing this. --NS 2007-06-21
-       #!-(or x86 x86-64)
+       #!-gencgc
        (and (logbitp 0 val)
             (or (< sb!vm:read-only-space-start val
                    (* sb!vm:*read-only-space-free-pointer*
@@ -3018,7 +3018,11 @@ register."
             (sb!alien:sap-alien signal-context (* os-context-t))))
          (cfp (int-sap (sb!vm:context-register scp sb!vm::cfp-offset))))
     (compute-calling-frame cfp
-                           (sb!vm:context-pc scp)
+                           ;; KLUDGE: This argument is ignored on
+                           ;; x86oids in this scenario, but is
+                           ;; declared to be a SAP.
+                           #!+(or x86 x86-64) (sb!vm:context-pc scp)
+                           #!-(or x86 x86-64) nil
                            nil)))
 
 (defun handle-fun-end-breakpoint (offset component context)
@@ -3115,11 +3119,20 @@ register."
      #!-(or x86 x86-64)
      (let ((new-lra (make-lisp-obj (+ (sap-int dst-start)
                                       sb!vm:other-pointer-lowtag))))
-       (set-header-data
-        new-lra
-        (logandc2 (+ sb!vm:code-constants-offset bogus-lra-constants 1)
-                  1))
-       (sb!vm:sanctify-for-execution code-object)
+       #!-(or gencgc ppc)
+       (progn
+         ;; Set the offset from the LRA to the enclosing component.
+         ;; This does not need to be done on GENCGC targets, as the
+         ;; pointer validation done in MAKE-LISP-OBJ requires that it
+         ;; already have been set before we get here.  It does not
+         ;; need to be done on CHENEYGC PPC as it's easier to use the
+         ;; same fun_end_breakpoint_guts on both, including the LRA
+         ;; header.
+         (set-header-data
+          new-lra
+          (logandc2 (+ sb!vm:code-constants-offset bogus-lra-constants 1)
+                    1))
+         (sb!vm:sanctify-for-execution code-object))
        (values new-lra code-object (sap- trap-loc src-start))))))
 
 ;;;; miscellaneous

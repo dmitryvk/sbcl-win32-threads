@@ -224,6 +224,7 @@
                               ;; This seems silly, is there something better?
                               '(integer 0 (0))))))
 
+(declaim (ftype (function (t t t) nil) sequence-bounding-indices-bad-error))
 (defun sequence-bounding-indices-bad-error (sequence start end)
   (let ((size (length sequence)))
     (error 'bounding-indices-bad-error
@@ -232,6 +233,7 @@
                                  (integer ,start ,size))
            :object sequence)))
 
+(declaim (ftype (function (t t t) nil) array-bounding-indices-bad-error))
 (defun array-bounding-indices-bad-error (array start end)
   (let ((size (array-total-size array)))
     (error 'bounding-indices-bad-error
@@ -239,6 +241,16 @@
            :expected-type `(cons (integer 0 ,size)
                                  (integer ,start ,size))
            :object array)))
+
+(declaim (ftype (function (t) nil) circular-list-error))
+(defun circular-list-error (list)
+  (let ((*print-circle* t))
+    (error 'simple-type-error
+           :format-control "List is circular:~%  ~S"
+           :format-arguments (list list)
+           :datum list
+           :type '(and list (satisfies list-length)))))
+
 
 (defun elt (sequence index)
   #!+sb-doc "Return the element of SEQUENCE specified by INDEX."
@@ -791,87 +803,82 @@
                   ,@decls
                   (tagbody
                      ,@forms))))))))))
-
-(eval-when (:compile-toplevel :execute)
-
-(sb!xc:defmacro concatenate-to-list (sequences)
-  `(let ((result (list nil)))
-     (do ((sequences ,sequences (cdr sequences))
-          (splice result))
-         ((null sequences) (cdr result))
-       (let ((sequence (car sequences)))
-         (sb!sequence:dosequence (e sequence)
-           (setq splice (cdr (rplacd splice (list e)))))))))
-
-(sb!xc:defmacro concatenate-to-mumble (output-type-spec sequences)
-  `(do ((seqs ,sequences (cdr seqs))
-        (total-length 0)
-        (lengths ()))
-       ((null seqs)
-        (do ((sequences ,sequences (cdr sequences))
-             (lengths lengths (cdr lengths))
-             (index 0)
-             (result (make-sequence ,output-type-spec total-length)))
-            ((= index total-length) result)
-          (declare (fixnum index))
-          (let ((sequence (car sequences)))
-            (sb!sequence:dosequence (e sequence)
-              (setf (aref result index) e)
-              (incf index)))))
-     (let ((length (length (car seqs))))
-       (declare (fixnum length))
-       (setq lengths (nconc lengths (list length)))
-       (setq total-length (+ total-length length)))))
-
-) ; EVAL-WHEN
 
 (defun concatenate (output-type-spec &rest sequences)
   #!+sb-doc
   "Return a new sequence of all the argument sequences concatenated together
   which shares no structure with the original argument sequences of the
   specified OUTPUT-TYPE-SPEC."
-  (let ((type (specifier-type output-type-spec)))
-  (cond
-    ((csubtypep type (specifier-type 'list))
-     (cond
-       ((type= type (specifier-type 'list))
-        (apply #'concat-to-list* sequences))
-       ((eq type *empty-type*)
-        (bad-sequence-type-error nil))
-       ((type= type (specifier-type 'null))
-        (if (every (lambda (x) (or (null x)
-                                   (and (vectorp x) (= (length x) 0))))
-                   sequences)
-            'nil
-            (sequence-type-length-mismatch-error
-             type
-             ;; FIXME: circular list issues.
-             (reduce #'+ sequences :key #'length))))
-       ((cons-type-p type)
-        (multiple-value-bind (min exactp)
-            (sb!kernel::cons-type-length-info type)
-          (let ((length (reduce #'+ sequences :key #'length)))
-            (if exactp
-                (unless (= length min)
-                  (sequence-type-length-mismatch-error type length))
-                (unless (>= length min)
-                  (sequence-type-length-mismatch-error type length)))
-            (apply #'concat-to-list* sequences))))
-       (t (sequence-type-too-hairy (type-specifier type)))))
-    ((csubtypep type (specifier-type 'vector))
-     (apply #'concat-to-simple* output-type-spec sequences))
-    ((and (csubtypep type (specifier-type 'sequence))
-          (find-class output-type-spec nil))
-     (coerce (apply #'concat-to-simple* 'vector sequences) output-type-spec))
-    (t
-     (bad-sequence-type-error output-type-spec)))))
+  (flet ((concat-to-list* (sequences)
+           (let ((result (list nil)))
+             (do ((sequences sequences (cdr sequences))
+                  (splice result))
+                 ((null sequences) (cdr result))
+               (let ((sequence (car sequences)))
+                 (sb!sequence:dosequence (e sequence)
+                   (setq splice (cdr (rplacd splice (list e)))))))))
+         (concat-to-simple* (type-spec sequences)
+           (do ((seqs sequences (cdr seqs))
+                (total-length 0)
+                (lengths ()))
+               ((null seqs)
+                (do ((sequences sequences (cdr sequences))
+                     (lengths lengths (cdr lengths))
+                     (index 0)
+                     (result (make-sequence type-spec total-length)))
+                    ((= index total-length) result)
+                  (declare (fixnum index))
+                  (let ((sequence (car sequences)))
+                    (sb!sequence:dosequence (e sequence)
+                      (setf (aref result index) e)
+                      (incf index)))))
+             (let ((length (length (car seqs))))
+               (declare (fixnum length))
+               (setq lengths (nconc lengths (list length)))
+               (setq total-length (+ total-length length))))))
+    (let ((type (specifier-type output-type-spec)))
+      (cond
+        ((csubtypep type (specifier-type 'list))
+         (cond
+           ((type= type (specifier-type 'list))
+            (concat-to-list* sequences))
+           ((eq type *empty-type*)
+            (bad-sequence-type-error nil))
+           ((type= type (specifier-type 'null))
+            (if (every (lambda (x) (or (null x)
+                                       (and (vectorp x) (= (length x) 0))))
+                       sequences)
+                'nil
+                (sequence-type-length-mismatch-error
+                 type
+                 ;; FIXME: circular list issues.
+                 (reduce #'+ sequences :key #'length))))
+           ((cons-type-p type)
+            (multiple-value-bind (min exactp)
+                (sb!kernel::cons-type-length-info type)
+              (let ((length (reduce #'+ sequences :key #'length)))
+                (if exactp
+                    (unless (= length min)
+                      (sequence-type-length-mismatch-error type length))
+                    (unless (>= length min)
+                      (sequence-type-length-mismatch-error type length)))
+                (concat-to-list* sequences))))
+           (t (sequence-type-too-hairy (type-specifier type)))))
+        ((csubtypep type (specifier-type 'vector))
+         (concat-to-simple* output-type-spec sequences))
+        ((and (csubtypep type (specifier-type 'sequence))
+              (find-class output-type-spec nil))
+         (coerce (concat-to-simple* 'vector sequences) output-type-spec))
+        (t
+         (bad-sequence-type-error output-type-spec))))))
 
 ;;; Efficient out-of-line concatenate for strings. Compiler transforms
 ;;; CONCATENATE 'STRING &co into these.
 (macrolet ((def (name element-type)
              `(defun ,name (&rest sequences)
                 (declare (dynamic-extent sequences)
-                         (optimize speed))
+                         (optimize speed)
+                         (optimize (sb!c::insert-array-bounds-checks 0)))
                 (let* ((lengths (mapcar #'length sequences))
                        (result (make-array (the integer (apply #'+ lengths))
                                            :element-type ',element-type))
@@ -888,17 +895,6 @@
                   result))))
   (def %concatenate-to-string character)
   (def %concatenate-to-base-string base-char))
-
-;;; internal frobs
-;;; FIXME: These are weird. They're never called anywhere except in
-;;; CONCATENATE. It seems to me that the macros ought to just
-;;; be expanded directly in CONCATENATE, or in CONCATENATE-STRING
-;;; and CONCATENATE-LIST variants. Failing that, these ought to be local
-;;; functions (FLET).
-(defun concat-to-list* (&rest sequences)
-  (concatenate-to-list sequences))
-(defun concat-to-simple* (type &rest sequences)
-  (concatenate-to-mumble type sequences))
 
 ;;;; MAP and MAP-INTO
 

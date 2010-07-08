@@ -6,11 +6,7 @@
 ;;;; software is in the public domain and is provided with absolutely no
 ;;;; warranty. See the COPYING and CREDITS files for more information.
 
-(defpackage :sb-queue-test
-  (:use :cl :sb-thread :sb-queue :sb-rt)
-  (:export))
-
-(in-package :sb-queue-test)
+(in-package :sb-concurrency-test)
 
 (deftest queue.1
     (let ((q (make-queue :name 'test-q :initial-contents '(1 2 3))))

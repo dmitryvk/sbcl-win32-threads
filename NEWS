@@ -1,7 +1,128 @@
 ;;;; -*- coding: utf-8; fill-column: 78 -*-
-changes relative to sbcl-1.0.36:
+changes in sbcl-1.0.40 relative to sbcl-1.0.39:
+  * bug fix: readdir now works on :inode64 darwin builds (lp#592897)
+  * bug fix: Name conflicts between symbols passed as arguments to a single
+    call to IMPORT no longer add multiple symbols with the same name to the
+    package (detectable via DO-SYMBOLS).
+  * bug fix: support building without the dlshim on darwin x86 and x86-64
+    (lp#533470).
+  * bug fix: TRACE :ENCAPSULATE NIL now works on ppc/linux.
+
+changes in sbcl-1.0.39 relative to sbcl-1.0.38:
+  * bug fix: Backtrace from undefined function on x86 and x86-64 now show
+    the calling frame.
+  * bug fix: linkage-table entries on PPC now no longer overflow their
+    space allocation (potentially causing crashes if they are written out
+    of order).
+  * bug fix: Scrub control stack after scavenging in gencgc on non-x86oid
+    platforms, preventing the GC from seeing stale pointers on the control
+    stack in subsequent GCs (which would, and does, break invariants).
+  * bug fix: 32-bit unicode external formats now work on big-endian systems.
+  * bug fix: Literal characters with code points greater than about 32767
+    now work on PPC UNICODE builds.
+  * bug fix: Any noise left by SSE operations (sqrt and conversions) in the
+    high order bits are explicitly cleared out. In some contrived situations,
+    this could lead to wrong results in mixed real/complex float arithmetic.
+  * bug fix: Fix function/macro redefinition warnings when building with
+    clisp.  (lp#576787, thanks to Josh Elsasser)
+  * new platform: experimental support for ppc/openbsd (thanks to Josh
+    Elsasser).
+  * bug fix: Floating-point traps now work on ppc/linux.
+
+changes in sbcl-1.0.38 relative to sbcl-1.0.37:
+  * incompatible change: Thread names are now restricted to SIMPLE-STRINGs
+    like for any other thread-related datastructure, MUTEX, etc. (lp#547095)
+  * deprecation: the SB-QUEUE contrib was merged into the SB-CONCURRENCY
+    contrib module. New code should depend on SB-CONCURRENCY, not SB-QUEUE.
+  * deprecation: SB-THEAD:GET-MUTEX was deprecated in favor of
+    SB-THREAD:GRAB-MUTEX.
+  * new contributed module: SB-CONCURRENCY is a new contrib; it's supposed to
+    contain additional data structures and tools for concurrent programming;
+    at the moment it contains a lock-free queue, and a lock-free mailbox
+    implementation.
+  * new feature: added SB-THREAD:GRAB-MUTEX; it's like the now deprecated
+    GET-MUTEX but takes &key rather than &optional parameters.  Also added
+    :TIMEOUT argument to GRAB-MUTEX on non-sb-lutex platforms like Linux and
+    BSD.
+  * new feature: added SB-THREAD:TRY-SEMAPHORE, a non-blocking variant of
+    SB-THREAD:WAIT-ON-SEMAPHORE.
+  * new feature: SB-EXT:ATOMIC-DECF has been added as a companion to
+    SB-EXT:ATOMIC-INCF.
+  * new feature: a CANCEL-DEADLINE is associated with DEADLINE-TIMEOUT
+    conditions to defer the deadline for forever.
+  * enhancement: *STANDARD-OUTPUT*, *STANDARD-INPUT*, and *ERROR-OUTPUT* are
+    now bivalent.
+  * enhancement: errors from NO-APPLICABLE-METHOD and
+    NO-PRIMARY-METHOD now have a RETRY restart available to retry the
+    generic function call.
+  * enhancement: SB-BSD-SOCKET improvements
+    ** sockets and socket streams now have a more informative printed
+       representation based on the corresponding SOCKET-NAME and
+       SOCKET-PEERNAME.
+    ** SOCKET-MAKE-STREAM once more supports the :AUTO-CLOSE option.
+       (lp#540413)
+    ** SOCKET-CLOSE now accepts :ABORT argument, which is passed on to
+       CL:CLOSE when appropriate, and no longer disassociates the stream
+       from the socket if close failed. (lp#543951)
+  * improvements to the instrumenting profiler
+    ** new feature: report per-function GC overhead. (thanks to John Fremlin)
+    ** optimization: counters no longer use locks for the overflow mode.
+    ** bug fix: whenever a profiling counter wrapped into overflow mode, it
+       incurred an off-by-one miscount.
+  * enhancement: improved MAKE-HASH-TABLE documentation (lp#543473)
+  * enhancement: improved DEFMETHOD pretty-printing.
+  * enhancement: perform range reduction when arguments are too large for
+    x87's transcendentals (instead of returning 0). (lp#327192)
+  * enhancement: eliminate some spurious TYPE-WARNINGs. Should help with
+    some of CL-PPCRE's macros. (lp#570079)
+  * enhancement: our machine code is slightly less hostile to valgrind on 
+    x86-64.
+  * enhancement: up-to-date versions of NetBSD-current are supported.  (Thanks
+    to Robert Swindells and Aleksej Saushev)
+  * bug fix: correct restart text for the continuable error in MAKE-PACKAGE.
+  * bug fix: a rare case of startup-time page table corruption.
+  * bug fix: a semaphore with multiple waiters and some of them unwinding due
+    to timeouts could be left in an inconsistent state.
+  * bug fix: fix typo in "Reporting Bugs" section of the manual (lp#520366)
+  * bug fix: misoptimization of multiplication by one in
+    (SB-C::FLOAT-ACCURACY 0) policies.
+  * bug fix: miscounts in SB-PROFILE.
+  * bug fix: Fix lost wakeup bug between SB-THREAD:CONDITION-WAIT and
+    CONDITION-NOTIFY on Linux. See threads "lost wakeup in condition-wait /
+    condition-notify" (Feb 2010) and "Condition-Wait, Deadline handler, waking
+    up itself" (March 2010) for further details.
+  * bug fix: allow forward FIND and POSITION on lists to elide checking :END
+    against length of the list if the element is found before the specified
+    END is reached. (thanks to Alec Berryman, lp#554385)
+  * bug fix: errors signalled during package graph modification no longer
+    block FIND-SYMBOL and FIND-PACKAGE in other threads. (lp#511072)
+  * bug fix: SB-POSIX build was broken when SBCL was compiled without the
+    :SB-DOC feature. (lp#552564)
+  * bug fix: SB-INTROSPECT build issues on GENGC/PPC. (lp#490490)
+  * bug fix: more robust runtime executable path detection. (lp#375549)
+  * bug fix: GCD always returns positive values. (lp#413680)
+  * bug fix: Converting division to multiplication by reciprocal handles
+    denormals.
+  * bug fix: We were too eager in eliding range reduction tests on x87.
+    The maximal magnitude is 2^63, not 2^64.
+  * bug fix: Transforms for TRUNCATE don't die when the result is completely
+    ignored anymore.
+  * bug fix: Maybe restore buildability on Alpha.
+  * bug fix: READ-BYTE isn't inline anymore, fixing weird streams failures. 
+    (lp#569404)
+  * bug fix: RANDOM-STATE can be printed readably again.
+  * bug fix: Unreadable objects were sometimes printed like #<\nFoo>.
+  * bug fix: Using EQL with non-constant values of constant type (e.g. EQL
+    types) could result in type mismatches during compilation.
+
+changes in sbcl-1.0.37 relative to sbcl-1.0.36:
   * enhancement: Backtrace from THROW to uncaught tag on x86oids now shows
     stack frame thrown from.
+  * enhancement: WITH-COMPILATION-UNIT :POLICY allows restricting changes to
+    compiler optimization qualities inside dynamic extent of its body.
+  * enhancement: LOAD-LOGICAL-PATHNAME-TRANSLATIONS can be used to load
+    translations from SYS:SITE;<HOST>.TRANSLATIONS.NEWEST (thanks to Michael
+    Weber)
   * optimization: SLOT-VALUE and (SETF SLOT-VALUE) take advantage of
     constraint propgation, allowing better compilation eg. when used to
     access structures with WITH-SLOTS. (lp#520366)
@@ -10,6 +131,10 @@ changes relative to sbcl-1.0.36:
     for accessing such arrays.
   * optimization: passing NIL as the environment argument to TYPEP no longer
     inhibits optimizing it. (lp#309788)
+  * optimization: more efficient register usage when handling single-float
+    arguments on x86-64. (thanks to Lutz Euler)
+  * optimization: ADJUST-ARRAY and STABLE-SORT on vectors no longer use
+    pre-allocated temporary vectors. (lp#496249)
   * bug fix: Fix compiler error involving MAKE-ARRAY and IF forms
     in :INITIAL-CONTENTS. (lp#523612)
   * bug fix: FUNCTION-LAMBDA-EXPRESSION lost declarations from interpreted
@@ -27,6 +152,31 @@ changes relative to sbcl-1.0.36:
     upgraded element type derived. (lp#316078)
   * bug fix: SB-SPROF allocation profiling for all threads failed to profile
     threads started during profiling. (lp#472499)
+  * bug fix: SB-INTROSPECT test failure when building without SB-EVAL feature.
+    (lp#535658)
+  * bug fix: SB-CLTL2:DECLARATION-INFORMATION did not take
+    SB-EXT:RESTRICT-COMPILER-POLICY into account. (lp#313337)
+  * bug fix: Comma inside a backquoted array or structure resulted in nonsense
+    values instead of signaling an error. (lp#309093)
+  * bug fix: Spurious unused variable warning in a DEFSTRUCT edge case.
+    (lp#528807)
+  * bug fix: More consistent warnings and notes for ignored DYNAMIC-EXTENT
+    declarations (lp#497321)
+  * bug fix: FIND and POSITION on lists did not check sequence bounds properly
+    and failed to detect circular lists (lp#452008)
+  * bug fix: leakage from ~/.asdf-install into the ASDf-INSTALL contrib build
+    (lp#538974)
+  * bug fix: LOOP OF-TYPE VECTOR compile-time error. (lp#540186)
+  * bug fix: SIGNAL SB-SYS:INTERACTIVE-INTERRUPT before entering the debugger
+    due to it, so that handlers can run.
+  * bug fix: reparsing undefined types if they have become defined since
+    parsing. (lp#309128)
+  * bug fix: missing &REST type in a proclamation for a function with both
+    &REST and &KEY in lambda-list caused miscompilation (lp#458354)
+  * bug fix: WHO-CALLS information for source-transformed and compiler-macro
+    expanded calls (lp#542174)
+  * bug fix: more accurate WHO-MACROEXPANDS information; point into rather
+    than just at toplevel form.
 
 changes in sbcl-1.0.36 relative to sbcl-1.0.35:
   * new feature: SB-EXT:TYPEXPAND-1, SB-EXT:TYPEXPAND, and

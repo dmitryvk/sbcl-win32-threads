@@ -1165,21 +1165,21 @@ gc_heap_exhausted_error_or_lose (long available, long requested)
     fprintf(stderr, "Heap exhausted during %s: %ld bytes available, %ld requested.\n",
             gc_active_p ? "garbage collection" : "allocation",
             available, requested);
-    if (gc_active_p || (available == 0)) {
-        /* If we are in GC, or totally out of memory there is no way
-         * to sanely transfer control to the lisp-side of things.
-         */
-        print_generation_stats();
+    print_generation_stats();
         fprintf(stderr, "GC control variables:\n");
-        fprintf(stderr, "          *GC-INHIBIT* = %s\n          *GC-PENDING* = %s\n",
+        fprintf(stderr, "   *GC-INHIBIT* = %s\n   *GC-PENDING* = %s\n",
                 SymbolValue(GC_INHIBIT,thread)==NIL ? "false" : "true",
                 (SymbolValue(GC_PENDING, thread) == T) ?
                 "true" : ((SymbolValue(GC_PENDING, thread) == NIL) ?
                   "false" : "in progress"));
 #ifdef LISP_FEATURE_SB_THREAD
-        fprintf(stderr, " *STOP-FOR-GC-PENDING* = %s\n",
+        fprintf(stderr, "   *STOP-FOR-GC-PENDING* = %s\n",
                 SymbolValue(STOP_FOR_GC_PENDING,thread)==NIL ? "false" : "true");
 #endif
+    if (gc_active_p || (available == 0)) {
+        /* If we are in GC, or totally out of memory there is no way
+         * to sanely transfer control to the lisp-side of things.
+         */
         lose("Heap exhausted, game over.");
     }
     else {
@@ -1416,15 +1416,11 @@ copy_large_object(lispobj object, long nwords)
             gc_assert(page_table[next_page].region_start_offset ==
                       npage_bytes(next_page-first_page));
             gc_assert(page_table[next_page].bytes_used == PAGE_BYTES);
+            /* Should have been unprotected by unprotect_oldspace(). */
+            gc_assert(page_table[next_page].write_protected == 0);
 
             page_table[next_page].gen = new_space;
 
-            /* Remove any write-protection. We should be able to rely
-             * on the write-protect flag to avoid redundant calls. */
-            if (page_table[next_page].write_protected) {
-                os_protect(page_address(next_page), PAGE_BYTES, OS_VM_PROT_ALL);
-                page_table[next_page].write_protected = 0;
-            }
             remaining_bytes -= PAGE_BYTES;
             next_page++;
         }
@@ -2222,8 +2218,6 @@ search_dynamic_space(void *pointer)
                             (lispobj *)pointer));
 }
 
-#if defined(LISP_FEATURE_X86) || defined(LISP_FEATURE_X86_64)
-
 /* Helper for valid_lisp_pointer_p and
  * possibly_valid_dynamic_space_pointer.
  *
@@ -2312,6 +2306,23 @@ looks_like_valid_lisp_pointer_p(lispobj *pointer, lispobj *start_addr)
         }
         break;
     case OTHER_POINTER_LOWTAG:
+
+#if !defined(LISP_FEATURE_X86) && !defined(LISP_FEATURE_X86_64)
+        /* The all-architecture test below is good as far as it goes,
+         * but an LRA object is similar to a FUN-POINTER: It is
+         * embedded within a CODE-OBJECT pointed to by start_addr, and
+         * cannot be found by simply walking the heap, therefore we
+         * need to check for it. -- AB, 2010-Jun-04 */
+        if ((widetag_of(start_addr[0]) == CODE_HEADER_WIDETAG)) {
+            lispobj *potential_lra =
+                (lispobj *)(((unsigned long)pointer) - OTHER_POINTER_LOWTAG);
+            if ((widetag_of(potential_lra[0]) == RETURN_PC_HEADER_WIDETAG) &&
+                ((potential_lra - HeaderValue(potential_lra[0])) == start_addr)) {
+                return 1; /* It's as good as we can verify. */
+            }
+        }
+#endif
+
         if ((unsigned long)pointer !=
             ((unsigned long)start_addr+OTHER_POINTER_LOWTAG)) {
             if (gencgc_verbose) {
@@ -2506,6 +2517,8 @@ valid_lisp_pointer_p(lispobj *pointer)
     else
         return 0;
 }
+
+#if defined(LISP_FEATURE_X86) || defined(LISP_FEATURE_X86_64)
 
 /* Is there any possibility that pointer is a valid Lisp object
  * reference, and/or something else (e.g. subroutine call return
@@ -3249,22 +3262,40 @@ static void
 unprotect_oldspace(void)
 {
     page_index_t i;
+    void *region_addr = 0;
+    void *page_addr = 0;
+    unsigned long region_bytes = 0;
 
     for (i = 0; i < last_free_page; i++) {
         if (page_allocated_p(i)
             && (page_table[i].bytes_used != 0)
             && (page_table[i].gen == from_space)) {
-            void *page_start;
-
-            page_start = (void *)page_address(i);
 
             /* Remove any write-protection. We should be able to rely
              * on the write-protect flag to avoid redundant calls. */
             if (page_table[i].write_protected) {
-                os_protect(page_start, PAGE_BYTES, OS_VM_PROT_ALL);
                 page_table[i].write_protected = 0;
+                page_addr = page_address(i);
+                if (!region_addr) {
+                    /* First region. */
+                    region_addr = page_addr;
+                    region_bytes = PAGE_BYTES;
+                } else if (region_addr + region_bytes == page_addr) {
+                    /* Region continue. */
+                    region_bytes += PAGE_BYTES;
+                } else {
+                    /* Unprotect previous region. */
+                    os_protect(region_addr, region_bytes, OS_VM_PROT_ALL);
+                    /* First page in new region. */
+                    region_addr = page_addr;
+                    region_bytes = PAGE_BYTES;
+                }
             }
         }
+    }
+    if (region_addr) {
+        /* Unprotect last region. */
+        os_protect(region_addr, region_bytes, OS_VM_PROT_ALL);
     }
 }
 
@@ -3301,17 +3332,8 @@ free_oldspace(void)
                 page_table[last_page].bytes_used;
             page_table[last_page].allocated = FREE_PAGE_FLAG;
             page_table[last_page].bytes_used = 0;
-
-            /* Remove any write-protection. We should be able to rely
-             * on the write-protect flag to avoid redundant calls. */
-            {
-                void  *page_start = (void *)page_address(last_page);
-
-                if (page_table[last_page].write_protected) {
-                    os_protect(page_start, PAGE_BYTES, OS_VM_PROT_ALL);
-                    page_table[last_page].write_protected = 0;
-                }
-            }
+            /* Should already be unprotected by unprotect_oldspace(). */
+            gc_assert(!page_table[last_page].write_protected);
             last_page++;
         }
         while ((last_page < last_free_page)
@@ -3361,6 +3383,23 @@ print_ptr(lispobj *addr)
 }
 #endif
 
+static int
+is_in_stack_space(lispobj ptr)
+{
+    /* For space verification: Pointers can be valid if they point
+     * to a thread stack space.  This would be faster if the thread
+     * structures had page-table entries as if they were part of
+     * the heap space. */
+    struct thread *th;
+    for_each_thread(th) {
+        if ((th->control_stack_start <= (lispobj *)ptr) &&
+            (th->control_stack_end >= (lispobj *)ptr)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void
 verify_space(lispobj *start, size_t words)
 {
@@ -3388,15 +3427,15 @@ verify_space(lispobj *start, size_t words)
                  * page. XX Could check the offset too. */
                 if (page_allocated_p(page_index)
                     && (page_table[page_index].bytes_used == 0))
-                    lose ("Ptr %x @ %x sees free page.\n", thing, start);
+                    lose ("Ptr %p @ %p sees free page.\n", thing, start);
                 /* Check that it doesn't point to a forwarding pointer! */
                 if (*((lispobj *)native_pointer(thing)) == 0x01) {
-                    lose("Ptr %x @ %x sees forwarding ptr.\n", thing, start);
+                    lose("Ptr %p @ %p sees forwarding ptr.\n", thing, start);
                 }
                 /* Check that its not in the RO space as it would then be a
                  * pointer from the RO to the dynamic space. */
                 if (is_in_readonly_space) {
-                    lose("ptr to dynamic space %x from RO space %x\n",
+                    lose("ptr to dynamic space %p from RO space %x\n",
                          thing, start);
                 }
                 /* Does it point to a plausible object? This check slows
@@ -3410,13 +3449,16 @@ verify_space(lispobj *start, size_t words)
                  * dynamically. */
                 /*
                 if (!possibly_valid_dynamic_space_pointer((lispobj *)thing)) {
-                    lose("ptr %x to invalid object %x\n", thing, start);
+                    lose("ptr %p to invalid object %p\n", thing, start);
                 }
                 */
             } else {
+                extern void funcallable_instance_tramp;
                 /* Verify that it points to another valid space. */
-                if (!to_readonly_space && !to_static_space) {
-                    lose("Ptr %x @ %x sees junk.\n", thing, start);
+                if (!to_readonly_space && !to_static_space
+                    && (thing != (lispobj)&funcallable_instance_tramp)
+                    && !is_in_stack_space(thing)) {
+                    lose("Ptr %p @ %p sees junk.\n", thing, start);
                 }
             }
         } else {
@@ -3493,7 +3535,7 @@ verify_space(lispobj *start, size_t words)
                             /* Only when enabled */
                             && verify_dynamic_code_check) {
                             FSHOW((stderr,
-                                   "/code object at %x in the dynamic space\n",
+                                   "/code object at %p in the dynamic space\n",
                                    start));
                         }
 
@@ -3609,7 +3651,7 @@ verify_space(lispobj *start, size_t words)
                     break;
 
                 default:
-                    lose("Unhandled widetag 0x%x at 0x%x\n",
+                    lose("Unhandled widetag %p at %p\n",
                          widetag_of(*start), start);
                 }
             }
@@ -3798,6 +3840,10 @@ scavenge_control_stack()
 
     control_stack_size = current_control_stack_pointer - control_stack;
     scavenge(control_stack, control_stack_size);
+
+    /* Scrub the unscavenged control stack space, so that we can't run
+     * into any stale pointers in a later GC. */
+    scrub_control_stack();
 }
 
 /* Scavenging Interrupt Contexts */
@@ -4673,13 +4719,18 @@ gencgc_pickup_dynamic(void)
     generation_index_t gen = PSEUDO_STATIC_GENERATION;
     do {
         lispobj *first,*ptr= (lispobj *)page_address(page);
-        page_table[page].gen = gen;
-        page_table[page].bytes_used = PAGE_BYTES;
-        page_table[page].large_object = 0;
-        page_table[page].write_protected = 0;
-        page_table[page].write_protected_cleared = 0;
-        page_table[page].dont_move = 0;
-        page_table[page].need_to_zero = 1;
+
+        if (!gencgc_partial_pickup || page_allocated_p(page)) {
+          /* It is possible, though rare, for the saved page table
+           * to contain free pages below alloc_ptr. */
+          page_table[page].gen = gen;
+          page_table[page].bytes_used = PAGE_BYTES;
+          page_table[page].large_object = 0;
+          page_table[page].write_protected = 0;
+          page_table[page].write_protected_cleared = 0;
+          page_table[page].dont_move = 0;
+          page_table[page].need_to_zero = 1;
+        }
 
         if (!gencgc_partial_pickup) {
             page_table[page].allocated = BOXED_PAGE_FLAG;

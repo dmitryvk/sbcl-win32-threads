@@ -11,20 +11,7 @@
 ;;;; software is in the public domain and is provided with absolutely no
 ;;;; warranty. See the COPYING and CREDITS files for more information.
 
-(defpackage :sb-queue
-  (:use :cl :sb-thread :sb-sys :sb-ext)
-  (:export
-   "DEQUEUE"
-   "ENQUEUE"
-   "LIST-QUEUE-CONTENTS"
-   "MAKE-QUEUE"
-   "QUEUE"
-   "QUEUE-COUNT"
-   "QUEUE-EMPTY-P"
-   "QUEUE-NAME"
-   "QUEUEP"))
-
-(in-package :sb-queue)
+(in-package :sb-concurrency)
 
 (defconstant +dummy+ '.dummy.)
 
@@ -38,8 +25,7 @@
 (defstruct (queue (:constructor %make-queue (head tail name))
                   (:copier nil)
                   (:predicate queuep))
-  "Lock-free thread safe queue. ENQUEUE can be used to add objects to the queue,
-and DEQUEUE retrieves items from the queue in FIFO order."
+  "Lock-free thread safe queue."
   (head (error "No HEAD.") :type node)
   (tail (error "No TAIL.") :type node)
   (name nil))
@@ -158,5 +144,3 @@ walks the entire queue."
          (tail (queue-tail queue))
          (val (node-value head)))
     (and (eq head tail) (eq val +dummy+))))
-
-(provide :sb-queue)

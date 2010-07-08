@@ -34,6 +34,7 @@
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <sys/prctl.h>
 
 #include "validate.h"
 #include "ppc-linux-mcontext.h"
@@ -41,6 +42,22 @@
 size_t os_vm_page_size;
 
 int arch_os_thread_init(struct thread *thread) {
+    /* For some reason, PPC Linux appears to default to not generating
+     * floating point exceptions.  PR_SET_FPEXC is a PPC-specific
+     * option new in kernel 2.4.21 and 2.5.32 that allows us to
+     * configure this.  Should we need to run on an older kenel, the
+     * equivalent trick is to get into a signal-handling context and
+     * modify the saved machine state register.
+     *
+     * PR_FP_EXC_PRECISE may be more accurate than we need,
+     * particularly if we move to the x86oid trick of inserting
+     * explicit synchronization for floating-point exception
+     * delivery.  If we wish to move to such a model, the other two
+     * exception delivery modes that we could use are PR_FP_EXC_ASYNC
+     * and PR_FP_EXC_NONRECOV, and exception delivery can be forced
+     * by any access to the FPSCR.  -- AB, 2010-May-23 */
+    prctl(PR_SET_FPEXC, PR_FP_EXC_PRECISE, 0, 0);
+
     return 1;                   /* success */
 }
 int arch_os_thread_cleanup(struct thread *thread) {
@@ -77,6 +94,34 @@ os_context_lr_addr(os_context_t *context)
 #endif
 }
 
+os_context_register_t *
+os_context_ctr_addr(os_context_t *context)
+{
+    /* Like os_context_fp_control() and os_context_lr_addr(), this
+     * uses an index beyond the declared end of the array in order to
+     * find the correct register value in the context. */
+#if defined(GLIBC231_STYLE_UCONTEXT)
+    /* FIXME: This probably should be ->ctr instead of ->gpr[PT_CTR]. */
+    return &((context->uc_mcontext.regs)->gpr[PT_CTR]);
+#elif defined(GLIBC232_STYLE_UCONTEXT)
+    return &((context->uc_mcontext.uc_regs)->gregs[PT_CTR]);
+#endif
+}
+
+os_context_register_t *
+os_context_cr_addr(os_context_t *context)
+{
+    /* Like os_context_fp_control() and os_context_lr_addr(), this
+     * uses an index beyond the declared end of the array in order to
+     * find the correct register value in the context. */
+#if defined(GLIBC231_STYLE_UCONTEXT)
+    /* FIXME: This probably should be ->ccr instead of ->gpr[PT_CCR]. */
+    return &((context->uc_mcontext.regs)->gpr[PT_CCR]);
+#elif defined(GLIBC232_STYLE_UCONTEXT)
+    return &((context->uc_mcontext.uc_regs)->gregs[PT_CCR]);
+#endif
+}
+
 sigset_t *
 os_context_sigmask_addr(os_context_t *context)
 {
@@ -105,29 +150,21 @@ os_context_fp_control(os_context_t *context)
 void
 os_restore_fp_control(os_context_t *context)
 {
-    unsigned long control;
+    /* KLUDGE: mtfsf has to be run against a float register, so we
+     * construct the float we need to use as an integer, then cast
+     * a pointer to its storage to a double and load that.  For
+     * this to work, control must be the same width as a double,
+     * 64 bits.  And why aren't we using a union here, anyway? */
+    unsigned long long control;
     double d;
 
+    /* FIXME: We are only preserving enabled traps and rounding
+     * mode here.  Do we also want to preserve "fast mode"? */
     control = os_context_fp_control(context) &
-        /* FIXME: Should we preserve the user's requested rounding mode?
-
-        Note that doing
-
-        ~(FLOAT_STICKY_BITS_MASK | FLOAT_EXCEPTIONS_BYTE_MASK)
-
-        here leads to infinite SIGFPE for invalid operations, as
-        there are bits in the control register that need to be
-        cleared that are let through by that mask. -- CSR, 2002-07-16 */
-
-        FLOAT_TRAPS_BYTE_MASK;
+        (FLOAT_TRAPS_BYTE_MASK | FLOAT_ROUNDING_MODE_MASK);
 
     d = *((double *) &control);
-    /* Hmp.  Apparently the following doesn't work either:
-
     asm volatile ("mtfsf 0xff,%0" : : "f" (d));
-
-    causing segfaults at the first GC.
-    */
 }
 
 void

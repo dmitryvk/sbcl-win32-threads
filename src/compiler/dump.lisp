@@ -91,10 +91,6 @@
 ;;; dumping uses the table.
 (defvar *circularities-detected*)
 
-;;; used to inhibit table access when dumping forms to be read by the
-;;; cold loader
-(defvar *cold-load-dump* nil)
-
 ;;; used to turn off the structure validation during dumping of source
 ;;; info
 (defvar *dump-only-valid-structures* t)
@@ -194,83 +190,62 @@
     (incf (fasl-output-table-free fasl-output))))
 
 ;;; If X is in File's EQUAL-TABLE, then push the object and return T,
-;;; otherwise NIL. If *COLD-LOAD-DUMP* is true, then do nothing and
-;;; return NIL.
+;;; otherwise NIL.
 (defun equal-check-table (x fasl-output)
   (declare (type fasl-output fasl-output))
-  (unless *cold-load-dump*
-    (let ((handle (gethash x (fasl-output-equal-table fasl-output))))
-      (cond
-        (handle (dump-push handle fasl-output) t)
-        (t nil)))))
+  (let ((handle (gethash x (fasl-output-equal-table fasl-output))))
+    (cond
+     (handle (dump-push handle fasl-output) t)
+     (t nil))))
 (defun string-check-table (x fasl-output)
   (declare (type fasl-output fasl-output)
            (type string x))
-  (unless *cold-load-dump*
-    (let ((handle (cdr (assoc
-                        #+sb-xc-host 'base-char ; for repeatable xc fasls
-                        #-sb-xc-host (array-element-type x)
-                        (gethash x (fasl-output-equal-table fasl-output))))))
-      (cond
-        (handle (dump-push handle fasl-output) t)
-        (t nil)))))
+  (let ((handle (cdr (assoc
+                      #+sb-xc-host 'base-char ; for repeatable xc fasls
+                      #-sb-xc-host (array-element-type x)
+                      (gethash x (fasl-output-equal-table fasl-output))))))
+    (cond
+     (handle (dump-push handle fasl-output) t)
+     (t nil))))
 
 ;;; These functions are called after dumping an object to save the
 ;;; object in the table. The object (also passed in as X) must already
-;;; be on the top of the FOP stack. If *COLD-LOAD-DUMP* is true, then
-;;; we don't do anything.
+;;; be on the top of the FOP stack.
 (defun eq-save-object (x fasl-output)
   (declare (type fasl-output fasl-output))
-  (unless *cold-load-dump*
-    (let ((handle (dump-pop fasl-output)))
-      (setf (gethash x (fasl-output-eq-table fasl-output)) handle)
-      (dump-push handle fasl-output)))
+  (let ((handle (dump-pop fasl-output)))
+    (setf (gethash x (fasl-output-eq-table fasl-output)) handle)
+    (dump-push handle fasl-output))
   (values))
 (defun equal-save-object (x fasl-output)
   (declare (type fasl-output fasl-output))
-  (unless *cold-load-dump*
-    (let ((handle (dump-pop fasl-output)))
-      (setf (gethash x (fasl-output-equal-table fasl-output)) handle)
-      (setf (gethash x (fasl-output-eq-table fasl-output)) handle)
-      (dump-push handle fasl-output)))
+  (let ((handle (dump-pop fasl-output)))
+    (setf (gethash x (fasl-output-equal-table fasl-output)) handle)
+    (setf (gethash x (fasl-output-eq-table fasl-output)) handle)
+    (dump-push handle fasl-output))
   (values))
 (defun string-save-object (x fasl-output)
   (declare (type fasl-output fasl-output)
            (type string x))
-  (unless *cold-load-dump*
-    (let ((handle (dump-pop fasl-output)))
-      (push (cons #+sb-xc-host 'base-char ; repeatable xc fasls
-                  #-sb-xc-host (array-element-type x)
-                  handle)
-            (gethash x (fasl-output-equal-table fasl-output)))
-      (setf (gethash x (fasl-output-eq-table fasl-output)) handle)
-      (dump-push handle fasl-output)))
+  (let ((handle (dump-pop fasl-output)))
+    (push (cons #+sb-xc-host 'base-char ; repeatable xc fasls
+                #-sb-xc-host (array-element-type x)
+                handle)
+          (gethash x (fasl-output-equal-table fasl-output)))
+    (setf (gethash x (fasl-output-eq-table fasl-output)) handle)
+    (dump-push handle fasl-output))
   (values))
-;;; Record X in File's CIRCULARITY-TABLE unless *COLD-LOAD-DUMP* is
-;;; true. This is called on objects that we are about to dump might
-;;; have a circular path through them.
+;;; Record X in File's CIRCULARITY-TABLE. This is called on objects
+;;; that we are about to dump might have a circular path through them.
 ;;;
 ;;; The object must not currently be in this table, since the dumper
 ;;; should never be recursively called on a circular reference.
 ;;; Instead, the dumping function must detect the circularity and
 ;;; arrange for the dumped object to be patched.
 (defun note-potential-circularity (x fasl-output)
-  (unless *cold-load-dump*
-    (let ((circ (fasl-output-circularity-table fasl-output)))
-      (aver (not (gethash x circ)))
-      (setf (gethash x circ) x)))
-  (values))
-
-;;; Dump FORM to a fasl file so that it evaluated at load time in normal
-;;; load and at cold-load time in cold load. This is used to dump package
-;;; frobbing forms.
-(defun fasl-dump-cold-load-form (form fasl-output)
-  (declare (type fasl-output fasl-output))
-  (dump-fop 'fop-normal-load fasl-output)
-  (let ((*cold-load-dump* t))
-    (dump-object form fasl-output))
-  (dump-fop 'fop-eval-for-effect fasl-output)
-  (dump-fop 'fop-maybe-cold-load fasl-output)
+  (let ((circ (fasl-output-circularity-table fasl-output)))
+    (aver (not (gethash x circ)))
+    (setf (gethash x circ) x))
   (values))
 
 ;;;; opening and closing fasl files
@@ -371,7 +346,7 @@
 ;;; When we go to dump the object, we enter it in the CIRCULARITY-TABLE.
 (defun dump-non-immediate-object (x file)
   (let ((index (gethash x (fasl-output-eq-table file))))
-    (cond ((and index (not *cold-load-dump*))
+    (cond (index
            (dump-push index file))
           (t
            (typecase x
@@ -632,21 +607,16 @@
   (declare (inline assoc))
   (cond ((cdr (assoc pkg (fasl-output-packages file) :test #'eq)))
         (t
-         (unless *cold-load-dump*
-           (dump-fop 'fop-normal-load file))
-         #+sb-xc-host
-         (dump-simple-base-string
-          (coerce (package-name pkg) 'simple-base-string)
-          file)
-         #-sb-xc-host
-         (#!+sb-unicode dump-simple-character-string
-          #!-sb-unicode dump-simple-base-string
-          (coerce (package-name pkg) '(simple-array character (*)))
-          file)
-         (dump-fop 'fop-package file)
-         (unless *cold-load-dump*
-           (dump-fop 'fop-maybe-cold-load file))
-         (let ((entry (dump-pop file)))
+         (let ((s (package-name pkg)))
+           (dump-fop* (length s) fop-small-named-package-save fop-named-package-save file)
+           #+sb-xc-host
+           (dump-base-chars-of-string (coerce s 'simple-base-string) file)
+           #-sb-xc-host
+           (#!+sb-unicode dump-characters-of-string
+            #!-sb-unicode dump-base-chars-of-string
+            (coerce s '(simple-array character (*))) file))
+         (let ((entry (fasl-output-table-free file)))
+           (incf (fasl-output-table-free file))
            (push (cons pkg entry) (fasl-output-packages file))
            entry))))
 
@@ -666,9 +636,6 @@
 ;;;
 ;;; Otherwise, we recursively call the dumper to dump the current
 ;;; element.
-;;;
-;;; Marking of the conses is inhibited when *COLD-LOAD-DUMP* is true.
-;;; This inhibits all circularity detection.
 (defun dump-list (list file)
   (aver (and list
              (not (gethash list (fasl-output-circularity-table file)))))
@@ -693,8 +660,7 @@
         (terminate-undotted-list n file)
         (return)))
 
-    (unless *cold-load-dump*
-      (setf (gethash l circ) list))
+    (setf (gethash l circ) list)
 
     (let* ((obj (car l))
            (ref (gethash obj circ)))
@@ -987,10 +953,7 @@
   (values))
 
 ;;; If we get here, it is assumed that the symbol isn't in the table,
-;;; but we are responsible for putting it there when appropriate. To
-;;; avoid too much special-casing, we always push the symbol in the
-;;; table, but don't record that we have done so if *COLD-LOAD-DUMP*
-;;; is true.
+;;; but we are responsible for putting it there when appropriate.
 (defun dump-symbol (s file)
   (declare (type fasl-output file))
   (let* ((pname (symbol-name s))
@@ -1047,9 +1010,8 @@
                   #!-sb-unicode dump-base-chars-of-string
                   pname file)
 
-    (unless *cold-load-dump*
-      (setf (gethash s (fasl-output-eq-table file))
-            (fasl-output-table-free file)))
+    (setf (gethash s (fasl-output-eq-table file))
+          (fasl-output-table-free file))
 
     (incf (fasl-output-table-free file)))
 
@@ -1081,19 +1043,13 @@
            (position (fixup-note-position note))
            (name (fixup-name fixup))
            (flavor (fixup-flavor fixup)))
-      (dump-fop 'fop-normal-load fasl-output)
-      (let ((*cold-load-dump* t))
-        (dump-object kind fasl-output))
-      (dump-fop 'fop-maybe-cold-load fasl-output)
+      (dump-object kind fasl-output)
       ;; Depending on the flavor, we may have various kinds of
       ;; noise before the position.
       (ecase flavor
         (:assembly-routine
          (aver (symbolp name))
-         (dump-fop 'fop-normal-load fasl-output)
-         (let ((*cold-load-dump* t))
-           (dump-object name fasl-output))
-         (dump-fop 'fop-maybe-cold-load fasl-output)
+         (dump-object name fasl-output)
          (dump-fop 'fop-assembler-fixup fasl-output))
         ((:foreign :foreign-dataref)
          (aver (stringp name))
@@ -1229,10 +1185,7 @@
   (dump-word length file)
   (write-segment-contents code-segment (fasl-output-stream file))
   (dolist (routine routines)
-    (dump-fop 'fop-normal-load file)
-    (let ((*cold-load-dump* t))
-      (dump-object (car routine) file))
-    (dump-fop 'fop-maybe-cold-load file)
+    (dump-object (car routine) file)
     (dump-fop 'fop-assembler-routine file)
     (dump-word (label-position (cdr routine)) file))
   (dump-fixups fixups file)
@@ -1397,10 +1350,7 @@
   (let ((name (classoid-name (layout-classoid obj))))
     (unless name
       (compiler-error "dumping anonymous layout: ~S" obj))
-    (dump-fop 'fop-normal-load file)
-    (let ((*cold-load-dump* t))
-      (dump-object name file))
-    (dump-fop 'fop-maybe-cold-load file))
+    (dump-object name file))
   (sub-dump-object (layout-inherits obj) file)
   (sub-dump-object (layout-depthoid obj) file)
   (sub-dump-object (layout-length obj) file)

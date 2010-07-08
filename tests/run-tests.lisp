@@ -78,32 +78,24 @@
     (append-failures)))
 
 (defun run-in-child-sbcl (load-forms forms)
-  (declare (ignorable load-forms))
-  #-win32
-  (let ((pid (sb-posix:fork)))
-    (cond ((= pid 0)
-           (dolist (form forms)
-             (eval form)))
-          (t
-           (let ((status (make-array 1 :element-type '(signed-byte 32))))
-             (sb-posix:waitpid pid 0 status)
-             (if (sb-posix:wifexited (aref status 0))
-                 (sb-posix:wexitstatus (aref status 0))
-                 1)))))
-  #+win32
+  ;; We used to fork() for POSIX platforms, and use this for Windows.
+  ;; However, it seems better to use the same solution everywhere.
   (process-exit-code
-   (sb-ext:run-program
-    (first *POSIX-ARGV*)
-    (append
-     (list "--core" SB-INT:*CORE-STRING*
-           "--noinform"
-           "--no-sysinit"
-           "--no-userinit")
-     (loop for form in (append load-forms forms)
-           collect "--eval"
-           collect (write-to-string form)))
-    :output sb-sys:*stdout*
-    :input sb-sys:*stdin*)))
+   (#-win32 with-open-file #-win32 (devnull "/dev/null") #+win32 progn
+     (sb-ext:run-program
+      (first *POSIX-ARGV*)
+      (append
+       (list "--core" SB-INT:*CORE-STRING*
+             "--noinform"
+             "--no-sysinit"
+             "--no-userinit"
+             "--noprint"
+             "--disable-debugger")
+       (loop for form in (append load-forms forms)
+             collect "--eval"
+             collect (write-to-string form)))
+      :output sb-sys:*stdout*
+      :input #-win32 devnull #+win32 sb-sys:*stdin*))))
 
 (defun run-impure-in-child-sbcl (test-file test-code)
   (run-in-child-sbcl

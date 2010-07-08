@@ -25,9 +25,20 @@ directly instantiated.")))
 
 (defmethod print-object ((object socket) stream)
   (print-unreadable-object (object stream :type t :identity t)
-                           (princ "descriptor " stream)
-                           (princ (slot-value object 'file-descriptor) stream)))
+    (format stream "~@[~A, ~]~@[peer: ~A, ~]fd: ~A"
+            (socket-namestring object)
+            (socket-peerstring object)
+            (slot-value object 'file-descriptor))))
 
+(defgeneric socket-namestring (socket))
+
+(defmethod socket-namestring (socket)
+  nil)
+
+(defgeneric socket-peerstring (socket))
+
+(defmethod socket-peerstring (socket)
+  nil)
 
 (defmethod shared-initialize :after ((socket socket) slot-names
                                      &key protocol type
@@ -309,12 +320,14 @@ grow to before new connection attempts are refused.  See also listen(2)"))
       (open-stream-p (slot-value socket 'stream))
       (/= -1 (socket-file-descriptor socket))))
 
-(defgeneric socket-close (socket)
-  (:documentation "Close SOCKET.  May throw any kind of error that
-write(2) would have thrown.  If SOCKET-MAKE-STREAM has been called,
-calls CLOSE on that stream instead"))
+(defgeneric socket-close (socket &key abort)
+  (:documentation
+   "Close SOCKET, unless it was already closed.
 
-(defmethod socket-close ((socket socket))
+If SOCKET-MAKE-STREAM has been called, calls CLOSE using ABORT on that stream.
+Otherwise closes the socket file descriptor using close(2)."))
+
+(defmethod socket-close ((socket socket) &key abort)
   ;; the close(2) manual page has all kinds of warning about not
   ;; checking the return value of close, on the grounds that an
   ;; earlier write(2) might have returned successfully w/o actually
@@ -327,25 +340,30 @@ calls CLOSE on that stream instead"))
   ;; the socket will avoid doing anything to close the fd in case
   ;; the stream has done it already - if so, it may have been
   ;; reassigned to some other file, and closing it would be bad
-
   (let ((fd (socket-file-descriptor socket)))
-    (cond ((eql fd -1) ; already closed
-           nil)
-          ((slot-boundp socket 'stream)
-           (unwind-protect (close (slot-value socket 'stream)) ;; closes fd
+    (flet ((drop-it (&optional streamp)
              (setf (slot-value socket 'file-descriptor) -1)
-             (slot-makunbound socket 'stream)))
-          (t
-           (sb-ext:cancel-finalization socket)
-           (handler-case
-               (if (= (sockint::close fd) -1)
-                   (socket-error "close"))
-             (bad-file-descriptor-error (c) (declare (ignore c)) nil)
-             (:no-error (c)
-               (declare (ignore c))
-               (setf (slot-value socket 'file-descriptor) -1)
-               nil))))))
-
+             (if streamp
+                 (slot-makunbound socket 'stream)
+                 (sb-ext:cancel-finalization socket))
+             t))
+      (cond ((eql fd -1)
+             ;; already closed
+             nil)
+           ((slot-boundp socket 'stream)
+            (close (slot-value socket 'stream) :abort abort)
+            ;; Don't do this if there was an error from CLOSE -- the stream is
+            ;; still live.
+            (drop-it t))
+           (t
+            (handler-case
+                (when (minusp (sockint::close fd))
+                  (socket-error "close"))
+              (bad-file-descriptor-error ()
+                (drop-it))
+              (:no-error (r)
+                (declare (ignore r))
+                (drop-it))))))))
 
 (defgeneric socket-make-stream (socket &key input output
                                        element-type external-format
@@ -362,28 +380,34 @@ for the stream."))
                                (element-type 'character)
                                (buffering :full)
                                (external-format :default)
-                               timeout)
-  "Default method for SOCKET objects.  An ELEMENT-TYPE of :DEFAULT
-will construct a bivalent stream.  Acceptable values for BUFFERING
-are :FULL, :LINE and :NONE.  Streams will have no TIMEOUT
-by default.
-  The stream for SOCKET will be cached, and a second invocation of this
-method will return the same stream.  This may lead to oddities if this
-function is invoked with inconsistent arguments \(e.g., one might request
-an input stream and get an output stream in response\)."
+                               timeout
+                               auto-close)
+  "Default method for SOCKET objects. An ELEMENT-TYPE of :DEFAULT will
+construct a bivalent stream. Acceptable values for BUFFERING are :FULL, :LINE
+and :NONE. Streams will have no TIMEOUT by default. If AUTO-CLOSE is true, the
+underlying OS socket is automatically closed after the stream and the socket
+have been garbage collected.
+
+The stream for SOCKET will be cached, and a second invocation of this method
+will return the same stream. This may lead to oddities if this function is
+invoked with inconsistent arguments \(e.g., one might request an input stream
+and get an output stream in response\)."
   (let ((stream
          (and (slot-boundp socket 'stream) (slot-value socket 'stream))))
     (unless stream
       (setf stream (sb-sys:make-fd-stream
                     (socket-file-descriptor socket)
-                    :name "a socket"
+                    :name (format nil "socket~@[ ~A~]~@[, peer: ~A~]"
+                                  (socket-namestring socket)
+                                  (socket-peerstring socket))
                     :dual-channel-p t
                     :input input
                     :output output
                     :element-type element-type
                     :buffering buffering
                     :external-format external-format
-                    :timeout timeout)))
+                    :timeout timeout
+                    :auto-close auto-close)))
       (setf (slot-value socket 'stream) stream)
     (sb-ext:cancel-finalization socket)
     stream))

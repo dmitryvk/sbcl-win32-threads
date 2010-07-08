@@ -904,7 +904,7 @@ Except see also BREAK-VICIOUS-METACIRCLE.  -- CSR, 2003-05-28
     (cond ((null methods)
            (values
             #'(lambda (&rest args)
-                (apply #'no-applicable-method gf args))
+                (call-no-applicable-method gf args))
             nil
             (no-methods-dfun-info)))
           ((setq type (final-accessor-dfun-type gf))
@@ -1665,15 +1665,10 @@ Except see also BREAK-VICIOUS-METACIRCLE.  -- CSR, 2003-05-28
                                             (all-sorted-p t)
                                             function-p)
    (if (null methods)
-      (if function-p
-          (lambda (method-alist wrappers)
-            (declare (ignore method-alist wrappers))
-            #'(lambda (&rest args)
-                (apply #'no-applicable-method gf args)))
-          (lambda (method-alist wrappers)
-            (declare (ignore method-alist wrappers))
-            (lambda (&rest args)
-              (apply #'no-applicable-method gf args))))
+      (lambda (method-alist wrappers)
+        (declare (ignore method-alist wrappers))
+        (lambda (&rest args)
+          (call-no-applicable-method gf args)))
       (let* ((key (car methods))
              (ht *effective-method-cache*)
              (ht-value (with-locked-hash-table (ht)

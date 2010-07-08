@@ -356,30 +356,12 @@ HOLDING-MUTEX-P."
   ;; Make sure to get the current value.
   (sb!ext:compare-and-swap (mutex-%owner mutex) nil nil))
 
-(defun get-mutex (mutex &optional (new-owner *current-thread*) (waitp t))
+(defun get-mutex (mutex &optional (new-owner *current-thread*)
+                                  (waitp t) (timeout nil))
   #!+sb-doc
-  "Acquire MUTEX for NEW-OWNER, which must be a thread or NIL. If
-NEW-OWNER is NIL, it defaults to the current thread. If WAITP is
-non-NIL and the mutex is in use, sleep until it is available.
-
-Note: using GET-MUTEX to assign a MUTEX to another thread then the
-current one is not recommended, and liable to be deprecated.
-
-GET-MUTEX is not interrupt safe. The correct way to call it is:
-
- (WITHOUT-INTERRUPTS
-   ...
-   (ALLOW-WITH-INTERRUPTS (GET-MUTEX ...))
-   ...)
-
-WITHOUT-INTERRUPTS is necessary to avoid an interrupt unwinding the
-call while the mutex is in an inconsistent state while
-ALLOW-WITH-INTERRUPTS allows the call to be interrupted from sleep.
-
-It is recommended that you use WITH-MUTEX instead of calling GET-MUTEX
-directly."
+  "Deprecated in favor of GRAB-MUTEX."
   (declare (type mutex mutex) (optimize (speed 3))
-           #!-sb-thread (ignore waitp))
+           #!-sb-thread (ignore waitp timeout))
   (unless new-owner
     (setq new-owner *current-thread*))
   (let ((old (mutex-%owner mutex)))
@@ -402,12 +384,15 @@ directly."
     ;; but has that been checked?) (2) after the lutex call, but
     ;; before setting the mutex owner.
     #!+sb-lutex
-    (when (zerop (with-lutex-address (lutex (mutex-lutex mutex))
-                   (if waitp
-                       (with-interrupts (%lutex-lock lutex))
-                       (%lutex-trylock lutex))))
-      (setf (mutex-%owner mutex) new-owner)
-      t)
+    (progn
+      (when timeout
+        (error "Mutex timeouts not supported on this platform."))
+      (when (zerop (with-lutex-address (lutex (mutex-lutex mutex))
+                    (if waitp
+                        (with-interrupts (%lutex-lock lutex))
+                        (%lutex-trylock lutex))))
+       (setf (mutex-%owner mutex) new-owner)
+       t))
     #!-sb-lutex
     ;; This is a direct translation of the Mutex 2 algorithm from
     ;; "Futexes are Tricky" by Ulrich Drepper.
@@ -424,13 +409,17 @@ directly."
                                                         +lock-contested+))))
              ;; Wait on the contested lock.
              (loop
-              (multiple-value-bind (to-sec to-usec) (decode-timeout nil)
+              (multiple-value-bind (to-sec to-usec stop-sec stop-usec deadlinep)
+                  (decode-timeout timeout)
+                (declare (ignore stop-sec stop-usec))
                 (case (with-pinned-objects (mutex)
                         (futex-wait (mutex-state-address mutex)
                                     (get-lisp-obj-address +lock-contested+)
                                     (or to-sec -1)
                                     (or to-usec 0)))
-                  ((1) (signal-deadline))
+                  ((1) (if deadlinep
+                           (signal-deadline)
+                           (return-from get-mutex nil)))
                   ((2))
                   (otherwise (return))))))
            (setf old (sb!ext:compare-and-swap (mutex-state mutex)
@@ -447,6 +436,47 @@ directly."
                t))
             (waitp
              (bug "Failed to acquire lock with WAITP."))))))
+
+(defun grab-mutex (mutex &key (waitp t) (timeout nil))
+  #!+sb-doc
+  "Acquire MUTEX for the current thread. If WAITP is true (the default) and
+the mutex is not immediately available, sleep until it is available.
+
+If TIMEOUT is given, it specifies a relative timeout, in seconds, on
+how long GRAB-MUTEX should try to acquire the lock in the contested
+case. Unsupported on :SB-LUTEX platforms (eg. Darwin), where a non-NIL
+TIMEOUT signals an error.
+
+If GRAB-MUTEX returns T, the lock acquisition was successful. In case
+of WAITP being NIL, or an expired TIMEOUT, GRAB-MUTEX may also return
+NIL which denotes that GRAB-MUTEX did -not- acquire the lock.
+
+Notes:
+
+  - GRAB-MUTEX is not interrupt safe. The correct way to call it is:
+
+      (WITHOUT-INTERRUPTS
+        ...
+        (ALLOW-WITH-INTERRUPTS (GRAB-MUTEX ...))
+        ...)
+
+    WITHOUT-INTERRUPTS is necessary to avoid an interrupt unwinding
+    the call while the mutex is in an inconsistent state while
+    ALLOW-WITH-INTERRUPTS allows the call to be interrupted from
+    sleep.
+
+  - (GRAB-MUTEX <mutex> :timeout 0.0) differs from
+    (GRAB-MUTEX <mutex> :waitp nil) in that the former may signal a
+    DEADLINE-TIMEOUT if the global deadline was due already on
+    entering GRAB-MUTEX.
+
+    The exact interplay of GRAB-MUTEX and deadlines are reserved to
+    change in future versions.
+
+  - It is recommended that you use WITH-MUTEX instead of calling
+    GRAB-MUTEX directly.
+"
+  (get-mutex mutex nil waitp timeout))
 
 (defun release-mutex (mutex &key (if-not-owner :punt))
   #!+sb-doc
@@ -500,11 +530,11 @@ IF-NOT-OWNER is :FORCE)."
 (defstruct (waitqueue (:constructor %make-waitqueue))
   #!+sb-doc
   "Waitqueue type."
-  (name nil :type (or null simple-string))
+  (name nil :type (or null thread-name))
   #!+(and sb-lutex sb-thread)
   (lutex (make-lutex))
   #!-sb-lutex
-  (data nil))
+  (token nil))
 
 (defun make-waitqueue (&key name)
   #!+sb-doc
@@ -516,15 +546,18 @@ IF-NOT-OWNER is :FORCE)."
       "The name of the waitqueue. Setfable.")
 
 #!+(and sb-thread (not sb-lutex))
-(define-structure-slot-addressor waitqueue-data-address
+(define-structure-slot-addressor waitqueue-token-address
     :structure waitqueue
-    :slot data)
+    :slot token)
 
 (defun condition-wait (queue mutex)
   #!+sb-doc
   "Atomically release MUTEX and enqueue ourselves on QUEUE.  Another
 thread may subsequently notify us using CONDITION-NOTIFY, at which
-time we reacquire MUTEX and return to the caller."
+time we reacquire MUTEX and return to the caller.
+
+Note that if CONDITION-WAIT unwinds (due to eg. a timeout) instead of
+returning normally, it may do so without holding the mutex."
   #!-sb-thread (declare (ignore queue))
   (assert mutex)
   #!-sb-thread (error "Not supported in unithread builds.")
@@ -549,51 +582,52 @@ time we reacquire MUTEX and return to the caller."
     ;; Need to disable interrupts so that we don't miss grabbing the
     ;; mutex on our way out.
     (without-interrupts
-      (let ((me nil))
-        ;; This setf becomes visible to other CPUS due to the usual
-        ;; memory barrier semantics of lock acquire/release. This must
-        ;; not be moved into the loop else wakeups may be lost upon
-        ;; continuing after a deadline or EINTR.
-        (setf (waitqueue-data queue) me)
-        (loop
-         (multiple-value-bind (to-sec to-usec)
-             (allow-with-interrupts (decode-timeout nil))
-           (case (unwind-protect
-                      (with-pinned-objects (queue me)
-                        ;; RELEASE-MUTEX is purposefully as close to
-                        ;; FUTEX-WAIT as possible to reduce the size
-                        ;; of the window where WAITQUEUE-DATA may be
-                        ;; set by a notifier.
-                        (release-mutex mutex)
-                        ;; Now we go to sleep using futex-wait. If
-                        ;; anyone else manages to grab MUTEX and call
-                        ;; CONDITION-NOTIFY during this comment, it
-                        ;; will change queue->data, and so futex-wait
-                        ;; returns immediately instead of sleeping.
-                        ;; Ergo, no lost wakeup. We may get spurious
-                        ;; wakeups, but that's ok.
-                        (allow-with-interrupts
-                          (futex-wait (waitqueue-data-address queue)
-                                      (get-lisp-obj-address me)
-                                      ;; our way of saying "no
-                                      ;; timeout":
-                                      (or to-sec -1)
-                                      (or to-usec 0))))
-                   ;; If we are interrupted while waiting, we should
-                   ;; do these things before returning. Ideally, in
-                   ;; the case of an unhandled signal, we should do
-                   ;; them before entering the debugger, but this is
-                   ;; better than nothing.
-                   (allow-with-interrupts (get-mutex mutex)))
-             ;; ETIMEDOUT; we know it was a timeout, yet we cannot
-             ;; signal a deadline unconditionally here because the
-             ;; call to GET-MUTEX may already have signaled it.
-             ((1))
-             ;; EINTR
-             ((2))
-             ;; EWOULDBLOCK, -1 here, is the possible spurious wakeup
-             ;; case. 0 is the normal wakeup.
-             (otherwise (return)))))))))
+      ;; This setf becomes visible to other CPUS due to the usual
+      ;; memory barrier semantics of lock acquire/release. This must
+      ;; not be moved into the loop else wakeups may be lost upon
+      ;; continuing after a deadline or EINTR.
+      (setf (waitqueue-token queue) me)
+      (loop
+        (multiple-value-bind (to-sec to-usec)
+            (allow-with-interrupts (decode-timeout nil))
+          (case (unwind-protect
+                     (with-pinned-objects (queue me)
+                       ;; RELEASE-MUTEX is purposefully as close to
+                       ;; FUTEX-WAIT as possible to reduce the size of
+                       ;; the window where the token may be set by a
+                       ;; notifier.
+                       (release-mutex mutex)
+                       ;; Now we go to sleep using futex-wait. If
+                       ;; anyone else manages to grab MUTEX and call
+                       ;; CONDITION-NOTIFY during this comment, it
+                       ;; will change the token, and so futex-wait
+                       ;; returns immediately instead of sleeping.
+                       ;; Ergo, no lost wakeup. We may get spurious
+                       ;; wakeups, but that's ok.
+                       (allow-with-interrupts
+                         (futex-wait (waitqueue-token-address queue)
+                                     (get-lisp-obj-address me)
+                                     ;; our way of saying "no
+                                     ;; timeout":
+                                     (or to-sec -1)
+                                     (or to-usec 0))))
+                  ;; If we are interrupted while waiting, we should
+                  ;; do these things before returning. Ideally, in
+                  ;; the case of an unhandled signal, we should do
+                  ;; them before entering the debugger, but this is
+                  ;; better than nothing.
+                  (allow-with-interrupts (get-mutex mutex)))
+            ;; ETIMEDOUT; we know it was a timeout, yet we cannot
+            ;; signal a deadline unconditionally here because the
+            ;; call to GET-MUTEX may already have signaled it.
+            ((1))
+            ;; EINTR; we do not need to return to the caller because
+            ;; an interleaved wakeup would change the token causing an
+            ;; EWOULDBLOCK in the next iteration.
+            ((2))
+            ;; EWOULDBLOCK, -1 here, is the possible spurious wakeup
+            ;; case. 0 is the normal wakeup.
+            (otherwise (return))))))))
 
 (defun condition-notify (queue &optional (n 1))
   #!+sb-doc
@@ -610,17 +644,19 @@ this call."
     #!+sb-lutex
     (with-lutex-address (lutex (waitqueue-lutex queue))
       (%lutex-wake lutex n))
-    ;; no problem if >1 thread notifies during the comment in
-    ;; condition-wait: as long as the value in queue-data isn't the
-    ;; waiting thread's id, it matters not what it is
+    ;; No problem if >1 thread notifies during the comment in condition-wait:
+    ;; as long as the value in queue-data isn't the waiting thread's id, it
+    ;; matters not what it is -- using the queue object itself is handy.
+    ;;
     ;; XXX we should do something to ensure that the result of this setf
-    ;; is visible to all CPUs
+    ;; is visible to all CPUs.
+    ;;
+    ;; ^-- surely futex_wake() involves a memory barrier?
     #!-sb-lutex
-    (let ((me *current-thread*))
-      (progn
-        (setf (waitqueue-data queue) me)
-        (with-pinned-objects (queue)
-          (futex-wake (waitqueue-data-address queue) n))))))
+    (progn
+      (setf (waitqueue-token queue) queue)
+      (with-pinned-objects (queue)
+        (futex-wake (waitqueue-token-address queue) n)))))
 
 (defun condition-broadcast (queue)
   #!+sb-doc
@@ -639,9 +675,9 @@ this call."
   "Semaphore type. The fact that a SEMAPHORE is a STRUCTURE-OBJECT
 should be considered an implementation detail, and may change in the
 future."
-  (name nil :type (or null simple-string))
-  (%count 0 :type (integer 0))
-  (waitcount 0 :type (integer 0))
+  (name    nil :type (or null thread-name))
+  (%count    0 :type (integer 0))
+  (waitcount 0 :type sb!vm:word)
   (mutex (make-mutex))
   (queue (make-waitqueue)))
 
@@ -675,12 +711,29 @@ negative. Else blocks until the semaphore can be decremented."
           (setf (semaphore-%count semaphore) (1- count))
           (unwind-protect
                (progn
-                 (incf (semaphore-waitcount semaphore))
+                 ;; Need to use ATOMIC-INCF despite the lock, because on our
+                 ;; way out from here we might not be locked anymore -- so
+                 ;; another thread might be tweaking this in parallel using
+                 ;; ATOMIC-DECF. No danger over overflow, since there it
+                 ;; at most one increment per thread waiting on the semaphore.
+                 (sb!ext:atomic-incf (semaphore-waitcount semaphore))
                  (loop until (plusp (setf count (semaphore-%count semaphore)))
                        do (condition-wait (semaphore-queue semaphore)
                                           (semaphore-mutex semaphore)))
                  (setf (semaphore-%count semaphore) (1- count)))
-            (decf (semaphore-waitcount semaphore)))))))
+            ;; Need to use ATOMIC-DECF instead of DECF, as CONDITION-WAIT
+            ;; may unwind without the lock being held due to timeouts.
+            (sb!ext:atomic-decf (semaphore-waitcount semaphore)))))))
+
+(defun try-semaphore (semaphore &optional (n 1))
+  #!+sb-doc
+  "Try to decrement the count of SEMAPHORE by N. If the count were to
+become negative, punt and return NIL, otherwise return true."
+  (declare (type (integer 1) n))
+  (with-mutex ((semaphore-mutex semaphore))
+    (let ((new-count (- (semaphore-%count semaphore) n)))
+      (when (not (minusp new-count))
+        (setf (semaphore-%count semaphore) new-count)))))
 
 (defun signal-semaphore (semaphore &optional (n 1))
   #!+sb-doc
@@ -689,7 +742,7 @@ on this semaphore, then N of them is woken up."
   (declare (type (integer 1) n))
   ;; Need to disable interrupts so that we don't lose a wakeup after
   ;; we have incremented the count.
-  (with-system-mutex ((semaphore-mutex semaphore))
+  (with-system-mutex ((semaphore-mutex semaphore) :allow-with-interrupts t)
     (let ((waitcount (semaphore-waitcount semaphore))
           (count (incf (semaphore-%count semaphore) n)))
       (when (plusp waitcount)
@@ -903,13 +956,11 @@ around and can be retrieved by JOIN-THREAD."
                    (*handler-clusters* (sb!kernel::initial-handler-clusters))
                    (*condition-restarts* nil)
                    (sb!impl::*deadline* nil)
+                   (sb!impl::*deadline-seconds* nil)
                    (sb!impl::*step-out* nil)
                    ;; internal printer variables
                    (sb!impl::*previous-case* nil)
                    (sb!impl::*previous-readtable-case* nil)
-                   (empty (vector))
-                   (sb!impl::*merge-sort-temp-vector* empty)
-                   (sb!impl::*zap-array-data-temp* empty)
                    (sb!impl::*internal-symbol-output-fun* nil)
                    (sb!impl::*descriptor-handlers* nil)) ; serve-event
               ;; Binding from C

@@ -28,20 +28,20 @@
                (loop for ctran = start then (node-next (ctran-next ctran))
                      while ctran
                      do (record-node-xrefs (ctran-next ctran) functional))
-               ;; Properly record the deferred macroexpansion information
-               ;; that's been stored in the block.
-               (dolist (xref-data (block-macroexpands block))
-                 (record-xref :macroexpands
-                              (car xref-data)
-                              ;; We use the debug-name of the functional
-                              ;; as an identifier. This works quite nicely,
-                              ;; except for (fast/slow)-methods with non-symbol,
-                              ;; non-number eql specializers, for which
-                              ;; the debug-name doesn't map exactly
-                              ;; to the fdefinition of the method.
-                              functional
-                              nil
-                              (cdr xref-data)))))
+               ;; Properly record the deferred macroexpansion and source
+               ;; transform information that's been stored in the block.
+               (dolist (xref-data (block-xrefs block))
+                 (destructuring-bind (kind what path) xref-data
+                   (record-xref kind what
+                                ;; We use the debug-name of the functional
+                                ;; as an identifier. This works quite nicely,
+                                ;; except for (fast/slow)-methods with non-symbol,
+                                ;; non-number eql specializers, for which
+                                ;; the debug-name doesn't map exactly
+                                ;; to the fdefinition of the method.
+                                functional
+                                nil
+                                path)))))
         (call-with-block-external-functionals block #'handle-node)))))
 
 (defun call-with-block-external-functionals (block fun)
@@ -169,7 +169,11 @@
 
 (defun record-macroexpansion (what block path)
   (unless (internal-name-p what)
-    (push (cons what path) (block-macroexpands block))))
+    (push (list :macroexpands what path) (block-xrefs block))))
+
+(defun record-call (what block path)
+  (unless (internal-name-p what)
+    (push (list :calls what path) (block-xrefs block))))
 
 ;;; Pack the xref table that was stored for a functional into a more
 ;;; space-efficient form, and return that packed form.

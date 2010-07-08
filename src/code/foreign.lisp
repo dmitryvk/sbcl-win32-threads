@@ -16,8 +16,8 @@
 
 (defun extern-alien-name (name)
   (handler-case
-      #!+elf (coerce name 'base-string)
-      #!+(or mach-o win32) (concatenate 'base-string "_" name)
+      #!-win32 (coerce name 'base-string)
+      #!+win32 (concatenate 'base-string "_" name)
     (error ()
       (error "invalid external alien name: ~S" name))))
 
@@ -34,10 +34,7 @@
   (let ((extern (extern-alien-name name)))
     (values
      (or (gethash extern table)
-         (gethash (concatenate 'base-string
-                               #!+(and darwin (or x86 x86-64 ppc)) "_ldso_stub__"
-                               #!-(and darwin (or x86 x86-64 ppc)) "ldso_stub__"
-                               extern) table)))))
+         (gethash (concatenate 'base-string "ldso_stub__" extern) table)))))
 
 (defun find-foreign-symbol-address (name)
   "Returns the address of the foreign symbol NAME, or NIL. Does not enter the
