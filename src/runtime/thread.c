@@ -989,6 +989,8 @@ void gc_safepoint()
     } else {
       suspend_briefly();
     }
+  } else {
+    lose("in gc_safepoint, fell through");
   }
 }
 
@@ -1262,6 +1264,7 @@ thread_yield()
 #ifdef LISP_FEATURE_SB_THREAD
 #if defined(LISP_FEATURE_WIN32)
     SwitchToThread();
+    return 0;
 #else
     return sched_yield();
 #endif
