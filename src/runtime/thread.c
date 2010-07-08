@@ -883,10 +883,12 @@ int thread_may_gc()
   // 1) SIG_STOP_FOR_GC is unblocked
   // 2) GC_INHIBIT is NIL
   // 3) INTERRUPTS_ENABLED is not-NIL
+  // 4) !pseudo_atomic
 
   struct thread * self = arch_os_get_current_thread();
   
   sigset_t ss;
+  
   pthread_sigmask(SIG_BLOCK, NULL, &ss);
   if (sigismember(&ss, SIG_STOP_FOR_GC)) {
     odprintf("SIG_STOP_FOR_GC is blocked");
@@ -895,6 +897,11 @@ int thread_may_gc()
     
   if (SymbolValue(GC_INHIBIT, self) != NIL) {
     odprintf("GC_INHIBIT != NIL");
+    return 0;
+  }
+  
+  if (get_pseudo_atomic_atomic(self)) {
+    odprintf("pseudo_atomic");
     return 0;
   }
     
@@ -906,6 +913,7 @@ int thread_may_interrupt()
   // Thread may be interrupted if all of these are true:
   // 1) SIGHUP is unblocked
   // 2) INTERRUPTS_ENABLED is not-nil
+  // 3) !pseudo_atomic
   struct thread * self = arch_os_get_current_thread();
   
   sigset_t ss;
@@ -915,6 +923,11 @@ int thread_may_interrupt()
     
   if (SymbolValue(INTERRUPTS_ENABLED, self) == NIL)
     return 0;
+  
+  if (get_pseudo_atomic_atomic(self)) {
+    odprintf("pseudo_atomic");
+    return 0;
+  }
   
   return 1;
 }
