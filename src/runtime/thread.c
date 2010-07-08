@@ -703,11 +703,13 @@ void roll_thread_to_safepoint(struct thread * thread)
   pthread_mutex_lock(&all_threads_lock);
   pthread_mutex_lock(&suspend_info.world_lock);
   
+  odprintf("taking suspend info lock, roll_thread_to_safepoint 1");
   pthread_mutex_lock(&suspend_info.lock);
   suspend_info.reason = SUSPEND_REASON_INTERRUPT;
   suspend_info.interrupted_thread = thread;
   suspend_info.phase = 1;
   suspend_info.suspend = 1;
+  odprintf("releasing suspend info lock, roll_thread_to_safepoint 1");
   pthread_mutex_unlock(&suspend_info.lock);
   
   unmap_gc_page();
@@ -724,8 +726,10 @@ void roll_thread_to_safepoint(struct thread * thread)
   
   map_gc_page();
   
+  odprintf("taking suspend info lock, roll_thread_to_safepoint 2");
   pthread_mutex_lock(&suspend_info.lock);
   suspend_info.suspend = 0;
+  odprintf("releasing suspend info lock, roll_thread_to_safepoint 2");
   pthread_mutex_unlock(&suspend_info.lock);
   
   for (p = all_threads; p; p = p->next) {
@@ -852,6 +856,7 @@ void safepoint_cycle_state(int state)
   struct thread * self = arch_os_get_current_thread();
   odprintf("safepoint_cycle_state(%s) begin", get_thread_state_string(state));
   set_thread_state(self, state);
+  odprintf("releasing suspend info lock, safepoint_cycle_state");
   pthread_mutex_unlock(&suspend_info.lock);
   odprintf("waiting for state change from %s", get_thread_state_string(state));
   wait_for_thread_state_change(self, state);
@@ -872,6 +877,7 @@ void suspend_briefly()
   if (suspend_info.phase == 1 || suspend_info.reason == SUSPEND_REASON_INTERRUPT) {
     safepoint_cycle_state(STATE_SUSPENDED_BRIEFLY);
   } else {
+    odprintf("releasing suspend info lock, suspend_briefly");
     pthread_mutex_unlock(&suspend_info.lock);
   }
   odprintf("suspend_briefly() end");
@@ -935,27 +941,36 @@ int thread_may_interrupt()
 void gc_safepoint()
 {
   struct thread * self = arch_os_get_current_thread();
+  
+  odprintf("gc_safepoint begin");
+  
   if (!suspend_info.suspend) {
+    odprintf("gc_safepoint !suspend");
     check_pending_interrupts();
     SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
+    odprintf("gc_safepoint !suspend, end");
     return;
   }
+  odprintf("taking suspend info lock, gc_safepoint");
   pthread_mutex_lock(&suspend_info.lock);
   if (!suspend_info.suspend) {
+    odprintf("releasing suspend info lock, gc_safepoint 1");
     pthread_mutex_unlock(&suspend_info.lock);
     check_pending_interrupts();
     SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
+    odprintf("gc_safepoint !suspend, end");
     return;
   }
-  gc_log_state("safepoint");
   odprintf("gc_safepoint, suspend_info.suspend = 1");
   if (suspend_info.reason == SUSPEND_REASON_GC) {
     odprintf("suspend_info.reason == SUSPEND_REASON_GC");
     if (self == suspend_info.gc_thread) {
       odprintf("suspend_info.gc_thread == self");
+      odprintf("releasing suspend info lock, gc_safepoint 2");
       pthread_mutex_unlock(&suspend_info.lock);
     } else
     if (suspend_info.phase == 1) {
+      odprintf("suspend_info.phase == 1");
 			if (thread_may_gc()) {
 				odprintf("thread_may_gc = T");
 				suspend();
@@ -970,12 +985,15 @@ void gc_safepoint()
 				gc_log_state("leaving safepoint 2");
 			}
 		} else {
+      odprintf("suspend_info.phase != 1");
 			if (thread_may_gc()) {
 				suspend();
 				check_pending_interrupts();
 				gc_log_state("leaving safepoint 3");
 			} else {
+        odprintf("releasing suspend info lock, gc_safepoint 3");
         pthread_mutex_unlock(&suspend_info.lock);
+        gc_log_state("leaving safepoint 4");
       }
 		}
   } else
@@ -1070,11 +1088,13 @@ void gc_stop_the_world()
     
     odprintf("begin phase 1");
     
+    odprintf("taking suspend info lock, gc_stop_the_world 1");
     pthread_mutex_lock(&suspend_info.lock);
     suspend_info.reason = SUSPEND_REASON_GC;
     suspend_info.gc_thread = arch_os_get_current_thread();
     suspend_info.phase = 1;
     suspend_info.suspend = 1;
+    odprintf("releasing suspend info lock, gc_stop_the_world 1");
     pthread_mutex_unlock(&suspend_info.lock);
     
     unmap_gc_page();
@@ -1105,9 +1125,11 @@ void gc_stop_the_world()
     
     odprintf("begin phase 2");
     
+    odprintf("taking suspend info lock, gc_stop_the_world 2");
     pthread_mutex_lock(&suspend_info.lock);
     map_gc_page();
     suspend_info.phase = 2;
+    odprintf("releasing suspend info lock, gc_stop_the_world 2");
     pthread_mutex_unlock(&suspend_info.lock);
     
     for (p = all_threads; p; p = p->next) {
@@ -1139,8 +1161,10 @@ void gc_start_the_world()
   
   gc_log_state("gc_start_the_world() begin");
 
+  odprintf("taking suspend info lock, gc_start_the_world 1");
   pthread_mutex_lock(&suspend_info.lock);
   suspend_info.suspend = 0;
+  odprintf("releasing suspend info lock, gc_start_the_world 1");
   pthread_mutex_unlock(&suspend_info.lock);
   
   for(p = all_threads; p; p=p->next) {
