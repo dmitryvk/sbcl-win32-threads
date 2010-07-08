@@ -86,6 +86,7 @@ void odprint(const char * msg)
 
 void odprintf(const char * fmt, ...)
 {
+#if 0
   char buf[1024];
   va_list args;
   int n;
@@ -102,6 +103,7 @@ void odprintf(const char * fmt, ...)
   buf[n] = '\n';
   buf[n + 1] = 0;
   OutputDebugString(buf);
+#endif
 }
 
 /* The exception handling function looks like this: */
