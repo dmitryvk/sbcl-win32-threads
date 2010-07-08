@@ -417,7 +417,8 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     os_context_t ctx;
     odprintf("Entering handle_exception (EIP = 0x%p)", (void*)context->Eip);
     ctx.win32_context = context;
-    gc_safe_count = set_gc_safe(0);
+    gc_safe_count = self->gc_safe;
+    self->gc_safe = 0;
     pthread_sigmask(SIG_SETMASK, NULL, &ctx.sigmask);
     pthread_sigmask(SIG_BLOCK, &blockable_sigset, NULL);
 #endif
