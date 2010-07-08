@@ -15,6 +15,7 @@ set -e
 
 BASE=`dirname "$0"`
 BASE=`readlink -f ${BASE}`
+if [ `uname -o` == "Cygwin" ]; then BASE=`cygpath -w "$BASE"`; fi
 CORE_DEFINED=no
 
 for arg in $*; do
