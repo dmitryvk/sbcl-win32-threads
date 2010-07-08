@@ -231,6 +231,7 @@ int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset)
       OutputDebugString(buf);
     }
   }
+  if (set)
   {
     int i;
     for (i = 1; i < NSIG; ++i) {
