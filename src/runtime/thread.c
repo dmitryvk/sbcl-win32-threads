@@ -974,7 +974,9 @@ void gc_safepoint()
 				suspend();
 				check_pending_interrupts();
 				gc_log_state("leaving safepoint 3");
-			}
+			} else {
+        pthread_mutex_unlock(&suspend_info.lock);
+      }
 		}
   } else
   if (suspend_info.reason == SUSPEND_REASON_INTERRUPT) {
