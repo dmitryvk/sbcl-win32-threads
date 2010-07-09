@@ -139,17 +139,20 @@
                                "Id" ,(file-id file)
                                "Source" ,(enough-namestring file)))))))
 
+(defun directory-empty-p (dir)
+  (null (directory (make-pathname :name :wild :type :wild :defaults dir))))
+
 (defun collect-components (root)
-  (cons (collect-1-component root)
-        (loop for directory in
-              (directory
-               (merge-pathnames (make-pathname
-                                 :directory '(:relative :wild)
-                                 :name nil :type nil)
-                                root))
-              unless (member (car (last (pathname-directory directory)))
-                             *ignored-directories* :test #'equal)
-              append (collect-components directory))))
+  (append (unless (directory-empty-p root) (list (collect-1-component root)))
+          (loop for directory in
+                (directory
+                 (merge-pathnames (make-pathname
+                                   :directory '(:relative :wild)
+                                   :name nil :type nil)
+                                  root))
+                unless (member (car (last (pathname-directory directory)))
+                               *ignored-directories* :test #'equal)
+                append (collect-components directory))))
 
 (defun collect-contrib-components ()
   (loop for contrib in (directory "../contrib/*/test-passed")
