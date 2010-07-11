@@ -65,6 +65,7 @@ size_t os_vm_page_size;
 
 #include "gc.h"
 #include "gencgc-internal.h"
+#include <Winsock2.h>
 
 #if 0
 int linux_sparc_siginfo_bug = 0;
@@ -810,6 +811,23 @@ os_get_runtime_executable_path(int external)
         return NULL;
 
     return copied_string(path);
+}
+
+int
+socket_input_available(HANDLE socket)
+{
+  unsigned long count = 0, count_size = 0;
+
+  int err = WSAIoctl(socket, FIONREAD, NULL, 0, &count, sizeof(count), &count_size, NULL, NULL);
+  
+  int ret;
+
+  if (err == 0)
+    ret = (count > 0) ? 1 : 2;
+  else
+    ret = 0;
+  
+  return ret;
 }
 
 /* EOF */

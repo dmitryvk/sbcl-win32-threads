@@ -104,6 +104,9 @@
   (length dword)
   (nevents (* dword)))
 
+(define-alien-routine ("socket_input_available" socket-input-available) int
+  (socket handle))
+
 ;;; Listen for input on a Windows file handle.  Unlike UNIX, there
 ;;; isn't a unified interface to do this---we have to know what sort
 ;;; of handle we have.  Of course, there's no way to actually
@@ -121,8 +124,10 @@
                                        1 (addr avail)))
       (return-from handle-listen (plusp avail)))
 
-    ;; FIXME-SOCKETS: Try again here with WSAEventSelect in case
-    ;; HANDLE is a socket.
+    (let ((res (socket-input-available handle)))
+      (unless (zerop res)
+        (return-from handle-listen (= res 1))))
+ 
     t))
 
 ;;; Listen for input on a C runtime file handle.  Returns true if
