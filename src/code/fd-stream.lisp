@@ -967,6 +967,9 @@
        ;; Check for blocking input before touching the stream, as if
        ;; we happen to wait we are liable to be interrupted, and the
        ;; interrupt handler may use the same stream.
+       #!+win32
+       (go :main)
+       
        (if (sysread-may-block-p stream)
            (go :wait-for-input)
            (go :main))

@@ -813,6 +813,7 @@ os_get_runtime_executable_path(int external)
     return copied_string(path);
 }
 
+// 0 - not a socket or other error, 1 - has input, 2 - has no input
 int
 socket_input_available(HANDLE socket)
 {
@@ -822,12 +823,67 @@ socket_input_available(HANDLE socket)
   
   int ret;
 
-  if (err == 0)
+  if (err == 0) {
     ret = (count > 0) ? 1 : 2;
-  else
+    odprintf("socket_input_available(0x%p) => %d", socket, ret);
+  } else
     ret = 0;
   
   return ret;
+}
+
+long
+get_fionread(HANDLE socket)
+{
+  unsigned long count = 0, count_size = 0;
+
+  int err = WSAIoctl(socket, FIONREAD, NULL, 0, &count, sizeof(count), &count_size, NULL, NULL);
+  
+  int ret;
+
+  if (err == 0) {
+    return (long)count;
+  } else {
+    return -1;
+  }
+}
+
+int win32_unix_write(int fd, void * buf, int count)
+{
+  HANDLE handle;
+  DWORD written_bytes;
+  odprintf("write(%d, 0x%p, %d)", fd, buf, count);
+  handle = _get_osfhandle(fd);
+  odprintf("handle = 0x%p", handle);
+  if (WriteFile(handle, buf, count, &written_bytes, NULL)) {
+    odprintf("write(%d, 0x%p, %d) wrote %d bytes", fd, buf, count, written_bytes);
+    return written_bytes;
+  } else {
+    odprintf("write(%d, 0x%p, %d) failed", fd, buf, count);
+    return -1;
+  }
+}
+
+int win32_unix_read(int fd, void * buf, int count)
+{
+  HANDLE handle;
+  DWORD read_bytes;
+  odprintf("read(%d, 0x%p, %d)", fd, buf, count);
+  handle = _get_osfhandle(fd);
+  odprintf("handle = 0x%p", handle);
+  if (get_fionread(handle) >= 0) {
+    odprintf("0x%p is a socket, doing busy-loop", handle);
+    while (get_fionread(handle) == 0) Sleep(100);
+    odprintf("socket 0x%p now has %ld bytes to read, doing ReadFile", get_fionread(handle));
+  }
+  if (ReadFile(handle, buf, count, &read_bytes, NULL)) {
+    odprintf("read(%d, 0x%p, %d) read %d bytes", fd, buf, count, read_bytes);
+    FlushFileBuffers(handle);
+    return read_bytes;
+  } else {
+    odprintf("read(%d, 0x%p, %d) failed", fd, buf, count);
+    return -1;
+  }
 }
 
 /* EOF */
