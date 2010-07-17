@@ -78,7 +78,7 @@ void odprint(const char * msg)
 {
   char buf[1024];
   #if defined(LISP_FEATURE_SB_THREAD)
-  sprintf(buf, "[0x%p] %s", pthread_self(), msg);
+  sprintf(buf, "[0x%p] %s\n", pthread_self(), msg);
   OutputDebugString(buf);
   #else
   OutputDebugString(msg);
@@ -87,7 +87,6 @@ void odprint(const char * msg)
 
 void odprintf(const char * fmt, ...)
 {
-#if 0
   char buf[1024];
   va_list args;
   int n;
@@ -104,7 +103,6 @@ void odprintf(const char * fmt, ...)
   buf[n] = '\n';
   buf[n + 1] = 0;
   OutputDebugString(buf);
-#endif
 }
 
 /* The exception handling function looks like this: */
@@ -418,7 +416,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     struct thread * self = arch_os_get_current_thread();
     unsigned int gc_safe_count;
     os_context_t ctx;
-    odprintf("Entering handle_exception (EIP = 0x%p)", (void*)context->Eip);
+    //odprintf("Entering handle_exception (EIP = 0x%p)", (void*)context->Eip);
     ctx.win32_context = context;
     gc_safe_count = self->gc_safe;
     self->gc_safe = 0;
@@ -429,7 +427,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         /* If we're being unwound, be graceful about it. */
 
 #if defined(LISP_FEATURE_SB_THREAD)
-        odprintf(" it is an unwind");
+        //odprintf(" it is an unwind");
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
 #endif
         /* Undo any dynamic bindings. */
@@ -438,7 +436,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
 #if defined(LISP_FEATURE_SB_THREAD)
         set_gc_safe(gc_safe_count);
         gc_safepoint();
-        odprintf("Leaving handle_exception");
+        //odprintf("Leaving handle_exception");
 #endif
         return ExceptionContinueSearch;
     }
@@ -451,12 +449,12 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         /* We are doing a displaced instruction. At least function
          * end breakpoints uses this. */
         #if defined(LISP_FEATURE_SB_THREAD)
-        odprintf(" it is a single step");
+        //odprintf(" it is a single step");
         restore_breakpoint_from_single_step(&ctx);
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
         set_gc_safe(gc_safe_count);
         gc_safepoint();
-        odprintf("Leaving handle_exception");
+        //odprintf("Leaving handle_exception");
         #else
         restore_breakpoint_from_single_step(context);
         #endif
@@ -470,9 +468,9 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     #endif
         unsigned char trap;
         #if defined(LISP_FEATURE_SB_THREAD)
-        if (suspend_info.suspend && self != suspend_info.gc_thread)
-          odprintf("Hmmm, gcing and doing handle_trap");
-        odprintf(" it is a trap");
+        //if (suspend_info.suspend && self != suspend_info.gc_thread)
+          //odprintf("Hmmm, gcing and doing handle_trap");
+        //odprintf(" it is a trap");
         #endif
         
         /* This is just for info in case the monitor wants to print an
@@ -497,7 +495,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         handle_trap(&ctx, trap);
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
         gc_safepoint();
-        odprintf("Leaving handle_exception");
+        //odprintf("Leaving handle_exception");
         #else
         trap = *(unsigned char *)(*os_context_pc_addr(context));
         handle_trap(context, trap);
@@ -508,10 +506,10 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     #if defined(LISP_FEATURE_SB_THREAD)
     else if (exception_record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault_address == GC_SAFEPOINT_PAGE_ADDR) {
       pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-      odprintf(" it is a safepoint");
+      //odprintf(" it is a safepoint");
       gc_safepoint();
       set_gc_safe(gc_safe_count);
-      odprintf("Leaving handle_exception");
+      //odprintf("Leaving handle_exception");
       return ExceptionContinueExecution;
     }
     #endif
@@ -522,7 +520,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         MEMORY_BASIC_INFORMATION mem_info;
         
         #if defined(LISP_FEATURE_SB_THREAD)
-        odprintf(" it is an access violation with address in lisp heap (0x%p)", fault_address);
+        //odprintf(" it is an access violation with address in lisp heap (0x%p)", fault_address);
         #endif
 
         if (!VirtualQuery(fault_address, &mem_info, sizeof mem_info)) {
@@ -549,11 +547,11 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                     int index = find_page_index(fault_address);
                     if ((index != -1) && (page_table[index].write_protected)) {
                         #if defined(LISP_FEATURE_SB_THREAD)
-                        odprintf("1 gencgc_handle_wp_violation(0x%p) begin", fault_address);
+                        //odprintf("1 gencgc_handle_wp_violation(0x%p) begin", fault_address);
                         #endif
                         gencgc_handle_wp_violation(fault_address);
                         #if defined(LISP_FEATURE_SB_THREAD)
-                        odprintf("1 gencgc_handle_wp_violation(0x%p) end", fault_address);
+                        //odprintf("1 gencgc_handle_wp_violation(0x%p) end", fault_address);
                         #endif
                     }
                 }
@@ -561,26 +559,26 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                 pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
                 set_gc_safe(gc_safe_count);
                 gc_safepoint();
-                odprintf("Leaving handle_exception");
+                //odprintf("Leaving handle_exception");
                 #endif
                 return ExceptionContinueExecution;
             }
 
         #if defined(LISP_FEATURE_SB_THREAD)
         } else {
-            if (suspend_info.suspend && self != suspend_info.gc_thread)
-              odprintf("Hmmm, gcing = 1, doing gencgc_handle_wp_violation");
-            odprintf("2 gencgc_handle_wp_violation(0x%p) begin", fault_address);
+            //if (suspend_info.suspend && self != suspend_info.gc_thread)
+              //odprintf("Hmmm, gcing = 1, doing gencgc_handle_wp_violation");
+            //odprintf("2 gencgc_handle_wp_violation(0x%p) begin", fault_address);
             if (gencgc_handle_wp_violation(fault_address)) {
-              odprintf("2 gencgc_handle_wp_violation(0x%p) end T", fault_address);
+              //odprintf("2 gencgc_handle_wp_violation(0x%p) end T", fault_address);
               pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
               set_gc_safe(gc_safe_count);
               gc_safepoint();
-              odprintf("Leaving handle_exception");
+              //odprintf("Leaving handle_exception");
               /* gc accepts the wp violation, so resume where we left off. */
               return ExceptionContinueExecution;
           }
-          odprintf("2 gencgc_handle_wp_violation(0x%p) end nil", fault_address);
+          //odprintf("2 gencgc_handle_wp_violation(0x%p) end nil", fault_address);
         }
         #else
         } else if (gencgc_handle_wp_violation(fault_address)) {
