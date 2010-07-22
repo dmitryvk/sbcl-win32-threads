@@ -504,6 +504,7 @@ create_thread_struct(lispobj initial_function) {
     bind_variable(STOP_FOR_GC_PENDING,NIL,th);
 #endif
 #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+    bind_variable(GC_SAFE,NIL,th);
     th->gc_safe = 0;
 #endif
 
