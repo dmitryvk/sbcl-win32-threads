@@ -934,6 +934,9 @@ void gc_safepoint()
 {
   struct thread * self = arch_os_get_current_thread();
   
+  if (!get_pseudo_atomic_atomic(self) && get_pseudo_atomic_interrupted(self))
+    clear_pseudo_atomic_interrupted(self);
+  
   //odprintf("gc_safepoint begin");
   
   if (!suspend_info.suspend) {
