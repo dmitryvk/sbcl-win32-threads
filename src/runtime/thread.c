@@ -505,7 +505,6 @@ create_thread_struct(lispobj initial_function) {
 #endif
 #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     bind_variable(GC_SAFE,NIL,th);
-    th->gc_safe = 0;
 #endif
 
     th->interrupt_data = (struct interrupt_data *)
@@ -690,7 +689,7 @@ void gc_log_state(const char * descr)
 	struct thread * self = arch_os_get_current_thread();
 	odprintf("%s; gc_safe = %d, GC_PENDING = %s, STOP_FOR_GC_PENDING = %s, INTERRUPT_PENDING = %s, INTERRUPTS_ENABLED = %s, GC_INHIBIT = %s",
 		descr,
-		self->gc_safe,
+		t_nil_str(SymbolValue(GC_SAFE, self)),
 		t_nil_str(SymbolValue(GC_PENDING, self)), t_nil_str(SymbolValue(STOP_FOR_GC_PENDING, self)),
 		t_nil_str(SymbolValue(INTERRUPT_PENDING, self)), t_nil_str(SymbolValue(INTERRUPTS_ENABLED, self)),
 		t_nil_str(SymbolValue(GC_INHIBIT, self))
@@ -699,7 +698,6 @@ void gc_log_state(const char * descr)
 
 void roll_thread_to_safepoint(struct thread * thread)
 {
-  int gc_safe;
   struct thread * p;
   pthread_mutex_lock(&all_threads_lock);
   pthread_mutex_lock(&suspend_info.world_lock);
@@ -716,12 +714,7 @@ void roll_thread_to_safepoint(struct thread * thread)
   unmap_gc_page();
   
   // Phase 1: Make sure that th is in gc-safe code or noted the need to interrupt
-  gc_safe = thread->gc_safe;
-  while (gc_safe == GC_SAFE_CHANGING) {
-		Sleep(10);
-		gc_safe = thread->gc_safe;
-	}
-  if (!gc_safe) {
+  if (SymbolValue(GC_SAFE, thread) == NIL) {
     wait_for_thread_state_change(thread, STATE_RUNNING);
   }
   
@@ -829,27 +822,25 @@ void check_pending_interrupts()
   }
 }
 
-// returns old gc_safe
-int set_gc_safe(int gc_safe)
-{
-  struct thread * self = arch_os_get_current_thread();
-  int old_gc_safe = self->gc_safe;
-  //odprintf("Changing gc_safe from %d to %d", old_gc_safe, gc_safe);
-  self->gc_safe = gc_safe;
-  gc_safepoint();
-  return old_gc_safe;
-}
-
 void gc_enter_safe_region()
 {
   struct thread * self = arch_os_get_current_thread();
-  set_gc_safe(self->gc_safe + 1);
+  bind_variable(GC_SAFE, T, self);
+  gc_safepoint();
 }
 
-void gc_leave_safe_region()
+void gc_enter_unsafe_region()
 {
   struct thread * self = arch_os_get_current_thread();
-  set_gc_safe(self->gc_safe - 1);
+  bind_variable(GC_SAFE, NIL, self);
+  gc_safepoint();
+}
+
+void gc_leave_region()
+{
+  struct thread * self = arch_os_get_current_thread();
+  unbind_variable(GC_SAFE, self);
+  gc_safepoint();
 }
 
 void safepoint_cycle_state(int state)
@@ -1078,7 +1069,6 @@ void gc_stop_the_world()
 {
     struct thread *p,*th=arch_os_get_current_thread();
     int lock_ret;
-    int gc_safe;
     //gc_log_state("gc_stop_the_world() begin");
     
 #ifdef LOCK_CREATE_THREAD
@@ -1110,12 +1100,7 @@ void gc_stop_the_world()
         if (p != th) {
           //odprintf("looking at 0x%p, state is %s, gc_safe = %d", p->os_thread, get_thread_state_string(thread_state(p)), p->gc_safe);
           
-					gc_safe = p->gc_safe;
-					while (gc_safe == GC_SAFE_CHANGING) {
-						Sleep(10);
-						gc_safe = p->gc_safe;
-					}
-          if (gc_safe) continue;
+          if (SymbolValue(GC_SAFE, p) == T) continue;
           //odprintf("Waiting until 0x%p suspends, eip = 0x%p", p->os_thread, thread_get_pc_susp(p));
           wait_for_thread_state_change(p, STATE_RUNNING);
           //odprintf("0x%p is suspended", p->os_thread);
@@ -1134,15 +1119,9 @@ void gc_stop_the_world()
     pthread_mutex_unlock(&suspend_info.lock);
     
     for (p = all_threads; p; p = p->next) {
-      int gc_safe;
       gc_assert(p->os_thread != 0);
       if (p == th) continue;
-			gc_safe = p->gc_safe;
-			while (gc_safe == GC_SAFE_CHANGING) {
-				Sleep(10);
-				gc_safe = p->gc_safe;
-			}
-      if (!gc_safe) {
+      if (SymbolValue(GC_SAFE, p) == NIL) {
         if (thread_state(p) == STATE_SUSPENDED_BRIEFLY) {
           set_thread_state(p, STATE_RUNNING);
           wait_for_thread_state_change(p, STATE_RUNNING);

@@ -403,7 +403,9 @@ extern boolean internal_errors_enabled;
  */
 
 #if defined(LISP_FEATURE_SB_THREAD)
-int set_gc_safe(int gc_safe);
+void gc_enter_safe_region();
+void gc_enter_unsafe_region();
+void gc_leave_region();
 #endif
  
 EXCEPTION_DISPOSITION
@@ -414,12 +416,10 @@ handle_exception(EXCEPTION_RECORD *exception_record,
 {
 #if defined(LISP_FEATURE_SB_THREAD)
     struct thread * self = arch_os_get_current_thread();
-    unsigned int gc_safe_count;
     os_context_t ctx;
     //odprintf("Entering handle_exception (EIP = 0x%p)", (void*)context->Eip);
     ctx.win32_context = context;
-    gc_safe_count = self->gc_safe;
-    self->gc_safe = 0;
+    bind_variable(GC_SAFE, NIL, self);
     pthread_sigmask(SIG_SETMASK, NULL, &ctx.sigmask);
     pthread_sigmask(SIG_BLOCK, &blockable_sigset, NULL);
 #endif
@@ -430,11 +430,10 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         //odprintf(" it is an unwind");
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
 #endif
-        /* Undo any dynamic bindings. */
+        /* Undo any dynamic bindings, including *gc-safe*. */
         unbind_to_here(exception_frame->bindstack_pointer,
                        arch_os_get_current_thread());
 #if defined(LISP_FEATURE_SB_THREAD)
-        set_gc_safe(gc_safe_count);
         gc_safepoint();
         //odprintf("Leaving handle_exception");
 #endif
@@ -452,8 +451,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         //odprintf(" it is a single step");
         restore_breakpoint_from_single_step(&ctx);
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-        set_gc_safe(gc_safe_count);
-        gc_safepoint();
+        gc_leave_region(self);
         //odprintf("Leaving handle_exception");
         #else
         restore_breakpoint_from_single_step(context);
@@ -494,7 +492,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         trap = *(unsigned char *)(*os_context_pc_addr(&ctx));
         handle_trap(&ctx, trap);
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-        gc_safepoint();
+        gc_leave_region(self);
         //odprintf("Leaving handle_exception");
         #else
         trap = *(unsigned char *)(*os_context_pc_addr(context));
@@ -507,8 +505,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     else if (exception_record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault_address == GC_SAFEPOINT_PAGE_ADDR) {
       pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
       //odprintf(" it is a safepoint");
-      gc_safepoint();
-      set_gc_safe(gc_safe_count);
+      gc_leave_region(self);
       //odprintf("Leaving handle_exception");
       return ExceptionContinueExecution;
     }
@@ -557,8 +554,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                 }
                 #if defined(LISP_FEATURE_SB_THREAD)
                 pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-                set_gc_safe(gc_safe_count);
-                gc_safepoint();
+                gc_leave_region(self);
                 //odprintf("Leaving handle_exception");
                 #endif
                 return ExceptionContinueExecution;
@@ -572,8 +568,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
             if (gencgc_handle_wp_violation(fault_address)) {
               //odprintf("2 gencgc_handle_wp_violation(0x%p) end T", fault_address);
               pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-              set_gc_safe(gc_safe_count);
-              gc_safepoint();
+              gc_leave_region(self);
               //odprintf("Leaving handle_exception");
               /* gc accepts the wp violation, so resume where we left off. */
               return ExceptionContinueExecution;
@@ -635,8 +630,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         /* If Lisp doesn't nlx, we need to put things back. */
         #if defined(LISP_FEATURE_SB_THREAD)
         undo_fake_foreign_function_call(&ctx);
-        self->gc_safe = gc_safe_count;
-        gc_safepoint();
+        gc_leave_region(self);
         #else
         undo_fake_foreign_function_call(context);
         #endif
@@ -671,8 +665,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     #if defined(LISP_FEATURE_SB_THREAD)
     /* FIXME: WTF? How are we supposed to end up here? */
     pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-    set_gc_safe(gc_safe_count);
-    gc_safepoint();
+    gc_leave_region(self);
     #endif
     return ExceptionContinueSearch;
 }

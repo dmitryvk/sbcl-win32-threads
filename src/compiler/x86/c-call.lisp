@@ -281,7 +281,7 @@
            #!+(and win32 sb-thread)
            (progn
              (inst pusha)
-             (inst call (make-fixup "gc_leave_safe_region" :foreign))
+             (inst call (make-fixup "gc_leave_region" :foreign))
              (inst popa)))
           (t
            ;; Setup the NPX for C; all the FP registers need to be
@@ -302,7 +302,7 @@
            #!+(and win32 sb-thread)
            (progn
              (inst pusha)
-             (inst call (make-fixup "gc_leave_safe_region" :foreign))
+             (inst call (make-fixup "gc_leave_region" :foreign))
              (inst popa))
            ;; To give the debugger a clue. FIXME: not really internal-error?
            (note-this-location vop :internal-error)
@@ -440,7 +440,7 @@ pointer to the arguments."
               #!+(and win32 sb-thread)
               (progn
                 (inst pusha)
-                (inst mov eax (foreign-symbol-address "gc_leave_safe_region"))
+                (inst mov eax (foreign-symbol-address "gc_enter_unsafe_region"))
                 (inst call eax)
                 (inst popa))
               
@@ -457,7 +457,7 @@ pointer to the arguments."
               #!+(and win32 sb-thread)
               (progn
                 (inst pusha)
-                (inst mov eax (foreign-symbol-address "gc_enter_safe_region"))
+                (inst mov eax (foreign-symbol-address "gc_leave_region"))
                 (inst call eax)
                 (inst popa))
               ;; now put the result into the right register

@@ -91,6 +91,28 @@ unbind(void *th)
 }
 
 void
+unbind_variable(lispobj name, void *th)
+{
+    struct thread *thread=(struct thread *)th;
+    struct binding *binding;
+    lispobj symbol;
+
+    binding = GetBSP() - 1;
+
+    symbol = binding->symbol;
+    
+    if (symbol != name)
+      lose("unbind_variable, 0x%p != 0x%p", symbol, name);
+
+    SetTlSymbolValue(symbol, binding->value,thread);
+
+    binding->symbol = 0;
+    binding->value = 0;
+
+    SetBSP(binding);
+}
+
+void
 unbind_to_here(lispobj *bsp,void *th)
 {
     struct thread *thread=(struct thread *)th;
