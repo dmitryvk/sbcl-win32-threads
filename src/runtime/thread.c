@@ -823,10 +823,12 @@ void check_pending_interrupts()
   }
 }
 
+int thread_may_gc();
+
 void gc_enter_safe_region()
 {
   struct thread * self = arch_os_get_current_thread();
-  bind_variable(GC_SAFE, T, self);
+  bind_variable(GC_SAFE, thread_may_gc() ? T : NIL, self);
   gc_safepoint();
 }
 
