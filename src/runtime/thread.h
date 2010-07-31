@@ -32,7 +32,7 @@ struct alloc_region { };
 
 #define GC_SAFE_CHANGING (0xFFFFFFFFU)
 
-enum threads_suspend_reason { SUSPEND_REASON_NONE, SUSPEND_REASON_GC, SUSPEND_REASON_INTERRUPT };
+enum threads_suspend_reason { SUSPEND_REASON_NONE, SUSPEND_REASON_GC, SUSPEND_REASON_INTERRUPT, SUSPEND_REASON_GCING };
 
 struct threads_suspend_info {
   int suspend;

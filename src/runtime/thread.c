@@ -960,6 +960,20 @@ void gc_safepoint()
     return;
   }
   //odprintf("gc_safepoint, suspend_info.suspend = 1");
+  if (suspend_info.reason == SUSPEND_REASON_GCING) {
+    if (self == suspend_info.gc_thread) {
+      pthread_mutex_unlock(&suspend_info.lock);
+    } else
+    if (SymbolValue(GC_SAFE, self) == T) {
+      pthread_mutex_unlock(&suspend_info.lock);
+    } else
+    if (thread_may_gc()) {
+      suspend();
+    } else {
+      pthread_mutex_unlock(&suspend_info.lock);
+      lose("suspend_info.reason = SUSPEND_REASON_GCING");
+    }
+  } else
   if (suspend_info.reason == SUSPEND_REASON_GC) {
     //odprintf("suspend_info.reason == SUSPEND_REASON_GC");
     if (self == suspend_info.gc_thread) {
@@ -1134,6 +1148,11 @@ void gc_stop_the_world()
         }
       }
     }
+    
+    pthread_mutex_lock(&suspend_info.lock);
+    suspend_info.reason = SUSPEND_REASON_GCING;
+    suspend_info.gc_thread = arch_os_get_current_thread();
+    pthread_mutex_unlock(&suspend_info.lock);
 
     //gc_log_state("gc_stop_the_world() end");
 }
