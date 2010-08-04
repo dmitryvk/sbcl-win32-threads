@@ -83,24 +83,15 @@ set_thread_state(struct thread *thread, lispobj state)
     thread->state = state;
     pthread_cond_broadcast(thread->state_cond);
     pthread_mutex_unlock(thread->state_lock);
-    #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
-    odprintf("changed thread_state(0x%p) from %s to %s", thread->os_thread, get_thread_state_string(old_state), get_thread_state_string(state));
-    #endif
 }
 
 static inline void
 wait_for_thread_state_change(struct thread *thread, lispobj state)
 {
-    #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
-    odprintf("waiting for thread_state of 0x%p to change from %s", thread->os_thread, get_thread_state_string(state));
-    #endif
     pthread_mutex_lock(thread->state_lock);
     while (thread->state == state)
         pthread_cond_wait(thread->state_cond, thread->state_lock);
     pthread_mutex_unlock(thread->state_lock);
-    #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
-    odprintf("done waiting for thread_state of 0x%p to change from %s", thread->os_thread, get_thread_state_string(state));
-    #endif
 }
 
 extern pthread_key_t lisp_thread;

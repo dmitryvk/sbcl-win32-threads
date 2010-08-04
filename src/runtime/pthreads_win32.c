@@ -92,15 +92,11 @@ DWORD WINAPI Thread_Function(LPVOID param)
   self->retval = fn(arg);
   pthread_mutex_lock(&self->lock);
   self->state = pthread_state_finished;
-  odprintf("thread function returned, state is %s", state_to_str(self->state));
   pthread_cond_broadcast(&self->cond);
   while (!self->detached && self->state != pthread_state_joined) {
     pthread_cond_wait(&self->cond, &self->lock);
-    odprintf("detached = %d, state = %s", self->detached, state_to_str(self->state));
   }
   pthread_mutex_unlock(&self->lock);
-  
-  odprintf("destroying the thread");
   
   pthread_mutex_destroy(&self->lock);
   pthread_cond_destroy(&self->cond);
@@ -159,22 +155,17 @@ int pthread_detach(pthread_t thread)
 
 int pthread_join(pthread_t thread, void **retval)
 {
-  odprintf("pthread_join on 0x%p started", thread);
   pthread_mutex_lock(&thread->lock);
   if (thread->detached)
     odprintf("pthread_join on 0x%p, thread is detached", thread);
-  odprintf("joining 0x%p, state is %s", thread, state_to_str(thread->state));
   while (thread->state != pthread_state_finished) {
     pthread_cond_wait(&thread->cond, &thread->lock);
-    odprintf("woke up joining 0x%p, state is %s", thread, state_to_str(thread->state));
   }
   thread->state = pthread_state_joined;
   pthread_cond_broadcast(&thread->cond);
   if (retval)
     *retval = thread->retval;
-  odprintf("done joining 0x%p, state is %s", thread, state_to_str(thread->state));
   pthread_mutex_unlock(&thread->lock);
-  odprintf("pthread_join on 0x%p returned", thread);
   return 0;
 }
 
@@ -238,7 +229,6 @@ int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset)
       if (!sigismember(&self->blocked_signal_set, i)) {
         unsigned int is_pending = InterlockedExchange(&self->signal_is_pending[i], 0);
         if (is_pending) {
-          odprintf("calling pending signal handler for signal %d", i);
           pthread_np_pending_signal_handler(i);
         }
       }
@@ -266,14 +256,12 @@ int pthread_mutex_destroy(pthread_mutex_t *mutex)
 void pthread_np_add_pending_signal(pthread_t thread, int signum)
 {
   const char * s = thread->signal_is_pending[signum] ? "pending" : "not pending";
-  odprintf("setting signal %d for thread 0x%p to pending (was: %s)", signum, thread, s);
   thread->signal_is_pending[signum] = 1;
 }
 
 void pthread_np_remove_pending_signal(pthread_t thread, int signum)
 {
   const char * s = thread->signal_is_pending[signum] ? "pending" : "not pending";
-  odprintf("setting signal %d for thread 0x%p to not pending (was: %s)", signum, thread, s);
   thread->signal_is_pending[signum] = 0;
 }
 
@@ -373,15 +361,12 @@ int pthread_cond_broadcast(pthread_cond_t *cv)
 {
   int count = 0;
   pthread_mutex_lock(&cv->wakeup_lock);
-  if (!cv->first_wakeup)
-    odprintf("no waiters");
   while (cv->first_wakeup)
   {
     struct thread_wakeup * w = cv->first_wakeup;
     HANDLE waitevent = w->event;
     cv->first_wakeup = w->next;
     SetEvent(waitevent);
-    odprintf("signaled event 0x%p", waitevent);
     ++count;
   }
   cv->last_wakeup = NULL;
@@ -393,8 +378,6 @@ int pthread_cond_signal(pthread_cond_t *cv)
 {
   struct thread_wakeup * w;
   pthread_mutex_lock(&cv->wakeup_lock);
-  if (!cv->first_wakeup)
-    odprintf("no waiters");
   w = cv->first_wakeup;
   if (w) {
     HANDLE waitevent = w->event;
@@ -402,7 +385,6 @@ int pthread_cond_signal(pthread_cond_t *cv)
     if (!cv->first_wakeup)
       cv->last_wakeup = NULL;
     SetEvent(waitevent);
-    odprintf("signaled event 0x%p", waitevent);
   }
   pthread_mutex_unlock(&cv->wakeup_lock);
   return 0;
@@ -468,13 +450,11 @@ int pthread_cond_wait(pthread_cond_t * cv, pthread_mutex_t * cs)
   }
   pthread_self()->waiting_cond = cv;
   pthread_mutex_unlock(cs);
-  //odprintf("waiting on event 0x%p", w.event);
   if (cv->alertable) {
     while (WaitForSingleObjectEx(w.event, INFINITE, TRUE) == WAIT_IO_COMPLETION);
   } else {
     WaitForSingleObject(w.event, INFINITE);
   }
-  //odprintf("wait returned");
   pthread_self()->waiting_cond = NULL;
   cv->return_fn(w.event);
   pthread_checkpoint();
@@ -501,14 +481,12 @@ int pthread_cond_timedwait(pthread_cond_t * cv, pthread_mutex_t * cs, const stru
     msec = sec * 1000 + abstime->tv_nsec / 1000000 - cur_tm.tv_usec / 1000;
     if (msec < 0)
       msec = 0;
-    //odprintf("waiting on event 0x%p for %d msec", w.event, msec);
     if (cv->alertable) {
       while ((rv = WaitForSingleObjectEx(w.event, msec, TRUE)) == WAIT_IO_COMPLETION);
     } else {
       rv = WaitForSingleObject(w.event, msec);
     }
   }
-  //odprintf("wait returned 0x%lx", rv);
   pthread_self()->waiting_cond = NULL;
   if (rv == WAIT_TIMEOUT)
     cv_wakeup_remove(cv, &w);
