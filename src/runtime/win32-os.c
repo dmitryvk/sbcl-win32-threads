@@ -402,12 +402,6 @@ extern boolean internal_errors_enabled;
  * http://win32assembly.online.fr/Exceptionhandling.html .
  */
 
-#if defined(LISP_FEATURE_SB_THREAD)
-void gc_enter_safe_region();
-void gc_enter_unsafe_region();
-void gc_leave_region();
-#endif
- 
 EXCEPTION_DISPOSITION
 handle_exception(EXCEPTION_RECORD *exception_record,
                  struct lisp_exception_frame *exception_frame,
