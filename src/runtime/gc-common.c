@@ -2415,10 +2415,6 @@ maybe_gc(os_context_t *context)
     lispobj gc_happened;
     struct thread *thread = arch_os_get_current_thread();
     
-    if (SymbolValue(IN_GC, thread) == T)
-      return 0;
-      
-    bind_variable(IN_GC, T, thread);
 
     #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     if (context)
@@ -2496,7 +2492,6 @@ maybe_gc(os_context_t *context)
     undo_fake_foreign_function_call(context);
     FSHOW((stderr, "/maybe_gc: returning\n"));
     
-    unbind_variable(IN_GC, thread);
     return (gc_happened != NIL);
 }
 

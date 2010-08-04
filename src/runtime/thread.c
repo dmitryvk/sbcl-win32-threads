@@ -706,7 +706,7 @@ const char * t_nil_str(lispobj value)
 void gc_log_state(const char * descr)
 {
 	struct thread * self = arch_os_get_current_thread();
-	odprintf("%s; gc_safe = %d, GC_PENDING = %s, STOP_FOR_GC_PENDING = %s, INTERRUPT_PENDING = %s, INTERRUPTS_ENABLED = %s, GC_INHIBIT = %s",
+	odprintf("%s; GC_SAFE = %s, GC_PENDING = %s, STOP_FOR_GC_PENDING = %s, INTERRUPT_PENDING = %s, INTERRUPTS_ENABLED = %s, GC_INHIBIT = %s",
 		descr,
 		t_nil_str(SymbolValue(GC_SAFE, self)),
 		t_nil_str(SymbolValue(GC_PENDING, self)), t_nil_str(SymbolValue(STOP_FOR_GC_PENDING, self)),
