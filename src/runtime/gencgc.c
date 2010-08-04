@@ -4415,8 +4415,6 @@ collect_garbage(generation_index_t last_gen)
      * remap_free_pages was called. */
     static page_index_t high_water_mark = 0;
     
-    odprintf("collect_garbage(%d) begin", last_gen);
-
     FSHOW((stderr, "/entering collect_garbage(%d)\n", last_gen));
 
     gc_active_p = 1;
@@ -4543,7 +4541,6 @@ collect_garbage(generation_index_t last_gen)
     gc_active_p = 0;
     
     SHOW("returning from collect_garbage");
-    odprintf("collect_garbage(%d) end", last_gen);
 }
 
 /* This is called by Lisp PURIFY when it is finished. All live objects

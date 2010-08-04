@@ -938,7 +938,6 @@ interrupt_handle_pending(os_context_t *context)
       && SymbolValue(INTERRUPT_PENDING, thread) != NIL) {
     void check_pending_interrupts();
     
-    odprintf("INTERRUPTS_ENABLED && INTERRUPT_PENDING");
     check_pending_interrupts();
   }
   #endif

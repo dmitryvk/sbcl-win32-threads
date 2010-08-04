@@ -150,7 +150,6 @@ void alloc_gc_page()
   void* addr = VirtualAlloc(GC_SAFEPOINT_PAGE_ADDR, 4, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
   if (!addr) {
     DWORD lastError = GetLastError();
-    odprintf("in alloc_gc_page, VirtualAlloc returned NULL with error 0x%p", (int)lastError);
     lose("in alloc_gc_page, VirtualAlloc returned NULL");
   }
 }
@@ -158,10 +157,8 @@ void alloc_gc_page()
 void map_gc_page()
 {
   DWORD oldProt;
-  odprintf("Mapping gc page");
   if (!VirtualProtect(GC_SAFEPOINT_PAGE_ADDR, 4, PAGE_READWRITE, &oldProt)) {
     DWORD lastError = GetLastError();
-    odprintf("in map_gc_page, VirtualProtect returned FALSE with error 0x%p", (int)lastError);
     lose("in map_gc_page, VirtualProtect returned FALSE");
   }
 }
@@ -169,10 +166,8 @@ void map_gc_page()
 void unmap_gc_page()
 {
   DWORD oldProt;
-  odprintf("Unmapping gc page");
   if (!VirtualProtect(GC_SAFEPOINT_PAGE_ADDR, 4, PAGE_NOACCESS, &oldProt)) {
     DWORD lastError = GetLastError();
-    odprintf("in unmap_gc_page, VirtualProtect returned FALSE with error 0x%p", (int)lastError);
     lose("in unmap_gc_page, VirtualProtect returned FALSE");
   }
 }
@@ -411,9 +406,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
 #if defined(LISP_FEATURE_SB_THREAD)
     struct thread * self = arch_os_get_current_thread();
     os_context_t ctx;
-    //odprintf("Entering handle_exception (EIP = 0x%p)", (void*)context->Eip);
     ctx.win32_context = context;
-    bind_variable(GC_SAFE, NIL, self);
     pthread_sigmask(SIG_SETMASK, NULL, &ctx.sigmask);
     pthread_sigmask(SIG_BLOCK, &blockable_sigset, NULL);
 #endif
@@ -421,15 +414,14 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         /* If we're being unwound, be graceful about it. */
 
 #if defined(LISP_FEATURE_SB_THREAD)
-        //odprintf(" it is an unwind");
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
 #endif
         /* Undo any dynamic bindings, including *gc-safe*. */
         unbind_to_here(exception_frame->bindstack_pointer,
                        arch_os_get_current_thread());
 #if defined(LISP_FEATURE_SB_THREAD)
+        pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
         gc_safepoint();
-        //odprintf("Leaving handle_exception");
 #endif
         return ExceptionContinueSearch;
     }
@@ -442,11 +434,9 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         /* We are doing a displaced instruction. At least function
          * end breakpoints uses this. */
         #if defined(LISP_FEATURE_SB_THREAD)
-        //odprintf(" it is a single step");
         restore_breakpoint_from_single_step(&ctx);
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-        gc_leave_region(self);
-        //odprintf("Leaving handle_exception");
+        gc_safepoint();
         #else
         restore_breakpoint_from_single_step(context);
         #endif
@@ -460,9 +450,6 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     #endif
         unsigned char trap;
         #if defined(LISP_FEATURE_SB_THREAD)
-        //if (suspend_info.suspend && self != suspend_info.gc_thread)
-          //odprintf("Hmmm, gcing and doing handle_trap");
-        //odprintf(" it is a trap");
         #endif
         
         /* This is just for info in case the monitor wants to print an
@@ -486,8 +473,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         trap = *(unsigned char *)(*os_context_pc_addr(&ctx));
         handle_trap(&ctx, trap);
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-        gc_leave_region(self);
-        //odprintf("Leaving handle_exception");
+        gc_safepoint();
         #else
         trap = *(unsigned char *)(*os_context_pc_addr(context));
         handle_trap(context, trap);
@@ -498,9 +484,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     #if defined(LISP_FEATURE_SB_THREAD)
     else if (exception_record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault_address == GC_SAFEPOINT_PAGE_ADDR) {
       pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-      //odprintf(" it is a safepoint");
-      gc_leave_region(self);
-      //odprintf("Leaving handle_exception");
+      gc_safepoint();
       return ExceptionContinueExecution;
     }
     #endif
@@ -510,10 +494,6 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         /* Pick off GC-related memory fault next. */
         MEMORY_BASIC_INFORMATION mem_info;
         
-        #if defined(LISP_FEATURE_SB_THREAD)
-        //odprintf(" it is an access violation with address in lisp heap (0x%p)", fault_address);
-        #endif
-
         if (!VirtualQuery(fault_address, &mem_info, sizeof mem_info)) {
             fprintf(stderr, "VirtualQuery: 0x%lx.\n", GetLastError());
             lose("handle_exception: VirtualQuery failure");
@@ -537,37 +517,24 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                 if (exception_record->ExceptionInformation[0]) {
                     int index = find_page_index(fault_address);
                     if ((index != -1) && (page_table[index].write_protected)) {
-                        #if defined(LISP_FEATURE_SB_THREAD)
-                        //odprintf("1 gencgc_handle_wp_violation(0x%p) begin", fault_address);
-                        #endif
                         gencgc_handle_wp_violation(fault_address);
-                        #if defined(LISP_FEATURE_SB_THREAD)
-                        //odprintf("1 gencgc_handle_wp_violation(0x%p) end", fault_address);
-                        #endif
                     }
                 }
                 #if defined(LISP_FEATURE_SB_THREAD)
                 pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-                gc_leave_region(self);
-                //odprintf("Leaving handle_exception");
+                gc_safepoint();
                 #endif
                 return ExceptionContinueExecution;
             }
 
         #if defined(LISP_FEATURE_SB_THREAD)
         } else {
-            //if (suspend_info.suspend && self != suspend_info.gc_thread)
-              //odprintf("Hmmm, gcing = 1, doing gencgc_handle_wp_violation");
-            //odprintf("2 gencgc_handle_wp_violation(0x%p) begin", fault_address);
             if (gencgc_handle_wp_violation(fault_address)) {
-              //odprintf("2 gencgc_handle_wp_violation(0x%p) end T", fault_address);
               pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-              gc_leave_region(self);
-              //odprintf("Leaving handle_exception");
+              gc_safepoint();
               /* gc accepts the wp violation, so resume where we left off. */
               return ExceptionContinueExecution;
           }
-          //odprintf("2 gencgc_handle_wp_violation(0x%p) end nil", fault_address);
         }
         #else
         } else if (gencgc_handle_wp_violation(fault_address)) {
@@ -597,7 +564,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
 
         #if defined(LISP_FEATURE_SB_THREAD)
         fake_foreign_function_call(&ctx);
-
+        
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
 
         /* Allocate the SAP objects while the "interrupts" are still
@@ -624,10 +591,10 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         /* If Lisp doesn't nlx, we need to put things back. */
         #if defined(LISP_FEATURE_SB_THREAD)
         undo_fake_foreign_function_call(&ctx);
-        gc_leave_region(self);
         #else
         undo_fake_foreign_function_call(context);
         #endif
+        gc_safepoint();
 
         /* FIXME: HANDLE-WIN32-EXCEPTION should be allowed to decline */
         return ExceptionContinueExecution;
@@ -656,10 +623,10 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     #endif
     lose("Exception too early in cold init, cannot continue.");
 
-    #if defined(LISP_FEATURE_SB_THREAD)
     /* FIXME: WTF? How are we supposed to end up here? */
+    #if defined(LISP_FEATURE_SB_THREAD)
     pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
-    gc_leave_region(self);
+    gc_safepoint();
     #endif
     return ExceptionContinueSearch;
 }
@@ -810,7 +777,6 @@ socket_input_available(HANDLE socket)
 
   if (err == 0) {
     ret = (count > 0) ? 1 : 2;
-    odprintf("socket_input_available(0x%p) => %d", socket, ret);
   } else
     ret = 0;
   
@@ -837,14 +803,10 @@ int win32_unix_write(int fd, void * buf, int count)
 {
   HANDLE handle;
   DWORD written_bytes;
-  odprintf("write(%d, 0x%p, %d)", fd, buf, count);
   handle = _get_osfhandle(fd);
-  odprintf("handle = 0x%p", handle);
   if (WriteFile(handle, buf, count, &written_bytes, NULL)) {
-    odprintf("write(%d, 0x%p, %d) wrote %d bytes", fd, buf, count, written_bytes);
     return written_bytes;
   } else {
-    odprintf("write(%d, 0x%p, %d) failed", fd, buf, count);
     return -1;
   }
 }
@@ -853,20 +815,14 @@ int win32_unix_read(int fd, void * buf, int count)
 {
   HANDLE handle;
   DWORD read_bytes;
-  odprintf("read(%d, 0x%p, %d)", fd, buf, count);
   handle = _get_osfhandle(fd);
-  odprintf("handle = 0x%p", handle);
   if (get_fionread(handle) >= 0) {
-    odprintf("0x%p is a socket, doing busy-loop", handle);
     while (get_fionread(handle) == 0) Sleep(100);
-    odprintf("socket 0x%p now has %ld bytes to read, doing ReadFile", get_fionread(handle));
   }
   if (ReadFile(handle, buf, count, &read_bytes, NULL)) {
-    odprintf("read(%d, 0x%p, %d) read %d bytes", fd, buf, count, read_bytes);
     FlushFileBuffers(handle);
     return read_bytes;
   } else {
-    odprintf("read(%d, 0x%p, %d) failed", fd, buf, count);
     return -1;
   }
 }

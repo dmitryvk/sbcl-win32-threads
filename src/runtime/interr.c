@@ -58,9 +58,6 @@ void print_message(char *fmt, va_list ap)
     fprintf(stderr, " in SBCL pid %d",getpid());
 #if defined(LISP_FEATURE_SB_THREAD)
     fprintf(stderr, "(tid %lu)", (unsigned long) thread_self());
-    #if defined(LISP_FEATURE_WIN32)
-    odprintf("lose");
-    #endif
 #endif
     if (fmt) {
         fprintf(stderr, ":\n");
@@ -89,15 +86,6 @@ lose(char *fmt, ...)
     /* Block signals to prevent other threads, timers and such from
      * interfering. If only all threads could be stopped somehow. */
     block_blockable_signals(0, 0);
-    #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
-    {
-      char buf[1000];
-      va_start(ap, fmt);
-      vsprintf(buf, fmt, ap);
-      va_end(ap);
-      odprintf("lose: %s", buf);
-    }
-    #endif
     fprintf(stderr, "fatal error encountered");
     va_start(ap, fmt);
     print_message(fmt, ap);
