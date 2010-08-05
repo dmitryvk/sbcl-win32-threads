@@ -505,7 +505,6 @@ create_thread_struct(lispobj initial_function) {
 #endif
 #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     bind_variable(GC_SAFE,NIL,th);
-    bind_variable(IN_GC,NIL,th);
 #endif
 
     th->interrupt_data = (struct interrupt_data *)
