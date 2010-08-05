@@ -757,9 +757,9 @@ void check_pending_gc()
 			sigset_t sigset;
 			get_current_sigmask(&sigset);
 			if (sigismember(&sigset, SIG_STOP_FOR_GC)) return;
-      SetSymbolValue(GC_PENDING, NIL, self);
-			maybe_gc(NULL);
 		}
+    SetSymbolValue(GC_PENDING, NIL, self);
+    maybe_gc(NULL);
   }
 }
 
