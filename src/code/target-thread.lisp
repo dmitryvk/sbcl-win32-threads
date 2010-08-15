@@ -362,6 +362,7 @@ HOLDING-MUTEX-P."
   "Deprecated in favor of GRAB-MUTEX."
   (declare (type mutex mutex) (optimize (speed 3))
            #!-sb-thread (ignore waitp timeout))
+  (let ((sb!impl::*disable-safepoints* t))
   (unless new-owner
     (setq new-owner *current-thread*))
   (let ((old (mutex-%owner mutex)))
@@ -435,7 +436,7 @@ HOLDING-MUTEX-P."
                  (bug "Old owner in free mutex: ~S" prev))
                t))
             (waitp
-             (bug "Failed to acquire lock with WAITP."))))))
+             (bug "Failed to acquire lock with WAITP.")))))))
 
 (defun grab-mutex (mutex &key (waitp t) (timeout nil))
   #!+sb-doc
@@ -493,6 +494,7 @@ IF-NOT-OWNER is :FORCE)."
   (declare (type mutex mutex))
   ;; Order matters: set owner to NIL before releasing state.
   (let* ((self *current-thread*)
+         (sb!impl::*disable-safepoints* t)
          (old-owner (sb!ext:compare-and-swap (mutex-%owner mutex) self nil)))
     (unless (eql self old-owner)
       (ecase if-not-owner
@@ -559,6 +561,7 @@ time we reacquire MUTEX and return to the caller.
 Note that if CONDITION-WAIT unwinds (due to eg. a timeout) instead of
 returning normally, it may do so without holding the mutex."
   #!-sb-thread (declare (ignore queue))
+  (let ((sb!impl::*disable-safepoints* t))
   (assert mutex)
   #!-sb-thread (error "Not supported in unithread builds.")
   #!+sb-thread
@@ -627,7 +630,7 @@ returning normally, it may do so without holding the mutex."
             ((2))
             ;; EWOULDBLOCK, -1 here, is the possible spurious wakeup
             ;; case. 0 is the normal wakeup.
-            (otherwise (return))))))))
+            (otherwise (return)))))))))
 
 (defun condition-notify (queue &optional (n 1))
   #!+sb-doc
@@ -638,6 +641,7 @@ this call."
   #!-sb-thread (error "Not supported in unithread builds.")
   #!+sb-thread
   (declare (type (and fixnum (integer 1)) n))
+  (let ((sb!impl::*disable-safepoints* t))
   (/show0 "Entering CONDITION-NOTIFY")
   #!+sb-thread
   (progn
@@ -656,7 +660,7 @@ this call."
     (progn
       (setf (waitqueue-token queue) queue)
       (with-pinned-objects (queue)
-        (futex-wake (waitqueue-token-address queue) n)))))
+        (futex-wake (waitqueue-token-address queue) n))))))
 
 (defun condition-broadcast (queue)
   #!+sb-doc
