@@ -40,6 +40,10 @@
                   *interrupt-pending*
                   #!+(and win32 sb-thread)
                   *gc-safe*
+                  #!+(and win32 sb-thread)
+                  *in-safepoint*
+                  #!+(and win32 sb-thread)
+                  *disable-safepoints*
                   *free-interrupt-context-index*
                   sb!kernel::*gc-epoch*
                   sb!vm::*unwind-to-frame-function*

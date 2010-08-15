@@ -65,6 +65,8 @@
     #!-sb-thread
     *stepping*
     #!+(and win32 sb-thread) sb!impl::*gc-safe*
+    #!+(and win32 sb-thread) sb!impl::*in-safepoint*
+    #!+(and win32 sb-thread) sb!impl::*disable-safepoints*
 
     ;; Dispatch tables for generic array access
     sb!impl::*data-vector-reffers*
