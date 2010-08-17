@@ -823,29 +823,43 @@ socket_input_available(HANDLE socket)
   return ret;
 }
 
-long
-get_fionread(HANDLE socket)
-{
-  unsigned long count = 0, count_size = 0;
-
-  int err = WSAIoctl(socket, FIONREAD, NULL, 0, &count, sizeof(count), &count_size, NULL, NULL);
-  
-  int ret;
-
-  if (err == 0) {
-    return (long)count;
-  } else {
-    return -1;
-  }
-}
-
 int win32_unix_write(int fd, void * buf, int count)
 {
   HANDLE handle;
   DWORD written_bytes;
+  WSABUF buffers;
+  WSAOVERLAPPED overlapped;
+  DWORD flags;
+  int so_type;
+  int cb_so_type = sizeof(so_type);
+
   odprintf("write(%d, 0x%p, %d)", fd, buf, count);
   handle = _get_osfhandle(fd);
   odprintf("handle = 0x%p", handle);
+
+  if (getsockopt(handle,SOL_SOCKET,SO_TYPE,(char*)&so_type,&cb_so_type)==0) {
+    int result;
+    odprintf("0x%p is a socket, doing send()", handle);
+    buffers.len = count;
+    buffers.buf = buf;
+    overlapped.hEvent = CreateEvent(NULL,FALSE,FALSE,NULL);
+    if (WSASend(handle,&buffers,1,NULL,0,&overlapped,NULL)==SOCKET_ERROR
+        && (WSAGetLastError()!=WSA_IO_PENDING)) {
+      odprintf("0x%p overlapped write WSA error: %d", handle, WSAGetLastError());
+      result = -1;
+    } else {
+      if(WSAGetOverlappedResult(handle,&overlapped,&written_bytes,TRUE,&flags)) {
+        result = written_bytes;
+      } else {
+        odprintf("0x%p WSAGetOverlappedResult error: %d", handle, WSAGetLastError());
+        result = -1;
+      }
+    }
+    CloseHandle(overlapped.hEvent);
+    return result;
+    /* return send(handle,buf,count,0); */
+  }
+
   if (WriteFile(handle, buf, count, &written_bytes, NULL)) {
     odprintf("write(%d, 0x%p, %d) wrote %d bytes", fd, buf, count, written_bytes);
     return written_bytes;
@@ -858,21 +872,50 @@ int win32_unix_write(int fd, void * buf, int count)
 int win32_unix_read(int fd, void * buf, int count)
 {
   HANDLE handle;
+  WSABUF buffers;
+  WSAOVERLAPPED overlapped;
+  DWORD flags;
+  int available;
   DWORD read_bytes;
+
   odprintf("read(%d, 0x%p, %d)", fd, buf, count);
   handle = _get_osfhandle(fd);
   odprintf("handle = 0x%p", handle);
-  if (get_fionread(handle) >= 0) {
-    odprintf("0x%p is a socket, doing busy-loop", handle);
-    while (get_fionread(handle) == 0) Sleep(100);
-    odprintf("socket 0x%p now has %ld bytes to read, doing ReadFile", get_fionread(handle));
+  /* despite its name, socket_input_available returns 0 for nonsockets */
+  available = socket_input_available(handle);
+  if (available!=0) {
+    odprintf("0x%p is a socket, doing recv()", handle);
+    if (available==2) {
+      /* it would block. use overlapped I/O so other thread writers aren't blocked */
+      int result;
+      buffers.len = count;
+      buffers.buf = buf;
+      overlapped.hEvent = CreateEvent(NULL,FALSE,FALSE,NULL);
+      flags = 0;
+      if (WSARecv(handle,&buffers,1,NULL,&flags,&overlapped,NULL)==SOCKET_ERROR
+          && (WSAGetLastError()!=WSA_IO_PENDING)) {
+        odprintf("0x%p overlapped read WSA error: %d", handle, WSAGetLastError());
+        result = -1;
+      } else {
+        if(WSAGetOverlappedResult(handle,&overlapped,&read_bytes,TRUE,&flags)) {
+          result = read_bytes;
+        } else {
+          odprintf("0x%p WSAGetOverlappedResult error: %d", handle, WSAGetLastError());
+          result = -1;
+        }
+      }
+      CloseHandle(overlapped.hEvent);
+      return result;
+    } else {
+      /* winsock needs handle and not fd. beware. */
+      return recv(handle,buf,count,0);
+    }
   }
   if (ReadFile(handle, buf, count, &read_bytes, NULL)) {
-    odprintf("read(%d, 0x%p, %d) read %d bytes", fd, buf, count, read_bytes);
-    FlushFileBuffers(handle);
+    odprintf("ReadFile(%d, 0x%p, %d) read %d bytes", fd, buf, count, read_bytes);
     return read_bytes;
   } else {
-    odprintf("read(%d, 0x%p, %d) failed", fd, buf, count);
+    odprintf("ReadFile(%d, 0x%p, %d) failed", fd, buf, count);
     return -1;
   }
 }
