@@ -256,6 +256,48 @@ int pthread_mutex_init(pthread_mutex_t * mutex, const pthread_mutexattr_t * attr
   return 0;
 }
 
+int pthread_mutexattr_init(pthread_mutexattr_t* attr)
+{
+  return 0;
+}
+int pthread_mutexattr_destroy(pthread_mutexattr_t* attr)
+{
+  return 0;
+}
+
+int pthread_mutexattr_settype(pthread_mutexattr_t* attr,int mutex_type)
+{
+  return 0;
+}
+
+int pthread_mutexattr_init(pthread_mutexattr_t* attr)
+{
+  return 0;
+}
+int pthread_mutexattr_destroy(pthread_mutexattr_t* attr)
+{
+  return 0;
+}
+
+int pthread_mutexattr_settype(pthread_mutexattr_t* attr,int mutex_type)
+{
+  return 0;
+}
+
+int pthread_mutexattr_init(pthread_mutexattr_t* attr)
+{
+  return 0;
+}
+int pthread_mutexattr_destroy(pthread_mutexattr_t* attr)
+{
+  return 0;
+}
+
+int pthread_mutexattr_settype(pthread_mutexattr_t* attr,int mutex_type)
+{
+  return 0;
+}
+
 int pthread_mutex_destroy(pthread_mutex_t *mutex)
 {
   if (*mutex != PTHREAD_MUTEX_INITIALIZER)
