@@ -828,8 +828,10 @@ int thread_may_gc();
 void gc_enter_safe_region()
 {
   struct thread * self = arch_os_get_current_thread();
+  int wsaError = WSAGetLastError();
   bind_variable(GC_SAFE, thread_may_gc() ? T : NIL, self);
   gc_safepoint();
+  WSASetLastError(wsaError);
 }
 
 void gc_enter_unsafe_region()
