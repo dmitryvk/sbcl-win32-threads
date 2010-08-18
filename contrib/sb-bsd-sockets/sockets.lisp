@@ -435,7 +435,9 @@ and get an output stream in response\)."
                        (socket-error-syscall c)
                        (or (socket-error-symbol c) (socket-error-errno c))
                        #+cmu (sb-unix:get-unix-error-msg num)
-                       #+sbcl (sb-int:strerror num)))))
+		       #+sbcl
+		       #+win32 (sb-win32::get-last-error-message num)
+		       #-win32 (sb-int:strerror num)))))
   (:documentation "Common base class of socket related conditions."))
 
 ;;; watch out for slightly hacky symbol punning: we use both the value
