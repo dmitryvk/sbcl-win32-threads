@@ -26,6 +26,8 @@ protocol. Other values are used as-is.")
    (type  :initarg :type
           :reader socket-type
           :documentation "Type of the socket: :STREAM or :DATAGRAM.")
+   #+win32 
+   (non-blocking-p :type (member t nil) :initform nil)
    (stream))
   (:documentation "Common base class of all sockets, not meant to be
 directly instantiated.")))
