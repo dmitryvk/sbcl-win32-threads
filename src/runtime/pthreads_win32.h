@@ -171,6 +171,7 @@ typedef struct pthread_thread {
   pthread_cond_t cond;
   int detached;
   pthread_thread_state state;
+  HANDLE private_events[2];
 } pthread_thread;
 
 void pthread_np_pending_signal_handler(int signum);

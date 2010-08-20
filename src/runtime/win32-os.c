@@ -77,12 +77,14 @@ int linux_supports_futex=0;
 void odprint(const char * msg)
 {
   char buf[1024];
+  int oldWsaError = WSAGetLastError();
   #if defined(LISP_FEATURE_SB_THREAD)
   sprintf(buf, "[0x%p] %s\n", pthread_self(), msg);
   OutputDebugString(buf);
   #else
   OutputDebugString(msg);
   #endif
+  WSASetLastError(oldWsaError);
 }
 
 void odprintf(const char * fmt, ...)
@@ -407,7 +409,7 @@ void gc_enter_safe_region();
 void gc_enter_unsafe_region();
 void gc_leave_region();
 #endif
- 
+
 EXCEPTION_DISPOSITION
 handle_exception(EXCEPTION_RECORD *exception_record,
                  struct lisp_exception_frame *exception_frame,
@@ -470,7 +472,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
           //odprintf("Hmmm, gcing and doing handle_trap");
         //odprintf(" it is a trap");
         #endif
-        
+
         /* This is just for info in case the monitor wants to print an
          * approximation. */
         current_control_stack_pointer =
@@ -515,7 +517,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
               is_linkage_table_addr(fault_address))) {
         /* Pick off GC-related memory fault next. */
         MEMORY_BASIC_INFORMATION mem_info;
-        
+
         #if defined(LISP_FEATURE_SB_THREAD)
         //odprintf(" it is an access violation with address in lisp heap (0x%p)", fault_address);
         #endif
@@ -809,9 +811,10 @@ int
 socket_input_available(HANDLE socket)
 {
   unsigned long count = 0, count_size = 0;
+  int wsaErrno = WSAGetLastError();
+  int err = WSAIoctl((SOCKET)socket, FIONREAD, NULL, 0,
+                     &count, sizeof(count), &count_size, NULL, NULL);
 
-  int err = WSAIoctl(socket, FIONREAD, NULL, 0, &count, sizeof(count), &count_size, NULL, NULL);
-  
   int ret;
 
   if (err == 0) {
@@ -819,104 +822,128 @@ socket_input_available(HANDLE socket)
     odprintf("socket_input_available(0x%p) => %d", socket, ret);
   } else
     ret = 0;
-  
+  WSASetLastError(wsaErrno);
   return ret;
+}
+
+static BOOL seekable_p(HANDLE handle)
+{
+  LARGE_INTEGER position = {{0}};
+  return SetFilePointerEx(handle,position,NULL,FILE_CURRENT);
 }
 
 int win32_unix_write(int fd, void * buf, int count)
 {
   HANDLE handle;
   DWORD written_bytes;
-  WSABUF buffers;
-  WSAOVERLAPPED overlapped;
-  DWORD flags;
-  int so_type;
-  int cb_so_type = sizeof(so_type);
+  OVERLAPPED overlapped;
+  pthread_t me = pthread_self();
+  BOOL synchronous;
+  BOOL waitInGOR;
 
   odprintf("write(%d, 0x%p, %d)", fd, buf, count);
-  handle = _get_osfhandle(fd);
+  handle =(HANDLE)_get_osfhandle(fd);
+  synchronous = seekable_p(handle);
   odprintf("handle = 0x%p", handle);
+  /* let's not try to distinguish sockets/console/whatever.. */
+  /* win32_prepare_position(handle, &overlapped); */
+  overlapped.hEvent = me->private_events[0];
 
-  if (getsockopt(handle,SOL_SOCKET,SO_TYPE,(char*)&so_type,&cb_so_type)==0) {
-    int result;
-    odprintf("0x%p is a socket, doing send()", handle);
-    buffers.len = count;
-    buffers.buf = buf;
-    overlapped.hEvent = CreateEvent(NULL,FALSE,FALSE,NULL);
-    if (WSASend(handle,&buffers,1,NULL,0,&overlapped,NULL)==SOCKET_ERROR
-        && (WSAGetLastError()!=WSA_IO_PENDING)) {
-      odprintf("0x%p overlapped write WSA error: %d", handle, WSAGetLastError());
-      result = -1;
-    } else {
-      if(WSAGetOverlappedResult(handle,&overlapped,&written_bytes,TRUE,&flags)) {
-        result = written_bytes;
-      } else {
-        odprintf("0x%p WSAGetOverlappedResult error: %d", handle, WSAGetLastError());
-        result = -1;
-      }
-    }
-    CloseHandle(overlapped.hEvent);
-    return result;
-    /* return send(handle,buf,count,0); */
-  }
-
-  if (WriteFile(handle, buf, count, &written_bytes, NULL)) {
-    odprintf("write(%d, 0x%p, %d) wrote %d bytes", fd, buf, count, written_bytes);
+  if (WriteFile(handle, buf, count, &written_bytes,
+                synchronous ? NULL : &overlapped)) {
+    odprintf("write(%d, 0x%p, %d) immeditately wrote %d bytes",
+             fd, buf, count, written_bytes);
+    /* win32_commit_position(handle,&overlapped); */
     return written_bytes;
   } else {
-    odprintf("write(%d, 0x%p, %d) failed", fd, buf, count);
-    return -1;
+    if (GetLastError()!=ERROR_IO_PENDING) {
+      errno = EIO;
+      return -1;
+    } else {
+      if(WaitForMultipleObjects(2,me->private_events,
+                                   FALSE,INFINITE) != WAIT_OBJECT_0) {
+        /* Something happened. Interrupt? */
+        odprintf("write(%d, 0x%p, %d) EINTR",fd,buf,count);
+        CancelIo(handle);
+        waitInGOR = TRUE;
+      } else {
+        waitInGOR = FALSE;
+      }
+      /* win32_commit_position(handle,&overlapped); */
+      if (!GetOverlappedResult(handle,&overlapped,&written_bytes,waitInGOR)) {
+        if (GetLastError()==ERROR_OPERATION_ABORTED) {
+          errno = EINTR;
+        } else {
+          errno = EIO;
+        }
+        return -1;
+      } else {
+        return written_bytes;
+      }
+    }
   }
 }
 
 int win32_unix_read(int fd, void * buf, int count)
 {
   HANDLE handle;
-  WSABUF buffers;
-  WSAOVERLAPPED overlapped;
-  DWORD flags;
-  int available;
+  OVERLAPPED overlapped;
   DWORD read_bytes;
+  pthread_t me = pthread_self();
+  DWORD errorCode;
+  BOOL synchronous;
+  BOOL waitInGOR;
 
   odprintf("read(%d, 0x%p, %d)", fd, buf, count);
-  handle = _get_osfhandle(fd);
+  handle = (HANDLE)_get_osfhandle(fd);
   odprintf("handle = 0x%p", handle);
-  /* despite its name, socket_input_available returns 0 for nonsockets */
-  available = socket_input_available(handle);
-  if (available!=0) {
-    odprintf("0x%p is a socket, doing recv()", handle);
-    if (available==2) {
-      /* it would block. use overlapped I/O so other thread writers aren't blocked */
-      int result;
-      buffers.len = count;
-      buffers.buf = buf;
-      overlapped.hEvent = CreateEvent(NULL,FALSE,FALSE,NULL);
-      flags = 0;
-      if (WSARecv(handle,&buffers,1,NULL,&flags,&overlapped,NULL)==SOCKET_ERROR
-          && (WSAGetLastError()!=WSA_IO_PENDING)) {
-        odprintf("0x%p overlapped read WSA error: %d", handle, WSAGetLastError());
-        result = -1;
-      } else {
-        if(WSAGetOverlappedResult(handle,&overlapped,&read_bytes,TRUE,&flags)) {
-          result = read_bytes;
-        } else {
-          odprintf("0x%p WSAGetOverlappedResult error: %d", handle, WSAGetLastError());
-          result = -1;
-        }
-      }
-      CloseHandle(overlapped.hEvent);
-      return result;
-    } else {
-      /* winsock needs handle and not fd. beware. */
-      return recv(handle,buf,count,0);
-    }
-  }
-  if (ReadFile(handle, buf, count, &read_bytes, NULL)) {
-    odprintf("ReadFile(%d, 0x%p, %d) read %d bytes", fd, buf, count, read_bytes);
+  overlapped.hEvent = me->private_events[0];
+  /* If it has a position, we won't try overlapped */
+  synchronous = seekable_p(handle);
+
+  if (ReadFile(handle,buf,count,&read_bytes,
+               synchronous? NULL:&overlapped)) {
+    /* immediately */
+    /* win32_commit_position(handle,&overlapped); */
     return read_bytes;
   } else {
-    odprintf("ReadFile(%d, 0x%p, %d) failed", fd, buf, count);
-    return -1;
+    errorCode = GetLastError();
+    if (errorCode == ERROR_HANDLE_EOF) {
+      /* it is an `error' for positioned reads! oh wtf */
+      return read_bytes;
+    }
+    if (errorCode!=ERROR_IO_PENDING) {
+      /* is it some _real_ error? */
+      errno = EIO;
+      return -1;
+    } else {
+      if(WaitForMultipleObjects(2,me->private_events,
+                                FALSE,INFINITE) != WAIT_OBJECT_0) {
+        /* Something happened. Interrupt? */
+        odprintf("read(%d, 0x%p, %d) EINTR",fd,buf,count);
+        CancelIo(handle);
+        waitInGOR = TRUE;
+        /* Waiting for IO only */
+      } else {
+        waitInGOR = FALSE;
+      }
+      /* win32_commit_position(handle,&overlapped); */
+      if (!GetOverlappedResult(handle,&overlapped,&read_bytes,waitInGOR)) {
+        errorCode = GetLastError();
+        if (errorCode == ERROR_HANDLE_EOF) {
+          return read_bytes;
+        } else {
+          if (errorCode == ERROR_OPERATION_ABORTED) {
+            errno = EINTR;      /* that's it. */
+          } else {
+            errno = EIO;        /* something unspecific */
+          }
+          return -1;
+        }
+      } else {
+        return read_bytes;
+      }
+    }
   }
 }
 

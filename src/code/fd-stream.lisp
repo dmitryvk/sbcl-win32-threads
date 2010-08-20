@@ -1031,10 +1031,9 @@
                 (setf (values count errno)
                       (sb!unix:unix-read fd (sap+ sap tail) (- length tail)))
                 (cond ((null count)
-                       #!+win32
-                       (return :read-error)
-                       #!-win32
-                       (if (eql errno sb!unix:ewouldblock)
+		       (if (eql errno
+                                #!+win32 sb!unix:eintr
+                                #!-win32 sb!unix:ewouldblock)
                            (return :wait-for-input)
                            (return :read-error)))
                       ((zerop count)
