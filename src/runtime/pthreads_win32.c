@@ -568,12 +568,17 @@ void pthread_unlock_structures()
 void pthreads_win32_init()
 {
   pthread_t pth = (pthread_t)malloc(sizeof(pthread_thread));
+  unsigned int nEvent;
   thread_self_tls_index = TlsAlloc();
   pth->start_routine = NULL;
   pth->arg = NULL;
   pth->uninterruptible_section_nesting = 0;
   pth->waiting_cond = NULL;
   pth->in_safepoint = 0;
+  for (nEvent = 0; nEvent<sizeof(self->private_events)/
+         sizeof(self->private_events[0]); ++nEvent) {
+    pth->private_events[nEvent] = CreateEvent(NULL,FALSE,FALSE,NULL);
+  }
   sigemptyset(&pth->blocked_signal_set);
   {
     int i;
