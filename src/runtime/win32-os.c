@@ -84,14 +84,16 @@ void odprint(const char * msg)
   OutputDebugString(msg);
   #endif
 }
+const char * t_nil_s(lispobj symbol);
 
 void odprintf(const char * fmt, ...)
 {
   char buf[1024];
   va_list args;
   int n;
+  struct thread * self = arch_os_get_current_thread();
   #if defined(LISP_FEATURE_SB_THREAD)
-  sprintf(buf, "[0x%p] ", pthread_self());
+  sprintf(buf, "[0x%p] %s, %s, %s, %s ", pthread_self(), t_nil_s(GC_SAFE), t_nil_s(GC_INHIBIT), t_nil_s(INTERRUPTS_ENABLED), t_nil_s(IN_SAFEPOINT));
   #else
   buf[0] = 0;
   #endif
@@ -409,7 +411,10 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     ctx.win32_context = context;
     pthread_sigmask(SIG_SETMASK, NULL, &ctx.sigmask);
     pthread_sigmask(SIG_BLOCK, &blockable_sigset, NULL);
+    /* For EXCEPTION_ACCESS_VIOLATION only. */
+    void *fault_address = (void *)exception_record->ExceptionInformation[1];
 #endif
+    odprintf("handle exception, EIP = 0x%p, code = 0x%p (addr = 0x%p)", context->Eip, exception_record->ExceptionCode, fault_address);
     if (exception_record->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND)) {
         /* If we're being unwound, be graceful about it. */
 
@@ -426,8 +431,6 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         return ExceptionContinueSearch;
     }
 
-    /* For EXCEPTION_ACCESS_VIOLATION only. */
-    void *fault_address = (void *)exception_record->ExceptionInformation[1];
 
     if (single_stepping &&
         exception_record->ExceptionCode == EXCEPTION_SINGLE_STEP) {

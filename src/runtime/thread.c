@@ -700,18 +700,47 @@ const char * t_nil_str(lispobj value)
 	return "?";
 }
 
+void lock_suspend_info(const char * file, int line)
+{
+  odprintf("locking suspend_info.lock (%s:%d)", file, line);
+  pthread_mutex_lock(&suspend_info.lock);
+  odprintf("locked suspend_info.lock (%s:%d)", file, line);
+}
+
+void unlock_suspend_info(const char * file, int line)
+{
+  odprintf("unlocking suspend_info.lock (%s:%d)", file, line);
+  pthread_mutex_unlock(&suspend_info.lock);
+}
+
+void odmutex(int kind, void * mutex)
+{
+  switch (kind)
+  {
+    case 0: odprintf("get-mutex 0x%p starts", mutex); break;
+    case 1: odprintf("get-mutex 0x%p ends", mutex); break;
+    case 2: odprintf("release-mutex 0x%p starts", mutex); break;
+    case 3: odprintf("release-mutex 0x%p ends", mutex); break;
+    case 4: odprintf("get-mutex 0x%p recursive lock", mutex); break;
+    case 5: odprintf("get-mutex 0x%p Old owner in free mutex:", mutex); break;
+    case 6: odprintf("get-mutex 0x%p Failed to acquire lock with WAITP", mutex); break;
+    case 7: odprintf("get-mutex 0x%p recursive lock", mutex); break;
+    default: odprintf("someting with mutex 0x%p: %d", mutex, kind); break;
+  }
+}
+
 void roll_thread_to_safepoint(struct thread * thread)
 {
   struct thread * p;
   pthread_mutex_lock(&all_threads_lock);
   pthread_mutex_lock(&suspend_info.world_lock);
   
-  pthread_mutex_lock(&suspend_info.lock);
+  lock_suspend_info(__FILE__, __LINE__);
   suspend_info.reason = SUSPEND_REASON_INTERRUPT;
   suspend_info.interrupted_thread = thread;
   suspend_info.phase = 1;
   suspend_info.suspend = 1;
-  pthread_mutex_unlock(&suspend_info.lock);
+  unlock_suspend_info(__FILE__, __LINE__);
   
   unmap_gc_page();
   
@@ -722,9 +751,9 @@ void roll_thread_to_safepoint(struct thread * thread)
   
   map_gc_page();
   
-  pthread_mutex_lock(&suspend_info.lock);
+  lock_suspend_info(__FILE__, __LINE__);
   suspend_info.suspend = 0;
-  pthread_mutex_unlock(&suspend_info.lock);
+  unlock_suspend_info(__FILE__, __LINE__);
   
   for (p = all_threads; p; p = p->next) {
     if (thread_state(p) != STATE_DEAD)
@@ -848,7 +877,7 @@ void safepoint_cycle_state(int state)
 {
   struct thread * self = arch_os_get_current_thread();
   set_thread_state(self, state);
-  pthread_mutex_unlock(&suspend_info.lock);
+  unlock_suspend_info(__FILE__, __LINE__);
   wait_for_thread_state_change(self, state);
 }
 
@@ -862,7 +891,7 @@ void suspend_briefly()
   if (suspend_info.phase == 1 || suspend_info.reason == SUSPEND_REASON_INTERRUPT) {
     safepoint_cycle_state(STATE_SUSPENDED_BRIEFLY);
   } else {
-    pthread_mutex_unlock(&suspend_info.lock);
+    unlock_suspend_info(__FILE__, __LINE__);
   }
 }
 
@@ -922,6 +951,7 @@ void gc_safepoint()
   struct thread * self = arch_os_get_current_thread();
   
   preempt_randomly();
+  odprintf("safepoint begins");
   
   if (!get_pseudo_atomic_atomic(self) && get_pseudo_atomic_interrupted(self))
     clear_pseudo_atomic_interrupted(self);
@@ -931,29 +961,31 @@ void gc_safepoint()
   if (!suspend_info.suspend) {
     check_pending_interrupts();
     SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
+    odprintf("safepoint ends");
     return;
   }
-  pthread_mutex_lock(&suspend_info.lock);
+  lock_suspend_info(__FILE__, __LINE__);
   if (!suspend_info.suspend) {
-    pthread_mutex_unlock(&suspend_info.lock);
+    unlock_suspend_info(__FILE__, __LINE__);
     check_pending_interrupts();
     SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
+    odprintf("safepoint ends");
     return;
   }
   if (suspend_info.reason == SUSPEND_REASON_GCING) {
-    if (self == suspend_info.gc_thread) {
-      pthread_mutex_unlock(&suspend_info.lock);
+    if (suspend_info.gc_thread == self) {
+      unlock_suspend_info(__FILE__, __LINE__);
     } else
     if (thread_may_gc()) {
       suspend();
     } else {
-      pthread_mutex_unlock(&suspend_info.lock);
+      unlock_suspend_info(__FILE__, __LINE__);
       lose("suspend_info.reason = SUSPEND_REASON_GCING, !thread_may_gc()");
     }
   } else
   if (suspend_info.reason == SUSPEND_REASON_GC) {
     if (self == suspend_info.gc_thread) {
-      pthread_mutex_unlock(&suspend_info.lock);
+      unlock_suspend_info(__FILE__, __LINE__);
     } else
     if (suspend_info.phase == 1) {
 			if (thread_may_gc()) {
@@ -970,7 +1002,7 @@ void gc_safepoint()
 				suspend();
 				check_pending_interrupts();
 			} else {
-        pthread_mutex_unlock(&suspend_info.lock);
+        unlock_suspend_info(__FILE__, __LINE__);
       }
 		}
   } else
@@ -987,6 +1019,7 @@ void gc_safepoint()
   } else {
     lose("in gc_safepoint, fell through");
   }
+  odprintf("safepoint ends");
 }
 
 void pthread_np_safepoint()
@@ -1042,6 +1075,17 @@ int thread_in_lisp_code(struct thread *th)
 const char * fn_name(lispobj fn)
 {
   return "unknown";
+}
+
+const char * t_nil_s(lispobj symbol)
+{
+  struct tread * self = arch_os_get_current_thread();
+  return t_nil_str(SymbolValue(symbol, self));
+}
+
+void log_gc_state(const char * msg)
+{
+  odprintf(msg);
 }
 
 #endif

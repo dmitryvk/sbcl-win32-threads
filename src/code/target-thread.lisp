@@ -355,6 +355,15 @@ testing whether the current thread is holding a mutex see
 HOLDING-MUTEX-P."
   ;; Make sure to get the current value.
   (sb!ext:compare-and-swap (mutex-%owner mutex) nil nil))
+  
+(sb!alien:define-alien-routine ("odmutex" %odmutex)
+    sb!alien:void
+  (kind sb!alien:int)
+  (mutex sb!alien:int))
+  
+(defun odmutex (kind mutex)
+  ;(return-from odmutex nil)
+  (when (string= "GC lock" (mutex-name mutex)) (%odmutex kind (get-lisp-obj-address mutex))))
 
 (defun get-mutex (mutex &optional (new-owner *current-thread*)
                                   (waitp t) (timeout nil))
@@ -363,10 +372,12 @@ HOLDING-MUTEX-P."
   (declare (type mutex mutex) (optimize (speed 3))
            #!-sb-thread (ignore waitp timeout))
   (let ((sb!impl::*disable-safepoints* t))
+  (odmutex 0 mutex)
   (unless new-owner
     (setq new-owner *current-thread*))
   (let ((old (mutex-%owner mutex)))
     (when (eq new-owner old)
+      (odmutex 4 mutex)
       (error "Recursive lock attempt ~S." mutex))
     #!-sb-thread
     (when old
@@ -433,9 +444,12 @@ HOLDING-MUTEX-P."
              (let ((prev (sb!ext:compare-and-swap (mutex-%owner mutex)
                                                   nil new-owner)))
                (when prev
+                  (odmutex 5 mutex)
                  (bug "Old owner in free mutex: ~S" prev))
+                (odmutex 1 mutex)
                t))
             (waitp
+              (odmutex 6 mutex)
              (bug "Failed to acquire lock with WAITP.")))))))
 
 (defun grab-mutex (mutex &key (waitp t) (timeout nil))
@@ -496,6 +510,7 @@ IF-NOT-OWNER is :FORCE)."
   (let* ((self *current-thread*)
          (sb!impl::*disable-safepoints* t)
          (old-owner (sb!ext:compare-and-swap (mutex-%owner mutex) self nil)))
+    (odmutex 2 mutex)
     (unless (eql self old-owner)
       (ecase if-not-owner
         ((:punt) (return-from release-mutex nil))
@@ -524,7 +539,9 @@ IF-NOT-OWNER is :FORCE)."
                                    +lock-contested+ +lock-free+)
           (with-pinned-objects (mutex)
             (futex-wake (mutex-state-address mutex) 1))))
-      nil)))
+      nil)
+      (odmutex 3 mutex)
+      nil))
 
 
 ;;;; Waitqueues/condition variables

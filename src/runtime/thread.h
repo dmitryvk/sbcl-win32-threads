@@ -68,6 +68,11 @@ static const char * get_thread_state_string(lispobj state)
   if (state == STATE_SUSPENDED_BRIEFLY) return "SUSPENDED_BRIEFLY";
   return "unknown";
 }
+
+static const char * get_thread_state_as_string(struct thread * thread)
+{
+  return get_thread_state_string(thread_state(thread));
+}
 #endif
 
 static inline void
@@ -79,6 +84,7 @@ set_thread_state(struct thread *thread, lispobj state)
     pthread_mutex_lock(thread->state_lock);
     #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     old_state = thread->state;
+    odprintf("changing thread state of 0x%p from %s to %s", thread->os_thread, get_thread_state_string(old_state), get_thread_state_string(state));
     #endif
     thread->state = state;
     pthread_cond_broadcast(thread->state_cond);
