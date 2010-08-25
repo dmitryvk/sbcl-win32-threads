@@ -226,7 +226,7 @@ run in any thread.")
                      (setf *gc-epoch* (cons nil nil))
                      (incf *gc-run-time*
                            (- (get-internal-run-time) start-time)))
-                   (setf *gc-pending* nil
+                   (setf *gc-pending* nil *stop-for-gc-pending* nil
                          new-usage (dynamic-usage))
                    #!+sb-thread
                    (assert (not *stop-for-gc-pending*))
