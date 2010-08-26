@@ -1016,6 +1016,14 @@ void maybe_ack_gc_poll()
     suspend_briefly();
     SetSymbolValue(STOP_FOR_GC_PENDING, T, self);
     SetSymbolValue(INTERRUPT_PENDING, T, self);
+  } else
+  if (suspend_info.reason == SUSPEND_REASON_INTERRUPT) {
+    if (suspend_info.interrupted_thread == self && thread_may_interrupt()) {
+      suspend();
+      check_pending_interrupts();
+    } else {
+      suspend_briefly();
+    }
   } else {
     unlock_suspend_info(__FILE__, __LINE__);
   }
