@@ -26,7 +26,7 @@
     for i from 0
     for c = (code-char (+ i (char-code #\A)))
     do (odprint "creating thread")
-    do (sb-thread:make-thread (lambda () (cons-lot stream c)))
+    do (let ((c c)) (sb-thread:make-thread (lambda () (cons-lot stream c))))
     do (odprint "created thread")))
 
 #+nil
