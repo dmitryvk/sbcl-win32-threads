@@ -662,6 +662,7 @@ void preempt_randomly()
 // -1 if max interrupts reached
 int schedule_thread_interrupt(struct thread * th, lispobj interrupt_fn)
 {
+  odprintf("schedule_thread_interrupt(0x%p, 0x%p) begin", th->os_thread, interrupt_fn);
   pthread_mutex_lock(&th->interrupt_data->win32_data.lock);
   if (th->interrupt_data->win32_data.interrupts_count == MAX_INTERRUPTS) {
     pthread_mutex_unlock(&th->interrupt_data->win32_data.lock);
@@ -673,6 +674,7 @@ int schedule_thread_interrupt(struct thread * th, lispobj interrupt_fn)
     SetSymbolValue(INTERRUPT_PENDING, T, th);
     return 0;
   }
+  odprintf("schedule_thread_interrupt(0x%p, 0x%p) end", th->os_thread, interrupt_fn);
 }
 
 void gc_stop_the_world();
@@ -732,8 +734,11 @@ void odmutex(int kind, void * mutex)
 void roll_thread_to_safepoint(struct thread * thread)
 {
   struct thread * p;
+  odprintf("roll_thread_to_safepoint(0x%p) begin", thread->os_thread);
   pthread_mutex_lock(&all_threads_lock);
+  odprintf("all_threads_lock taken");
   pthread_mutex_lock(&suspend_info.world_lock);
+  odprintf("world_lock taken");
   
   lock_suspend_info(__FILE__, __LINE__);
   suspend_info.reason = SUSPEND_REASON_INTERRUPT;
@@ -742,18 +747,27 @@ void roll_thread_to_safepoint(struct thread * thread)
   suspend_info.suspend = 1;
   unlock_suspend_info(__FILE__, __LINE__);
   
+  odprintf("unmapping gc page");
+  
   unmap_gc_page();
+  
+  odprintf("unmapped gc page, doing interrupt phase 1");
   
   // Phase 1: Make sure that th is in gc-safe code or noted the need to interrupt
   if (SymbolValue(GC_SAFE, thread) == NIL) {
     wait_for_thread_state_change(thread, STATE_RUNNING);
   }
   
+  odprintf("mapping gc page");
+  
   map_gc_page();
+  
+  odprintf("mapped gc page");
   
   lock_suspend_info(__FILE__, __LINE__);
   suspend_info.suspend = 0;
   unlock_suspend_info(__FILE__, __LINE__);
+  odprintf("mapped gc page, iterating over threads and waking them");
   
   for (p = all_threads; p; p = p->next) {
     if (thread_state(p) != STATE_DEAD)
@@ -762,6 +776,8 @@ void roll_thread_to_safepoint(struct thread * thread)
   
   pthread_mutex_unlock(&suspend_info.world_lock);
   pthread_mutex_unlock(&all_threads_lock);
+  
+  odprintf("roll_thread_to_safepoint(0x%p) end", thread->os_thread);
 }
 
 // returns: 0 if interrupt is queued
@@ -799,14 +815,17 @@ void check_pending_interrupts()
   if (p->interrupt_data->win32_data.interrupts_count == 0) {
     return;
   }
+  odprintf("In check_pending_interrupts, have %d interrupts", p->interrupt_data->win32_data.interrupts_count);
   get_current_sigmask(&sigset);
   if (sigismember(&sigset, SIGHUP)) {
+    odprintf("SIGHUP is blocked, setting INTERRUPT_PENDING");
     SetSymbolValue(INTERRUPT_PENDING, T, p);
     pthread_np_add_pending_signal(p->os_thread, SIGHUP);
     return;
   }
   
   if (SymbolValue(INTERRUPTS_ENABLED, p) == NIL) {
+    odprintf("INTERRUPTS_ENABLED = NIL, setting INTERRUPT_PENDING");
     if (p->interrupt_data->win32_data.interrupts_count > 0) {
       SetSymbolValue(INTERRUPT_PENDING, T, p);
     }
@@ -816,6 +835,7 @@ void check_pending_interrupts()
   while (1) {
     pthread_mutex_lock(&p->interrupt_data->win32_data.lock);
     if (p->interrupt_data->win32_data.interrupts_count > 0) {
+      odprintf("Have %d interrupts", p->interrupt_data->win32_data.interrupts_count);
 			lispobj objs[MAX_INTERRUPTS];
 			int i, n;
 			n = p->interrupt_data->win32_data.interrupts_count;
@@ -827,10 +847,12 @@ void check_pending_interrupts()
       for (i = 0; i < n; ++i) {
 				lispobj fn = objs[i];
 				objs[i] = 0;
+        odprintf("calling interrupt function 0x%p", fn);
 				funcall0(fn);
 				fn = 0;
 			}
     } else {
+      odprintf("No more interrupts", p->interrupt_data->win32_data.interrupts_count);
       SetSymbolValue(INTERRUPT_PENDING, NIL, p);
       pthread_mutex_unlock(&p->interrupt_data->win32_data.lock);
       break;
