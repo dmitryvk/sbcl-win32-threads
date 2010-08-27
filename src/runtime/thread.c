@@ -780,16 +780,23 @@ void roll_thread_to_safepoint(struct thread * thread)
   odprintf("roll_thread_to_safepoint(0x%p) end", thread->os_thread);
 }
 
+void check_pending_interrupts();
+
 // returns: 0 if interrupt is queued
 // -1 if max interrupts reached
 int interrupt_lisp_thread(pthread_t thread, lispobj interrupt_fn)
 {
   struct thread * th = find_thread_by_os_thread(thread);
+  struct thread * self = arch_os_get_current_thread();
   if (schedule_thread_interrupt(th, interrupt_fn) != 0) {
     return -1;
   }
   
-  roll_thread_to_safepoint(th);
+  if (self == th) {
+    check_pending_interrupts();
+  } else {
+    roll_thread_to_safepoint(th);
+  }
   
   return 0;
 }
@@ -831,6 +838,7 @@ void check_pending_interrupts()
     }
     return;
   }
+  SetSymbolValue(INTERRUPT_PENDING, NIL, p);
   
   while (1) {
     pthread_mutex_lock(&p->interrupt_data->win32_data.lock);
@@ -853,7 +861,6 @@ void check_pending_interrupts()
 			}
     } else {
       odprintf("No more interrupts", p->interrupt_data->win32_data.interrupts_count);
-      SetSymbolValue(INTERRUPT_PENDING, NIL, p);
       pthread_mutex_unlock(&p->interrupt_data->win32_data.lock);
       break;
     }
@@ -1104,20 +1111,21 @@ void gc_safepoint()
   preempt_randomly();
   
   bind_variable(IN_SAFEPOINT, T, self);
+  int bound = 1;
   
   if (!suspend_info.suspend) {
+    unbind_variable(IN_SAFEPOINT, self);
     check_pending_interrupts();
     SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
-    unbind_variable(IN_SAFEPOINT, self);
     odprintf("safepoint ends");
     return;
   }
   lock_suspend_info(__FILE__, __LINE__);
   if (!suspend_info.suspend) {
     unlock_suspend_info(__FILE__, __LINE__);
+    unbind_variable(IN_SAFEPOINT, self);
     check_pending_interrupts();
     SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
-    unbind_variable(IN_SAFEPOINT, self);
     odprintf("safepoint ends");
     return;
   }
@@ -1139,6 +1147,8 @@ void gc_safepoint()
     if (suspend_info.phase == 1) {
 			if (thread_may_suspend_for_gc()) {
 				suspend();
+        bound = 0;
+        unbind_variable(IN_SAFEPOINT, self);
 				check_pending_interrupts();
 				SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
 			} else {
@@ -1149,6 +1159,8 @@ void gc_safepoint()
 		} else {
 			if (thread_may_suspend_for_gc()) {
 				suspend();
+        bound = 0;
+        unbind_variable(IN_SAFEPOINT, self);
 				check_pending_interrupts();
 			} else {
         unlock_suspend_info(__FILE__, __LINE__);
@@ -1161,6 +1173,8 @@ void gc_safepoint()
     } else
     if (thread_may_interrupt()) {
       suspend();
+      bound = 0;
+      unbind_variable(IN_SAFEPOINT, self);
       check_pending_interrupts();
     } else {
       suspend_briefly();
@@ -1168,7 +1182,8 @@ void gc_safepoint()
   } else {
     lose("in gc_safepoint, fell through");
   }
-  unbind_variable(IN_SAFEPOINT, self);
+  if (bound)
+    unbind_variable(IN_SAFEPOINT, self);
   odprintf("safepoint ends");
 }
 
