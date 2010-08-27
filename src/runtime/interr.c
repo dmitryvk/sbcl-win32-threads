@@ -83,6 +83,7 @@ void
 lose(char *fmt, ...)
 {
     va_list ap;
+    odprintf("lose %s", fmt);
     /* Block signals to prevent other threads, timers and such from
      * interfering. If only all threads could be stopped somehow. */
     block_blockable_signals(0, 0);
