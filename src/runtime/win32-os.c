@@ -111,6 +111,19 @@ void odprintf(const char * fmt, ...)
   OutputDebugString(buf);
 }
 
+unsigned long block_deferrables_and_return_mask()
+{
+  sigset_t sset;
+  block_deferrable_signals(0, &sset);
+  return (unsigned long)sset;
+}
+
+void apply_sigmask(unsigned long sigmask)
+{
+  sigset_t sset = (sigset_t)sigmask;
+  pthread_sigmask(SIG_SETMASK, &sset, 0);
+}
+
 /* The exception handling function looks like this: */
 EXCEPTION_DISPOSITION handle_exception(EXCEPTION_RECORD *,
                                        struct lisp_exception_frame *,
