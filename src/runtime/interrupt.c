@@ -399,6 +399,7 @@ check_gc_signals_blocked_or_lose(sigset_t *sigset)
 void
 block_deferrable_signals(sigset_t *where, sigset_t *old)
 {
+    odprintf("block deferrable");
 #if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
     block_signals(&deferrable_sigset, where, old);
 #endif
@@ -407,6 +408,7 @@ block_deferrable_signals(sigset_t *where, sigset_t *old)
 void
 block_blockable_signals(sigset_t *where, sigset_t *old)
 {
+    odprintf("block blockable");
 #if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
     block_signals(&blockable_sigset, where, old);
 #endif
@@ -415,6 +417,7 @@ block_blockable_signals(sigset_t *where, sigset_t *old)
 void
 block_gc_signals(sigset_t *where, sigset_t *old)
 {
+    odprintf("block gc");
 #if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
     block_signals(&gc_sigset, where, old);
 #endif
@@ -423,6 +426,7 @@ block_gc_signals(sigset_t *where, sigset_t *old)
 void
 unblock_deferrable_signals(sigset_t *where, sigset_t *old)
 {
+    odprintf("unblock deferrable");
 #if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
     if (interrupt_handler_pending_p())
         lose("unblock_deferrable_signals: losing proposition\n");
@@ -434,6 +438,7 @@ unblock_deferrable_signals(sigset_t *where, sigset_t *old)
 void
 unblock_blockable_signals(sigset_t *where, sigset_t *old)
 {
+    odprintf("unblock blockable");
 #if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
     unblock_signals(&blockable_sigset, where, old);
 #endif
@@ -442,6 +447,7 @@ unblock_blockable_signals(sigset_t *where, sigset_t *old)
 void
 unblock_gc_signals(sigset_t *where, sigset_t *old)
 {
+    odprintf("unblock gc");
 #if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
     unblock_signals(&gc_sigset, where, old);
 #endif
