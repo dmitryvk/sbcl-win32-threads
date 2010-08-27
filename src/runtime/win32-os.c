@@ -93,7 +93,11 @@ void odprintf(const char * fmt, ...)
   int n;
   struct thread * self = arch_os_get_current_thread();
   #if defined(LISP_FEATURE_SB_THREAD)
-  sprintf(buf, "[0x%p] %s, %s, %s, %s ", pthread_self(), t_nil_s(GC_SAFE), t_nil_s(GC_INHIBIT), t_nil_s(INTERRUPTS_ENABLED), t_nil_s(IN_SAFEPOINT));
+  if (self) {
+    sprintf(buf, "[0x%p] %s, %s, %s, %s ", pthread_self(), t_nil_s(GC_SAFE), t_nil_s(GC_INHIBIT), t_nil_s(INTERRUPTS_ENABLED), t_nil_s(IN_SAFEPOINT));
+  } else {
+    sprintf(buf, "[0x%p] (arch_os_get_current_thread() is NULL) ", pthread_self());
+  }
   #else
   buf[0] = 0;
   #endif
