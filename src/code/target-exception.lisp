@@ -175,7 +175,7 @@
     ;; mechanism there are no extra frames on the stack from a
     ;; previous signal handler when the next signal is delivered
     ;; provided there is no WITH-INTERRUPTS.
-    (let ((*unblock-deferrables-on-enabling-interrupts-p* t))
+    (let ((sb!unix::*unblock-deferrables-on-enabling-interrupts-p* t))
       (with-interrupt-bindings
         (let ((sb!debug:*stack-top-hint*
                (nth-value 1 (sb!kernel:find-interrupted-name-and-frame))))
@@ -187,7 +187,7 @@
                          ;; in the interrupted context is restored.
                          ;; However, if we do an nlx the operating
                          ;; system will not restore it for us.
-                         (when *unblock-deferrables-on-enabling-interrupts-p*
+                         (when sb!unix::*unblock-deferrables-on-enabling-interrupts-p*
                            ;; This means that storms of interrupts
                            ;; doing an nlx can still run out of stack.
                            (unblock-deferrable-signals)))))))))
