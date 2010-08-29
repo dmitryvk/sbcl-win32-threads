@@ -104,6 +104,8 @@
 
 (in-package "SB!UNIX")
 
+(defun receive-pending-interrupt ()
+  (receive-pending-interrupt))
 
 (defmacro with-interrupt-bindings (&body body)
   `(let*
