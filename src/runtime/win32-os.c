@@ -423,11 +423,13 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                  void *dispatcher_context)
 {
 #if defined(LISP_FEATURE_SB_THREAD)
+    DWORD lasterror = GetLastError();
     struct thread * self = arch_os_get_current_thread();
     os_context_t ctx;
     ctx.win32_context = context;
     pthread_sigmask(SIG_SETMASK, NULL, &ctx.sigmask);
     pthread_sigmask(SIG_BLOCK, &blockable_sigset, NULL);
+    SetLastError(lasterror);
     /* For EXCEPTION_ACCESS_VIOLATION only. */
     void *fault_address = (void *)exception_record->ExceptionInformation[1];
 #endif
@@ -436,14 +438,18 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         /* If we're being unwound, be graceful about it. */
 
 #if defined(LISP_FEATURE_SB_THREAD)
+        lasterror = GetLastError();
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
+        SetLastError(lasterror);
 #endif
         /* Undo any dynamic bindings, including *gc-safe*. */
         unbind_to_here(exception_frame->bindstack_pointer,
                        arch_os_get_current_thread());
 #if defined(LISP_FEATURE_SB_THREAD)
+        lasterror = GetLastError();
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
         gc_safepoint();
+        SetLastError(lasterror);
 #endif
         return ExceptionContinueSearch;
     }
@@ -455,8 +461,10 @@ handle_exception(EXCEPTION_RECORD *exception_record,
          * end breakpoints uses this. */
         #if defined(LISP_FEATURE_SB_THREAD)
         restore_breakpoint_from_single_step(&ctx);
+        lasterror = GetLastError();
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
         gc_safepoint();
+        SetLastError(lasterror);
         #else
         restore_breakpoint_from_single_step(context);
         #endif
@@ -491,9 +499,11 @@ handle_exception(EXCEPTION_RECORD *exception_record,
          * 'kind' value (eg trap_Cerror). */
         #if defined(LISP_FEATURE_SB_THREAD)
         trap = *(unsigned char *)(*os_context_pc_addr(&ctx));
+        lasterror = GetLastError();
         handle_trap(&ctx, trap);
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
         gc_safepoint();
+        SetLastError(lasterror);
         #else
         trap = *(unsigned char *)(*os_context_pc_addr(context));
         handle_trap(context, trap);
@@ -503,8 +513,10 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     }
     #if defined(LISP_FEATURE_SB_THREAD)
     else if (exception_record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault_address == GC_SAFEPOINT_PAGE_ADDR) {
+      lasterror = GetLastError();
       pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
       gc_safepoint();
+      SetLastError(lasterror);
       return ExceptionContinueExecution;
     }
     #endif
@@ -541,8 +553,10 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                     }
                 }
                 #if defined(LISP_FEATURE_SB_THREAD)
+                lasterror = GetLastError();
                 pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
                 gc_safepoint();
+                SetLastError(lasterror);
                 #endif
                 return ExceptionContinueExecution;
             }
@@ -552,12 +566,14 @@ handle_exception(EXCEPTION_RECORD *exception_record,
             if (gencgc_handle_wp_violation(fault_address)) {
               pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
               gc_safepoint();
+              SetLastError(lasterror);
               /* gc accepts the wp violation, so resume where we left off. */
               return ExceptionContinueExecution;
           }
         }
         #else
         } else if (gencgc_handle_wp_violation(fault_address)) {
+            SetLastError(lasterror);
             /* gc accepts the wp violation, so resume where we left off. */
             return ExceptionContinueExecution;
         }
@@ -615,6 +631,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         undo_fake_foreign_function_call(context);
         #endif
         gc_safepoint();
+        SetLastError(lasterror);
 
         /* FIXME: HANDLE-WIN32-EXCEPTION should be allowed to decline */
         return ExceptionContinueExecution;
@@ -647,6 +664,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     #if defined(LISP_FEATURE_SB_THREAD)
     pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
     gc_safepoint();
+    SetLastError(lasterror);
     #endif
     return ExceptionContinueSearch;
 }

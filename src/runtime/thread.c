@@ -1107,6 +1107,7 @@ int maybe_wait_until_gc_ends()
 
 void gc_safepoint()
 {
+  DWORD lasterror = GetLastError();
   struct thread * self = arch_os_get_current_thread();
   int done = 0;
   
@@ -1222,6 +1223,7 @@ void gc_safepoint()
     done = 0;
     goto again;
   }
+  SetLastError(lasterror);
 }
 
 void pthread_np_safepoint()
