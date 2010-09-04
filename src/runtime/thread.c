@@ -829,11 +829,13 @@ int check_pending_interrupts()
   }
   odprintf("In check_pending_interrupts, have %d interrupts", p->interrupt_data->win32_data.interrupts_count);
   get_current_sigmask(&sigset);
-  if (sigismember(&sigset, SIGHUP) && SymbolValue(INTERRUPT_PENDING, p) == NIL) {
-    odprintf("SIGHUP is blocked, setting INTERRUPT_PENDING");
-    SetSymbolValue(INTERRUPT_PENDING, T, p);
-    pthread_np_add_pending_signal(p->os_thread, SIGHUP);
-    done = 1;
+  if (sigismember(&sigset, SIGHUP)) {
+    if (SymbolValue(INTERRUPT_PENDING, p) == NIL) {
+      odprintf("SIGHUP is blocked, setting INTERRUPT_PENDING");
+      SetSymbolValue(INTERRUPT_PENDING, T, p);
+      pthread_np_add_pending_signal(p->os_thread, SIGHUP);
+      done = 1;
+    }
     return done;
   }
   
@@ -841,8 +843,8 @@ int check_pending_interrupts()
     odprintf("INTERRUPTS_ENABLED = NIL, setting INTERRUPT_PENDING");
     if (p->interrupt_data->win32_data.interrupts_count > 0 && SymbolValue(INTERRUPT_PENDING, p) == NIL) {
       SetSymbolValue(INTERRUPT_PENDING, T, p);
+      done = 1;
     }
-    done = 1;
     return done;
   }
   SetSymbolValue(INTERRUPT_PENDING, NIL, p);
