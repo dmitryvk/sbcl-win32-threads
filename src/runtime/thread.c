@@ -877,21 +877,25 @@ void gc_enter_safe_region()
 void gc_enter_unsafe_region()
 {
   struct thread * self = arch_os_get_current_thread();
+  int errorCode = GetLastError();
   preempt_randomly();
   bind_variable(GC_SAFE, NIL, self);
   preempt_randomly();
   gc_safepoint();
   preempt_randomly();
+  SetLastError(errorCode);
 }
 
 void gc_leave_region()
 {
   struct thread * self = arch_os_get_current_thread();
+  int errorCode = GetLastError();
   preempt_randomly();
   unbind_variable(GC_SAFE, self);
   preempt_randomly();
   gc_safepoint();
   preempt_randomly();
+  SetLastError(errorCode);
 }
 
 void safepoint_cycle_state(int state)
