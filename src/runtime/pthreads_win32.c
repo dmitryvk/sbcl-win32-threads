@@ -547,8 +547,8 @@ void pthreads_win32_init()
   pth->uninterruptible_section_nesting = 0;
   pth->waiting_cond = NULL;
   pth->in_safepoint = 0;
-  for (nEvent = 0; nEvent<sizeof(self->private_events)/
-         sizeof(self->private_events[0]); ++nEvent) {
+  for (nEvent = 0; nEvent<sizeof(pth->private_events)/
+         sizeof(pth->private_events[0]); ++nEvent) {
     pth->private_events[nEvent] = CreateEvent(NULL,FALSE,FALSE,NULL);
   }
   sigemptyset(&pth->blocked_signal_set);
