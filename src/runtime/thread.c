@@ -740,7 +740,7 @@ void roll_thread_to_safepoint(struct thread * thread)
   // Phase 1: Make sure that th is in gc-safe code or noted the need to interrupt
   if (SymbolValue(GC_SAFE, thread) == NIL) {
     wait_for_thread_state_change(thread, STATE_RUNNING);
-  }
+  } 
   
   odprintf("mapping gc page");
   
@@ -757,7 +757,8 @@ void roll_thread_to_safepoint(struct thread * thread)
     if (thread_state(p) != STATE_DEAD)
       set_thread_state(p, STATE_RUNNING);
   }
-  
+
+  SetEvent(thread->os_thread->private_events[1]);
   pthread_mutex_unlock(&suspend_info.world_lock);
   pthread_mutex_unlock(&all_threads_lock);
   
@@ -867,11 +868,10 @@ int check_pending_interrupts()
 void gc_enter_safe_region()
 {
   struct thread * self = arch_os_get_current_thread();
-  preempt_randomly();
+  int errorCode = GetLastError();
   bind_variable(GC_SAFE, thread_may_suspend_for_gc() ? T : NIL, self);
-  preempt_randomly();
   gc_safepoint();
-  preempt_randomly();
+  SetLastError(errorCode);
 }
 
 void gc_enter_unsafe_region()

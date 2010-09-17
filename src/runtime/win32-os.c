@@ -478,7 +478,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         unsigned char trap;
         #if defined(LISP_FEATURE_SB_THREAD)
         #endif
-        
+
         /* This is just for info in case the monitor wants to print an
          * approximation. */
         current_control_stack_pointer =
@@ -522,7 +522,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
               is_linkage_table_addr(fault_address))) {
         /* Pick off GC-related memory fault next. */
         MEMORY_BASIC_INFORMATION mem_info;
-        
+
         if (!VirtualQuery(fault_address, &mem_info, sizeof mem_info)) {
             fprintf(stderr, "VirtualQuery: 0x%lx.\n", GetLastError());
             lose("handle_exception: VirtualQuery failure");
@@ -804,60 +804,138 @@ int
 socket_input_available(HANDLE socket)
 {
   unsigned long count = 0, count_size = 0;
+  int wsaErrno = WSAGetLastError();
+  int err = WSAIoctl((SOCKET)socket, FIONREAD, NULL, 0,
+                     &count, sizeof(count), &count_size, NULL, NULL);
 
-  int err = WSAIoctl(socket, FIONREAD, NULL, 0, &count, sizeof(count), &count_size, NULL, NULL);
-  
   int ret;
 
   if (err == 0) {
     ret = (count > 0) ? 1 : 2;
   } else
     ret = 0;
-  
+  WSASetLastError(wsaErrno);
   return ret;
 }
 
-long
-get_fionread(HANDLE socket)
+static BOOL seekable_p(HANDLE handle)
 {
-  unsigned long count = 0, count_size = 0;
-
-  int err = WSAIoctl(socket, FIONREAD, NULL, 0, &count, sizeof(count), &count_size, NULL, NULL);
-  
-  int ret;
-
-  if (err == 0) {
-    return (long)count;
-  } else {
-    return -1;
-  }
+  LARGE_INTEGER position = {{0}};
+  return SetFilePointerEx(handle,position,NULL,FILE_CURRENT);
 }
 
 int win32_unix_write(int fd, void * buf, int count)
 {
   HANDLE handle;
   DWORD written_bytes;
-  handle = _get_osfhandle(fd);
-  if (WriteFile(handle, buf, count, &written_bytes, NULL)) {
+  OVERLAPPED overlapped;
+  pthread_t me = pthread_self();
+  BOOL synchronous;
+  BOOL waitInGOR;
+
+  odprintf("write(%d, 0x%p, %d)", fd, buf, count);
+  handle =(HANDLE)_get_osfhandle(fd);
+  synchronous = seekable_p(handle);
+  odprintf("handle = 0x%p", handle);
+  /* let's not try to distinguish sockets/console/whatever.. */
+  /* win32_prepare_position(handle, &overlapped); */
+  overlapped.hEvent = me->private_events[0];
+
+  if (WriteFile(handle, buf, count, &written_bytes,
+                synchronous ? NULL : &overlapped)) {
+    odprintf("write(%d, 0x%p, %d) immeditately wrote %d bytes",
+             fd, buf, count, written_bytes);
+    /* win32_commit_position(handle,&overlapped); */
     return written_bytes;
   } else {
-    return -1;
+    if (GetLastError()!=ERROR_IO_PENDING) {
+      errno = EIO;
+      return -1;
+    } else {
+      if(WaitForMultipleObjects(2,me->private_events,
+                                   FALSE,INFINITE) != WAIT_OBJECT_0) {
+        /* Something happened. Interrupt? */
+        odprintf("write(%d, 0x%p, %d) EINTR",fd,buf,count);
+        CancelIo(handle);
+        waitInGOR = TRUE;
+      } else {
+        waitInGOR = FALSE;
+      }
+      /* win32_commit_position(handle,&overlapped); */
+      if (!GetOverlappedResult(handle,&overlapped,&written_bytes,waitInGOR)) {
+        if (GetLastError()==ERROR_OPERATION_ABORTED) {
+          errno = EINTR;
+        } else {
+          errno = EIO;
+        }
+        return -1;
+      } else {
+        return written_bytes;
+      }
+    }
   }
 }
 
 int win32_unix_read(int fd, void * buf, int count)
 {
   HANDLE handle;
+  OVERLAPPED overlapped;
   DWORD read_bytes;
-  handle = _get_osfhandle(fd);
-  if (get_fionread(handle) >= 0) {
-    while (get_fionread(handle) == 0) Sleep(100);
-  }
-  if (ReadFile(handle, buf, count, &read_bytes, NULL)) {
-    FlushFileBuffers(handle);
+  pthread_t me = pthread_self();
+  DWORD errorCode;
+  BOOL synchronous;
+  BOOL waitInGOR;
+
+  odprintf("read(%d, 0x%p, %d)", fd, buf, count);
+  handle = (HANDLE)_get_osfhandle(fd);
+  odprintf("handle = 0x%p", handle);
+  overlapped.hEvent = me->private_events[0];
+  /* If it has a position, we won't try overlapped */
+  synchronous = seekable_p(handle);
+
+  if (ReadFile(handle,buf,count,&read_bytes,
+               synchronous? NULL:&overlapped)) {
+    /* immediately */
+    /* win32_commit_position(handle,&overlapped); */
     return read_bytes;
   } else {
-    return -1;
+    errorCode = GetLastError();
+    if (errorCode == ERROR_HANDLE_EOF) {
+      /* it is an `error' for positioned reads! oh wtf */
+      return read_bytes;
+    }
+    if (errorCode!=ERROR_IO_PENDING) {
+      /* is it some _real_ error? */
+      errno = EIO;
+      return -1;
+    } else {
+      if(WaitForMultipleObjects(2,me->private_events,
+                                FALSE,INFINITE) != WAIT_OBJECT_0) {
+        /* Something happened. Interrupt? */
+        odprintf("read(%d, 0x%p, %d) EINTR",fd,buf,count);
+        CancelIo(handle);
+        waitInGOR = TRUE;
+        /* Waiting for IO only */
+      } else {
+        waitInGOR = FALSE;
+      }
+      /* win32_commit_position(handle,&overlapped); */
+      if (!GetOverlappedResult(handle,&overlapped,&read_bytes,waitInGOR)) {
+        errorCode = GetLastError();
+        if (errorCode == ERROR_HANDLE_EOF) {
+          return read_bytes;
+        } else {
+          if (errorCode == ERROR_OPERATION_ABORTED) {
+            errno = EINTR;      /* that's it. */
+          } else {
+            errno = EIO;        /* something unspecific */
+          }
+          return -1;
+        }
+      } else {
+        return read_bytes;
+      }
+    }
   }
 }
 

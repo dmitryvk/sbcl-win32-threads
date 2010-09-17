@@ -16,7 +16,7 @@
 ;;;; functions, converting between HANDLES and fds
 
 (defun socket (af type proto)
-  (let* ((handle (wsa-socket af type proto nil 0 0))
+  (let* ((handle (wsa-socket af type proto nil 0 1))
          (fd (handle->fd handle 0)))
     fd))
 
