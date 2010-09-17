@@ -653,9 +653,6 @@ int sbcl_rand()
 
 void preempt_randomly()
 {
-  //return;
-  if (sbcl_rand() % 1000 < 5)
-    Sleep(0);
 }
 
 // returns: 0 if all is ok
