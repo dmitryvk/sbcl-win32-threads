@@ -900,7 +900,7 @@ int win32_unix_read(int fd, void * buf, int count)
     return read_bytes;
   } else {
     errorCode = GetLastError();
-    if (errorCode == ERROR_HANDLE_EOF) {
+    if (errorCode == ERROR_HANDLE_EOF || errorCode == ERROR_BROKEN_PIPE) {
       /* it is an `error' for positioned reads! oh wtf */
       return read_bytes;
     }
