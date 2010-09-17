@@ -88,7 +88,7 @@ void odprint(const char * msg)
 }
 const char * t_nil_s(lispobj symbol);
 
-void odprintf(const char * fmt, ...)
+void odprintf_(const char * fmt, ...)
 {
   char buf[1024];
   va_list args;

@@ -715,22 +715,6 @@ void unlock_suspend_info(const char * file, int line)
   pthread_mutex_unlock(&suspend_info.lock);
 }
 
-void odmutex(int kind, void * mutex)
-{
-  switch (kind)
-  {
-    case 0: odprintf("get-mutex 0x%p starts", mutex); break;
-    case 1: odprintf("get-mutex 0x%p ends", mutex); break;
-    case 2: odprintf("release-mutex 0x%p starts", mutex); break;
-    case 3: odprintf("release-mutex 0x%p ends", mutex); break;
-    case 4: odprintf("get-mutex 0x%p recursive lock", mutex); break;
-    case 5: odprintf("get-mutex 0x%p Old owner in free mutex:", mutex); break;
-    case 6: odprintf("get-mutex 0x%p Failed to acquire lock with WAITP", mutex); break;
-    case 7: odprintf("get-mutex 0x%p recursive lock", mutex); break;
-    default: odprintf("someting with mutex 0x%p: %d", mutex, kind); break;
-  }
-}
-
 void roll_thread_to_safepoint(struct thread * thread)
 {
   struct thread * p;

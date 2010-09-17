@@ -125,7 +125,12 @@ void gc_safepoint();
 void gc_enter_safe_region();
 void gc_enter_unsafe_region();
 void gc_leave_region();
-void odprintf(const char * fmt, ...);
+void odprintf_(const char * fmt, ...);
+#if defined(LISP_FEATURE_DEBUG_WIN32)
+#define odprintf odprintf_
+#else
+#define odprintf(...)
+#endif
 #include "pthreads_win32.h"
 #else
 #include <pthread.h>

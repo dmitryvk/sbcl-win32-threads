@@ -7,8 +7,6 @@
 #include <time.h>
 #include <sys/time.h>
 
-void odprintf(const char *fmt, ...);
-
 int pthread_attr_init(pthread_attr_t *attr)
 {
   attr->stack_size = 0;
@@ -145,8 +143,6 @@ int pthread_detach(pthread_t thread)
 {
   int retval = 0;
   pthread_mutex_lock(&thread->lock);
-  if (thread->detached)
-    odprintf("thread_detach on 0x%p, already detached", thread);
   thread->detached = 1;
   pthread_cond_broadcast(&thread->cond);
   pthread_mutex_unlock(&thread->lock);
@@ -156,8 +152,6 @@ int pthread_detach(pthread_t thread)
 int pthread_join(pthread_t thread, void **retval)
 {
   pthread_mutex_lock(&thread->lock);
-  if (thread->detached)
-    odprintf("pthread_join on 0x%p, thread is detached", thread);
   while (thread->state != pthread_state_finished) {
     pthread_cond_wait(&thread->cond, &thread->lock);
   }
