@@ -760,6 +760,8 @@ void scratch(void)
     strerror(42);
     write(0, 0, 0);
     RtlUnwind(0, 0, 0, 0);
+    SetStdHandle(0,0);
+    GetStdHandle(0);
     #ifndef LISP_FEATURE_SB_UNICODE
       CreateDirectoryA(0,0);
       GetComputerNameA(0, 0);

@@ -25,9 +25,32 @@
 
 (define-alien-routine ("GetLastError@0" getlasterror) unsigned-int)
 
+(define-alien-routine ("SetStdHandle@8" set-std-handle)
+   void
+ (id int)
+ (handle int))
+
+(sb!alien:define-alien-routine ("GetStdHandle@4" get-std-handle)
+   sb!alien:int
+ (id sb!alien:int))
+ 
+(defvar *reset-stdio-on-dlopen* t)
+
+(defconstant +stdio-handle+ -10)
+
+(defun loadlibrary-withouth-stdio (namestring)
+  (if *reset-stdio-on-dlopen*
+      (let ((stdio (get-std-handle +stdio-handle+)))
+        (unwind-protect
+          (progn
+            (set-std-handle +stdio-handle+ -1)
+            (loadlibrary namestring))
+          (set-std-handle +stdio-handle+ stdio)))
+      (loadlibrary namestring)))
+
 (defun dlopen-or-lose (obj)
   (let* ((namestring (shared-object-namestring obj))
-         (handle (loadlibrary namestring)))
+         (handle (loadlibrary-withouth-stdio namestring)))
     (aver namestring)
     (when (zerop handle)
       (setf (shared-object-handle obj) nil)
