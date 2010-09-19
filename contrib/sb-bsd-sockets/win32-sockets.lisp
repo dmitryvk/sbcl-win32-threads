@@ -31,9 +31,10 @@
   (apply #'win32-listen (fd->handle fd) options))
 
 (defun accept (fd &rest options)
-  (handle->fd
-   (apply #'win32-accept (fd->handle fd) options)
-   0))
+  (let ((handle (apply #'win32-accept (fd->handle fd) options)))
+    (if (= handle -1)
+        -1
+        (handle->fd handle 0))))
 
 (defun recv (fd &rest options)
   (apply #'win32-recv (fd->handle fd) options))
