@@ -167,31 +167,6 @@
              "Argument" "--core \"[#sbcl.core]\" --load \"%1\""
              "Command" "Load with SBCL"
              "Target" "[#sbcl.exe]"))))
-             
-(defun split-by-periods (string)
-  (let* ((c nil)
-         (r (loop
-               for char across string
-               when (char= #\. char)
-               collecting (prog1 c (setf c nil))
-               else
-               do (setf c (concatenate 'string c (string char))))))
-    (append r (when c (list c)))))
-
-(defun sanitize-version-string (string)
-  (let* ((parts (split-by-periods string))
-         (nums (loop
-                  for part in parts
-                  for n = (parse-integer part :junk-allowed t)
-                  when n collecting n)))
-    (when (> (length nums) 4)
-      (setf nums (subseq nums 0 4)))
-    (reduce (lambda (x y)
-              (format nil "~A.~A" x y))
-            nums)))
-
-(defun sanitized-lisp-implementation-version ()
-  (sanitize-version-string (lisp-implementation-version)))
 
 (defun write-wxs (pathname)
   ;; both :INVERT and :PRESERVE could be used here, but this seemed
@@ -201,7 +176,7 @@
    `("Wix" ("xmlns" "http://schemas.microsoft.com/wix/2006/wi")
      ("Product" ("Id" "*"
                  "Name" ,(application-name)
-                 "Version" ,(sanitized-lisp-implementation-version)
+                 "Version" ,(lisp-implementation-version)
                  "Manufacturer" "http://www.sbcl.org"
                  "UpgradeCode" "BFF1D4CA-0153-4AAC-BB21-06DC4B8EAD7D"
                  "Language" 1033)
