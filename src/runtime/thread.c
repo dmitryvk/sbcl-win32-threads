@@ -1281,20 +1281,26 @@ void log_gc_state(const char * msg)
 
 #endif
 
-#if defined(LISP_FEATURE_WIN32)
 /* To avoid deadlocks when gc stops the world all clients of each
  * mutex must enable or disable SIG_STOP_FOR_GC for the duration of
  * holding the lock, but they must agree on which. */
 void gc_stop_the_world()
 {
     struct thread *p,*th=arch_os_get_current_thread();
-    int lock_ret;
+    int status, lock_ret;
+#ifdef LISP_FEATURE_WIN32
     odprintf("stopping the world");
+#endif
     
 #ifdef LOCK_CREATE_THREAD
+    /* KLUDGE: Stopping the thread during pthread_create() causes deadlock
+     * on FreeBSD. */
+    FSHOW_SIGNAL((stderr,"/gc_stop_the_world:waiting on create_thread_lock\n"));
     lock_ret = pthread_mutex_lock(&create_thread_lock);
     gc_assert(lock_ret == 0);
+    FSHOW_SIGNAL((stderr,"/gc_stop_the_world:got create_thread_lock\n"));
 #endif
+#ifdef LISP_FEATURE_WIN32
     odprintf("taking world lock");
     pthread_mutex_lock(&suspend_info.world_lock);
     
@@ -1312,104 +1318,8 @@ void gc_stop_the_world()
     odprintf("gc_page unmapped");
 
     odprintf("taking all_threads_lock");
-    lock_ret = pthread_mutex_lock(&all_threads_lock);
-    odprintf("lock_ret = %d", lock_ret);
-    gc_assert(lock_ret == 0);
-
-    // Phase 1, make sure that all threads are: 1) have noted the need to interrupt; or 2) in gc-safe code
-    
-    for(p=all_threads; p; p=p->next) {
-        odprintf("looking at 0x%p", p->os_thread);
-        gc_assert(p->os_thread != 0);
-        if (p != th) {
-          odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
-          if (SymbolValue(GC_SAFE, p) == T) continue;
-          odprintf("waiting for 0x%p to change state from RUNNING");
-          wait_for_thread_state_change(p, STATE_RUNNING);
-          odprintf("0x%p has changed state to %s", p->os_thread, get_thread_state_as_string(p));
-        }
-    }
-    
-    // Phase 2, wait until all threads 1) suspend themselves; or 2) are in gc-safe code
-    
-    odprintf("phase 2");
-    
-    lock_suspend_info(__FILE__, __LINE__);
-    map_gc_page();
-    suspend_info.phase = 2;
-    unlock_suspend_info(__FILE__, __LINE__);
-    
-    for (p = all_threads; p; p = p->next) {
-      gc_assert(p->os_thread != 0);
-      if (p == th) continue;
-      odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
-      if (SymbolValue(GC_SAFE, p) == NIL) {
-        if (thread_state(p) == STATE_SUSPENDED_BRIEFLY) {
-          set_thread_state(p, STATE_RUNNING);
-          odprintf("waiting for 0x%p to change state from RUNNING");
-          wait_for_thread_state_change(p, STATE_RUNNING);
-        }
-      }
-      odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
-    }
-    lock_suspend_info(__FILE__, __LINE__);
-    suspend_info.reason = SUSPEND_REASON_GCING;
-    unlock_suspend_info(__FILE__, __LINE__);
-    odprintf("stopped the world");
-}
-
-void gc_start_the_world()
-{
-  struct thread * self = arch_os_get_current_thread();
-  struct thread * p;
-  lispobj state;
-  int lock_ret;
-  
-  odprintf("starting the world");
-  
-
-  lock_suspend_info(__FILE__, __LINE__);
-  suspend_info.suspend = 0;
-  unlock_suspend_info(__FILE__, __LINE__);
-  
-  for(p = all_threads; p; p=p->next) {
-    gc_assert(p->os_thread != 0);
-    if (p == self) continue;
-    odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
-    state = thread_state(p);
-    
-    if (state == STATE_DEAD) continue;
-    
-    set_thread_state(p, STATE_RUNNING);
-  }
-
-  lock_ret = pthread_mutex_unlock(&all_threads_lock);
-  gc_assert(lock_ret == 0);
-  pthread_mutex_unlock(&suspend_info.world_lock);
-#ifdef LOCK_CREATE_THREAD
-  lock_ret = pthread_mutex_unlock(&create_thread_lock);
-  gc_assert(lock_ret == 0);
 #endif
-  odprintf("started the world");
-}
 
-#else
-
-/* To avoid deadlocks when gc stops the world all clients of each
- * mutex must enable or disable SIG_STOP_FOR_GC for the duration of
- * holding the lock, but they must agree on which. */
-void gc_stop_the_world()
-{
-    struct thread *p,*th=arch_os_get_current_thread();
-    int status, lock_ret;
-#ifdef LOCK_CREATE_THREAD
-    /* KLUDGE: Stopping the thread during pthread_create() causes deadlock
-     * on FreeBSD. */
-    FSHOW_SIGNAL((stderr,"/gc_stop_the_world:waiting on create_thread_lock\n"));
-    lock_ret = pthread_mutex_lock(&create_thread_lock);
-    gc_assert(lock_ret == 0);
-    FSHOW_SIGNAL((stderr,"/gc_stop_the_world:got create_thread_lock\n"));
-#endif
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:waiting on lock\n"));
     /* keep threads from starting while the world is stopped. */
     lock_ret = pthread_mutex_lock(&all_threads_lock);
@@ -1417,11 +1327,20 @@ void gc_stop_the_world()
 
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:got lock\n"));
     /* stop all other threads by sending them SIG_STOP_FOR_GC */
+    /* Phase 1, make sure that all threads are: 1) have noted the need to interrupt; or 2) in gc-safe code */
+    
     for(p=all_threads; p; p=p->next) {
+#ifdef LISP_FEATURE_WIN32
+        odprintf("looking at 0x%p", p->os_thread);
+#endif
         gc_assert(p->os_thread != 0);
         FSHOW_SIGNAL((stderr,"/gc_stop_the_world: thread=%lu, state=%x\n",
                       p->os_thread, thread_state(p)));
+#ifdef LISP_FEATURE_WIN32
+        odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
+#endif
         if((p!=th) && ((thread_state(p)==STATE_RUNNING))) {
+#ifndef LISP_FEATURE_WIN32
             FSHOW_SIGNAL((stderr,"/gc_stop_the_world: suspending thread %lu\n",
                           p->os_thread));
             /* We already hold all_thread_lock, P can become DEAD but
@@ -1434,11 +1353,30 @@ void gc_stop_the_world()
                 lose("cannot send suspend thread=%lu: %d, %s\n",
                      p->os_thread,status,strerror(status));
             }
+#else
+          if (SymbolValue(GC_SAFE, p) == T) continue;
+          odprintf("waiting for 0x%p to change state from RUNNING");
+          wait_for_thread_state_change(p, STATE_RUNNING);
+          odprintf("0x%p has changed state to %s", p->os_thread, get_thread_state_as_string(p));
+#endif
         }
     }
+
+#ifdef LISP_FEATURE_WIN32    
+    /* Phase 2, wait until all threads 1) suspend themselves; or 2) are in gc-safe code */
+    
+    odprintf("phase 2");
+    
+    lock_suspend_info(__FILE__, __LINE__);
+    map_gc_page();
+    suspend_info.phase = 2;
+    unlock_suspend_info(__FILE__, __LINE__);
+#endif
+    
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:signals sent\n"));
     for(p=all_threads;p;p=p->next) {
         if (p!=th) {
+#ifndef LISP_FEATURE_WIN32
             FSHOW_SIGNAL
                 ((stderr,
                   "/gc_stop_the_world: waiting for thread=%lu: state=%x\n",
@@ -1446,9 +1384,26 @@ void gc_stop_the_world()
             wait_for_thread_state_change(p, STATE_RUNNING);
             if (p->state == STATE_RUNNING)
                 lose("/gc_stop_the_world: unexpected state");
+#else
+            odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
+            if (SymbolValue(GC_SAFE, p) == NIL) {
+              if (thread_state(p) == STATE_SUSPENDED_BRIEFLY) {
+                set_thread_state(p, STATE_RUNNING);
+                odprintf("waiting for 0x%p to change state from RUNNING");
+                wait_for_thread_state_change(p, STATE_RUNNING);
+              }
+            }
+            odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
+#endif
         }
     }
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:end\n"));
+#ifdef LISP_FEATURE_WIN32
+    lock_suspend_info(__FILE__, __LINE__);
+    suspend_info.reason = SUSPEND_REASON_GCING;
+    unlock_suspend_info(__FILE__, __LINE__);
+    odprintf("stopped the world");
+#endif
 }
 
 void gc_start_the_world()
@@ -1460,15 +1415,29 @@ void gc_start_the_world()
      * all_threads, but it won't have been stopped so won't need
      * restarting */
     FSHOW_SIGNAL((stderr,"/gc_start_the_world:begin\n"));
+  
+#ifdef LISP_FEATURE_WIN32
+    odprintf("starting the world");
+
+    lock_suspend_info(__FILE__, __LINE__);
+    suspend_info.suspend = 0;
+    unlock_suspend_info(__FILE__, __LINE__);
+#endif
+    
     for(p=all_threads;p;p=p->next) {
         gc_assert(p->os_thread!=0);
         if (p!=th) {
             lispobj state = thread_state(p);
+#ifdef LISP_FEATURE_WIN32
+            odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
+#endif
             if (state != STATE_DEAD) {
+#ifndef LISP_FEATURE_WIN32
                 if(state != STATE_SUSPENDED) {
                     lose("gc_start_the_world: wrong thread state is %d\n",
                          fixnum_value(state));
                 }
+#endif
                 FSHOW_SIGNAL((stderr, "/gc_start_the_world: resuming %lu\n",
                               p->os_thread));
                 set_thread_state(p, STATE_RUNNING);
@@ -1478,14 +1447,19 @@ void gc_start_the_world()
 
     lock_ret = pthread_mutex_unlock(&all_threads_lock);
     gc_assert(lock_ret == 0);
+#ifdef LISP_FEATURE_WIN32
+    pthread_mutex_unlock(&suspend_info.world_lock);
+#endif
 #ifdef LOCK_CREATE_THREAD
     lock_ret = pthread_mutex_unlock(&create_thread_lock);
     gc_assert(lock_ret == 0);
 #endif
 
+#ifdef LISP_FEATURE_WIN32
+    odprintf("started the world");
+#endif
     FSHOW_SIGNAL((stderr,"/gc_start_the_world:end\n"));
 }
-#endif
 #endif
 
 int
