@@ -72,8 +72,8 @@ call_lossage_handler() never_returns;
 static inline void
 call_lossage_handler()
 {
-    void backtrace(int frames);
-    backtrace(100);
+    void lisp_backtrace(int frames);
+    lisp_backtrace(100);
     lossage_handler();
     fprintf(stderr, "Argh! lossage_handler() returned, total confusion..\n");
     exit(1);

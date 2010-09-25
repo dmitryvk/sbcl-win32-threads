@@ -89,7 +89,7 @@ unbind_variable(lispobj name, void *th)
     struct binding *binding;
     lispobj symbol;
 
-    binding = GetBSP() - 1;
+    binding = ((struct binding *)get_binding_stack_pointer(thread)) - 1;
 
     symbol = binding->symbol;
     
@@ -101,7 +101,7 @@ unbind_variable(lispobj name, void *th)
     binding->symbol = 0;
     binding->value = 0;
 
-    SetBSP(binding);
+    set_binding_stack_pointer(thread,binding);
 }
 
 void

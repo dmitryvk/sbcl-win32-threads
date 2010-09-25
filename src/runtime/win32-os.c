@@ -481,7 +481,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
 
         /* This is just for info in case the monitor wants to print an
          * approximation. */
-        current_control_stack_pointer =
+        access_control_stack_pointer(self) =
         #if defined(LISP_FEATURE_SB_THREAD)
             (lispobj *)*os_context_sp_addr(&ctx);
         #else
