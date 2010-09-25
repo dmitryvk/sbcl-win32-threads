@@ -20,16 +20,15 @@
 
 #include "sbcl.h"
 
-/* Currently threads live only on x86oid platforms, but this thing
- * cannot ever work with threads, so... */
-#if !defined(LISP_FEATURE_SB_THREAD) && !defined(LISP_FEATURE_X86) && !defined(LISP_FEATURE_X86_64)
-#define FOREIGN_FUNCTION_CALL_FLAG
-#endif
-
 #ifndef LANGUAGE_ASSEMBLY
 
-#ifdef FOREIGN_FUNCTION_CALL_FLAG
+#ifdef LISP_FEATURE_SB_THREAD
+#define foreign_function_call_active_p(thread) \
+    (thread->foreign_function_call_active)
+#else
 extern int foreign_function_call_active;
+#define foreign_function_call_active_p(thread) \
+    foreign_function_call_active
 #endif
 
 extern size_t dynamic_space_size;
@@ -48,11 +47,15 @@ extern char **ENVIRON;
 extern pthread_key_t specials;
 #endif
 
+#if !defined(LISP_FEATURE_SB_THREAD)
 extern lispobj *current_control_stack_pointer;
+#endif
+#if defined(LISP_FEATURE_X86) || defined(LISP_FEATURE_X86_64) || !defined(LISP_FEATURE_SB_THREAD)
 extern lispobj *current_control_frame_pointer;
-# if !defined(LISP_FEATURE_X86) && !defined(LISP_FEATURE_X86_64)
+#endif
+#if !defined(LISP_FEATURE_X86) && !defined(LISP_FEATURE_X86_64) && !defined(LISP_FEATURE_SB_THREAD)
 extern lispobj *current_binding_stack_pointer;
-# endif
+#endif
 
 #if !defined(LISP_FEATURE_X86) && !defined(LISP_FEATURE_X86_64)
 /* This is unused on X86 and X86_64, but is used as the global
@@ -115,11 +118,13 @@ extern void globals_init(void);
 #  define POINTERSIZE 4
 # endif
 
-#ifdef FOREIGN_FUNCTION_CALL_FLAG
+#ifndef LISP_FEATURE_SB_THREAD
 EXTERN(foreign_function_call_active, 4)
 #endif
 
+#if !defined(LISP_FEATURE_SB_THREAD) && !defined(LISP_FEATURE_C_STACK_IS_CONTROL_STACK)
 EXTERN(current_control_stack_pointer, POINTERSIZE)
+#endif
 EXTERN(current_control_frame_pointer, POINTERSIZE)
 # if !defined(LISP_FEATURE_X86) && !defined(LISP_FEATURE_X86_64)
 EXTERN(current_binding_stack_pointer, POINTERSIZE)

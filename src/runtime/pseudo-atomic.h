@@ -22,8 +22,6 @@
     SetSymbolValue(ALLOCATION_POINTER, value, 0)
 #define get_alloc_pointer()                     \
     SymbolValue(ALLOCATION_POINTER, 0)
-#define get_binding_stack_pointer(thread)       \
-    SymbolValue(BINDING_STACK_POINTER, thread)
 
 #if defined(LISP_FEATURE_X86)
 #define LISPOBJ_ASM_SUFFIX "l"
@@ -95,7 +93,7 @@ clear_pseudo_atomic_interrupted(struct thread *thread)
 
 #undef LISPOBJ_SUFFIX
 
-#elif defined(LISP_FEATURE_PPC) && defined(LISP_FEATURE_GENCGC)
+#elif defined(LISP_FEATURE_GENCGC)
 
 /* FIXME: Are these async signal safe? Compiler reordering? */
 
@@ -106,8 +104,21 @@ clear_pseudo_atomic_interrupted(struct thread *thread)
 
 #define get_alloc_pointer()                                     \
     ((unsigned long) dynamic_space_free_pointer & ~LOWTAG_MASK)
-#define get_binding_stack_pointer(thread)       \
-    (current_binding_stack_pointer)
+
+#ifdef LISP_FEATURE_SB_THREAD
+#define get_pseudo_atomic_atomic(thread) \
+    ((thread)->pseudo_atomic_bits & flag_PseudoAtomic)
+#define set_pseudo_atomic_atomic(thread) \
+    ((thread)->pseudo_atomic_bits |= flag_PseudoAtomic)
+#define clear_pseudo_atomic_atomic(thread) \
+    ((thread)->pseudo_atomic_bits &= ~flag_PseudoAtomic)
+#define get_pseudo_atomic_interrupted(thread) \
+    ((thread)->pseudo_atomic_bits & flag_PseudoAtomicInterrupted)
+#define set_pseudo_atomic_interrupted(thread) \
+    ((thread)->pseudo_atomic_bits |= flag_PseudoAtomicInterrupted)
+#define clear_pseudo_atomic_interrupted(thread) \
+    ((thread)->pseudo_atomic_bits &= ~flag_PseudoAtomicInterrupted)
+#else
 #define get_pseudo_atomic_atomic(thread)                                \
     ((unsigned long)dynamic_space_free_pointer & flag_PseudoAtomic)
 #define set_pseudo_atomic_atomic(thread)                                \
@@ -124,6 +135,7 @@ clear_pseudo_atomic_interrupted(struct thread *thread)
 #define set_pseudo_atomic_interrupted(thread)                           \
     (dynamic_space_free_pointer                                         \
      = (lispobj*) ((unsigned long) dynamic_space_free_pointer | flag_PseudoAtomicInterrupted))
+#endif
 
 #endif
 

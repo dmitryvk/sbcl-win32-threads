@@ -22,13 +22,17 @@
 #include "globals.h"
 #include "validate.h"
 
-#ifdef FOREIGN_FUNCTION_CALL_FLAG
+#ifndef LISP_FEATURE_SB_THREAD
 int foreign_function_call_active;
 #endif
 
+#if !defined(LISP_FEATURE_SB_THREAD)
 lispobj *current_control_stack_pointer;
+#endif
+#if defined(LISP_FEATURE_X86) || defined(LISP_FEATURE_X86_64) || !defined(LISP_FEATURE_SB_THREAD)
 lispobj *current_control_frame_pointer;
-#ifndef BINDING_STACK_POINTER
+#endif
+#if !defined(BINDING_STACK_POINTER) && !defined(LISP_FEATURE_SB_THREAD)
 lispobj *current_binding_stack_pointer;
 #endif
 
@@ -56,15 +60,26 @@ void globals_init(void)
 {
     /* Space, stack, and free pointer vars are initialized by
      * validate() and coreparse(). */
+#if defined(LISP_FEATURE_X86) || defined(LISP_FEATURE_X86_64) || !defined(LISP_FEATURE_SB_THREAD)
     current_control_frame_pointer = (lispobj *)0;
+#endif
 
 #ifndef LISP_FEATURE_GENCGC
     /* no GC trigger yet */
     current_auto_gc_trigger = NULL;
 #endif
 
-#ifdef FOREIGN_FUNCTION_CALL_FLAG
+#ifndef LISP_FEATURE_SB_THREAD
+#if defined(LISP_FEATURE_X86) || defined(LISP_FEATURE_X86_64)
+    /* KLUDGE: x86oids always think they're in lisp code.  See the
+     * comment at the bottom of
+     * interrupt.c/fake_foreign_function_call() and the lack of any
+     * access to foreign_function_call_active or the corresponding
+     * thread slot in x86{,-64}-assem.S. */
+    foreign_function_call_active = 0;
+#else
     foreign_function_call_active = 1;
+#endif
 #endif
 
 #if defined(LISP_FEATURE_SB_THREAD) && !defined(LISP_FEATURE_GCC_TLS)

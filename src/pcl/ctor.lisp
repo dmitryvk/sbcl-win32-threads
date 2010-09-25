@@ -124,7 +124,7 @@
 ;;; funcallable instance is set to it.
 ;;;
 (!defstruct-with-alternate-metaclass ctor
-  :slot-names (function-name class-or-name class initargs safe-p)
+  :slot-names (function-name class-or-name class initargs state safe-p)
   :boa-constructor %make-ctor
   :superclass-name function
   :metaclass-name static-classoid
@@ -142,7 +142,8 @@
 ;;; optimized constructor function when called.
 (defun install-initial-constructor (ctor &key force-p)
   (when (or force-p (ctor-class ctor))
-    (setf (ctor-class ctor) nil)
+    (setf (ctor-class ctor) nil
+          (ctor-state ctor) 'initial)
     (setf (funcallable-instance-fun ctor)
           #'(lambda (&rest args)
               (install-optimized-constructor ctor)
@@ -163,7 +164,7 @@
 ;;; Keep this a separate function for testing.
 (defun make-ctor (function-name class-name initargs safe-p)
   (without-package-locks ; for (setf symbol-function)
-    (let ((ctor (%make-ctor function-name class-name nil initargs safe-p)))
+    (let ((ctor (%make-ctor function-name class-name nil initargs nil safe-p)))
       (install-initial-constructor ctor :force-p t)
       (push ctor *all-ctors*)
       (setf (fdefinition function-name) ctor)
@@ -348,9 +349,9 @@
 
 (define-compiler-macro make-instance (&whole form &rest args &environment env)
   (declare (ignore args))
-  ;; Compiling an optimized constructor for a non-standard class means compiling a
-  ;; lambda with (MAKE-INSTANCE #<SOME-CLASS X> ...) in it -- need
-  ;; to make sure we don't recurse there.
+  ;; Compiling an optimized constructor for a non-standard class means
+  ;; compiling a lambda with (MAKE-INSTANCE #<SOME-CLASS X> ...) in it
+  ;; -- need to make sure we don't recurse there.
   (or (unless *compiling-optimized-constructor*
         (make-instance->constructor-call form (safe-code-p env)))
       form))
@@ -402,9 +403,9 @@
                 (setf (info :function :where-from function-name) :defined)
                 (when (info :function :assumed-type function-name)
                   (setf (info :function :assumed-type function-name) nil)))
-              ;; Return code constructing a ctor at load time, which, when
-              ;; called, will set its funcallable instance function to an
-              ;; optimized constructor function.
+              ;; Return code constructing a ctor at load time, which,
+              ;; when called, will set its funcallable instance
+              ;; function to an optimized constructor function.
               `(locally
                    (declare (disable-package-locks ,function-name))
                  (let ((.x. (load-time-value
@@ -420,7 +421,8 @@
                            ,function-name))
                    (funcall (function ,function-name) ,@value-forms))))
             (when (and class-arg (not (constantp class-arg)))
-              ;; Build an inline cache: a CONS, with the actual cache in the CDR.
+              ;; Build an inline cache: a CONS, with the actual cache
+              ;; in the CDR.
               `(locally (declare (disable-package-locks .cache. .class-arg. .store. .fun.
                                                         make-instance))
                  (let* ((.cache. (load-time-value (cons 'ctor-cache nil)))
@@ -428,9 +430,10 @@
                         (.class-arg. ,class-arg))
                    (multiple-value-bind (.fun. .new-store.)
                        (ensure-cached-ctor .class-arg. .store. ',initargs ',safe-code-p)
-                     ;; Thread safe: if multiple threads hit this in paralle, the update
-                     ;; from the other one is just lost -- no harm done, except for the
-                     ;; need to redo the work next time.
+                     ;; Thread safe: if multiple threads hit this in
+                     ;; parallel, the update from the other one is
+                     ;; just lost -- no harm done, except for the need
+                     ;; to redo the work next time.
                      (unless (eq .store. .new-store.)
                        (setf (cdr .cache.) .new-store.))
                      (funcall (truly-the function .fun.) ,@value-forms))))))))))
@@ -463,14 +466,15 @@
         (%force-cache-flushes class))
       (setf (ctor-class ctor) class)
       (pushnew ctor (plist-value class 'ctors) :test #'eq)
-      (setf (funcallable-instance-fun ctor)
-            (multiple-value-bind (form locations names)
-                (constructor-function-form ctor)
+      (multiple-value-bind (form locations names optimizedp)
+          (constructor-function-form ctor)
+        (setf (funcallable-instance-fun ctor)
               (apply
                (let ((*compiling-optimized-constructor* t))
                  (handler-bind ((compiler-note #'muffle-warning))
                    (compile nil `(lambda ,names ,form))))
-               locations))))))
+               locations)
+              (ctor-state ctor) (if optimizedp 'optimized 'fallback))))))
 
 (defun constructor-function-form (ctor)
   (let* ((class (ctor-class ctor))
@@ -582,8 +586,9 @@
         `(lambda ,lambda-list
            (declare #.*optimize-speed*)
            ;; The CTOR MAKE-INSTANCE optimization checks for
-           ;; *COMPILING-OPTIMIZED-CONSTRUCTOR* which is bound around compilation of
-           ;; the constructor, hence avoiding the possibility of endless recursion.
+           ;; *COMPILING-OPTIMIZED-CONSTRUCTOR* which is bound around
+           ;; compilation of the constructor, hence avoiding the
+           ;; possibility of endless recursion.
            (make-instance ,class ,@initargs))
         (let ((defaults (class-default-initargs class)))
           (when defaults
@@ -614,7 +619,8 @@
              (return (funcall ,ctor ,@(make-ctor-parameter-list ctor))))
            ,(wrap-in-allocate-forms ctor body before-method-p)))
        locations
-       names))))
+       names
+       t))))
 
 ;;; Return a form wrapped around BODY that allocates an instance
 ;;; constructed by CTOR.  BEFORE-METHOD-P set means we have to run
@@ -908,14 +914,15 @@
 ;;; *******************************
 
 (defun update-ctors (reason &key class name generic-function method)
-  (labels ((reset (class &optional ri-cache-p (ctorsp t))
+  (labels ((reset (class &optional initarg-caches-p (ctorsp t))
              (when ctorsp
                (dolist (ctor (plist-value class 'ctors))
                  (install-initial-constructor ctor)))
-             (when ri-cache-p
-               (setf (plist-value class 'ri-initargs) ()))
+             (when initarg-caches-p
+               (dolist (cache '(mi-initargs ri-initargs))
+                 (setf (plist-value class cache) ())))
              (dolist (subclass (class-direct-subclasses class))
-               (reset subclass ri-cache-p ctorsp))))
+               (reset subclass initarg-caches-p ctorsp))))
     (ecase reason
       ;; CLASS must have been specified.
       (finalize-inheritance
@@ -932,8 +939,16 @@
        (flet ((class-of-1st-method-param (method)
                 (type-class (first (method-specializers method)))))
          (case (generic-function-name generic-function)
-           ((make-instance allocate-instance
-             initialize-instance shared-initialize)
+           ((make-instance allocate-instance)
+            ;; FIXME: I can't see a way of working out which classes a
+            ;; given metaclass specializer are applicable to short of
+            ;; iterating and testing with class-of.  It would be good
+            ;; to not invalidate caches of system classes at this
+            ;; point (where it is not legal to define a method
+            ;; applicable to them on system functions).  -- CSR,
+            ;; 2010-07-13
+            (reset (find-class 'standard-object) t t))
+           ((initialize-instance shared-initialize)
             (reset (class-of-1st-method-param method) t t))
            ((reinitialize-instance)
             (reset (class-of-1st-method-param method) t nil))
@@ -953,11 +968,57 @@
         (when (and class (class-finalized-p class))
           (install-optimized-constructor ctor))))))
 
+(defun maybe-call-ctor (class initargs)
+  (flet ((frob-initargs (ctor)
+           (do ((ctail (ctor-initargs ctor))
+                (itail initargs)
+                (args nil))
+               ((or (null ctail) (null itail))
+                (values (nreverse args) (and (null ctail) (null itail))))
+             (unless (eq (pop ctail) (pop itail))
+               (return nil))
+             (let ((cval (pop ctail))
+                   (ival (pop itail)))
+               (if (constantp cval)
+                   (unless (eql cval ival)
+                     (return nil))
+                   (push ival args))))))
+    (dolist (ctor (plist-value class 'ctors))
+      (when (eq (ctor-state ctor) 'optimized)
+        (multiple-value-bind (ctor-args matchp)
+            (frob-initargs ctor)
+          (when matchp
+            (return (apply ctor ctor-args))))))))
+
+;;; FIXME: CHECK-FOO-INITARGS share most of their bodies.
+(defun check-mi-initargs (class initargs)
+  (let* ((class-proto (class-prototype class))
+         (keys (plist-keys initargs))
+         (cache (plist-value class 'mi-initargs))
+         (cached (assoc keys cache :test #'equal))
+         (invalid-keys
+          (if (consp cached)
+              (cdr cached)
+              (let ((invalid
+                     (check-initargs-1
+                      class initargs
+                      (list (list* 'allocate-instance class initargs)
+                            (list* 'initialize-instance class-proto initargs)
+                            (list* 'shared-initialize class-proto t initargs))
+                      t nil)))
+                (setf (plist-value class 'mi-initargs)
+                      (acons keys invalid cache))
+                invalid))))
+    (when invalid-keys
+      ;; FIXME: should have an operation here, and maybe a set of
+      ;; valid keys.
+      (error 'initarg-error :class class :initargs invalid-keys))))
+
 (defun check-ri-initargs (instance initargs)
   (let* ((class (class-of instance))
          (keys (plist-keys initargs))
-         (cached (assoc keys (plist-value class 'ri-initargs)
-                        :test #'equal))
+         (cache (plist-value class 'ri-initargs))
+         (cached (assoc keys cache :test #'equal))
          (invalid-keys
           (if (consp cached)
               (cdr cached)
@@ -971,7 +1032,7 @@
                             (list* 'shared-initialize instance nil initargs))
                       t nil)))
                 (setf (plist-value class 'ri-initargs)
-                      (acons keys invalid cached))
+                      (acons keys invalid cache))
                 invalid))))
     (when invalid-keys
       (error 'initarg-error :class class :initargs invalid-keys))))

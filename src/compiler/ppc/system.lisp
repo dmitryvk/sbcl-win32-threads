@@ -217,6 +217,22 @@
   (:generator 1
     (inst unimp pending-interrupt-trap)))
 
+#!+sb-thread
+(defknown current-thread-offset-sap ((unsigned-byte 64))
+  system-area-pointer (flushable))
+
+#!+sb-thread
+(define-vop (current-thread-offset-sap)
+  (:results (sap :scs (sap-reg)))
+  (:result-types system-area-pointer)
+  (:translate current-thread-offset-sap)
+  (:args (n :scs (unsigned-reg) :target sap))
+  (:arg-types unsigned-num)
+  (:policy :fast-safe)
+  (:generator 2
+    (inst slwi n n word-shift)
+    (inst lwzx sap thread-base-tn n)))
+
 (define-vop (halt)
   (:generator 1
     (inst unimp halt-trap)))
@@ -234,3 +250,38 @@
       (inst lwz count count-vector offset)
       (inst addi count count 1)
       (inst stw count count-vector offset))))
+
+;;;; Memory barrier support
+
+#!+memory-barrier-vops
+(define-vop (%compiler-barrier)
+  (:policy :fast-safe)
+  (:translate %compiler-barrier)
+  (:generator 3))
+
+#!+memory-barrier-vops
+(define-vop (%memory-barrier)
+  (:policy :fast-safe)
+  (:translate %memory-barrier)
+  (:generator 3
+     (inst sync)))
+
+#!+memory-barrier-vops
+(define-vop (%read-barrier)
+  (:policy :fast-safe)
+  (:translate %read-barrier)
+  (:generator 3
+     (inst sync)))
+
+#!+memory-barrier-vops
+(define-vop (%write-barrier)
+  (:policy :fast-safe)
+  (:translate %write-barrier)
+  (:generator 3
+    (inst sync)))
+
+#!+memory-barrier-vops
+(define-vop (%data-dependency-barrier)
+  (:policy :fast-safe)
+  (:translate %data-dependency-barrier)
+  (:generator 3))

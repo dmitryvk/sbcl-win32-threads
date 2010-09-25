@@ -138,6 +138,10 @@ initial_thread_trampoline(struct thread *th)
 #ifdef LISP_FEATURE_SB_THREAD
     pthread_setspecific(lisp_thread, (void *)1);
 #endif
+#if defined(LISP_FEATURE_SB_THREAD) && defined(LISP_FEATURE_PPC)
+    /* SIG_STOP_FOR_GC defaults to blocked on PPC? */
+    unblock_gc_signals(0,0);
+#endif
     function = th->no_tls_value_marker;
     th->no_tls_value_marker = NO_TLS_VALUE_MARKER_WIDETAG;
     if(arch_os_thread_init(th)==0) return 1;
@@ -427,10 +431,14 @@ create_thread_struct(lispobj initial_function) {
   make_fixnum(THREAD_SLOT_OFFSET_WORDS(field))
 
         STATIC_TLS_INIT(BINDING_STACK_START,binding_stack_start);
+#ifdef BINDING_STACK_POINTER
         STATIC_TLS_INIT(BINDING_STACK_POINTER,binding_stack_pointer);
+#endif
         STATIC_TLS_INIT(CONTROL_STACK_START,control_stack_start);
         STATIC_TLS_INIT(CONTROL_STACK_END,control_stack_end);
+#ifdef ALIEN_STACK
         STATIC_TLS_INIT(ALIEN_STACK,alien_stack_pointer);
+#endif
 #if defined(LISP_FEATURE_X86) || defined (LISP_FEATURE_X86_64)
         STATIC_TLS_INIT(PSEUDO_ATOMIC_BITS,pseudo_atomic_bits);
 #endif
@@ -447,7 +455,7 @@ create_thread_struct(lispobj initial_function) {
     th->control_stack_guard_page_protected = T;
     th->alien_stack_start=
         (lispobj*)((void*)th->binding_stack_start+BINDING_STACK_SIZE);
-    th->binding_stack_pointer=th->binding_stack_start;
+    set_binding_stack_pointer(th,th->binding_stack_start);
     th->this=th;
     th->os_thread=0;
 #ifdef LISP_FEATURE_SB_THREAD
@@ -466,11 +474,21 @@ create_thread_struct(lispobj initial_function) {
 #else
     th->alien_stack_pointer=((void *)th->alien_stack_start);
 #endif
-#if defined(LISP_FEATURE_X86) || defined (LISP_FEATURE_X86_64)
+#if defined(LISP_FEATURE_X86) || defined (LISP_FEATURE_X86_64) || defined(LISP_FEATURE_SB_THREAD)
     th->pseudo_atomic_bits=0;
 #endif
 #ifdef LISP_FEATURE_GENCGC
     gc_set_region_empty(&th->alloc_region);
+#endif
+#ifdef LISP_FEATURE_SB_THREAD
+    /* This parallels the same logic in globals.c for the
+     * single-threaded foreign_function_call_active, KLUDGE and
+     * all. */
+#if defined(LISP_FEATURE_X86) || defined(LISP_FEATURE_X86_64)
+    th->foreign_function_call_active = 0;
+#else
+    th->foreign_function_call_active = 1;
+#endif
 #endif
 
 #ifndef LISP_FEATURE_SB_THREAD
@@ -484,12 +502,8 @@ create_thread_struct(lispobj initial_function) {
     SetSymbolValue(CONTROL_STACK_START,(lispobj)th->control_stack_start,th);
     SetSymbolValue(CONTROL_STACK_END,(lispobj)th->control_stack_end,th);
 #if defined(LISP_FEATURE_X86) || defined (LISP_FEATURE_X86_64)
-    SetSymbolValue(BINDING_STACK_POINTER,(lispobj)th->binding_stack_pointer,th);
     SetSymbolValue(ALIEN_STACK,(lispobj)th->alien_stack_pointer,th);
     SetSymbolValue(PSEUDO_ATOMIC_BITS,(lispobj)th->pseudo_atomic_bits,th);
-#else
-    current_binding_stack_pointer=th->binding_stack_pointer;
-    current_control_stack_pointer=th->control_stack_start;
 #endif
 #endif
     bind_variable(CURRENT_CATCH_BLOCK,make_fixnum(0),th);
@@ -500,6 +514,9 @@ create_thread_struct(lispobj initial_function) {
     bind_variable(ALLOW_WITH_INTERRUPTS,T,th);
     bind_variable(GC_PENDING,NIL,th);
     bind_variable(ALLOC_SIGNAL,NIL,th);
+#ifdef PINNED_OBJECTS
+    bind_variable(PINNED_OBJECTS,NIL,th);
+#endif
 #ifdef LISP_FEATURE_SB_THREAD
     bind_variable(STOP_FOR_GC_PENDING,NIL,th);
 #endif
@@ -507,6 +524,9 @@ create_thread_struct(lispobj initial_function) {
     bind_variable(GC_SAFE,NIL,th);
     bind_variable(IN_SAFEPOINT,NIL,th);
     bind_variable(DISABLE_SAFEPOINTS,NIL,th);
+#endif
+#ifndef LISP_FEATURE_C_STACK_IS_CONTROL_STACK
+    access_control_stack_pointer(th)=th->control_stack_start;
 #endif
 
     th->interrupt_data = (struct interrupt_data *)

@@ -2537,7 +2537,7 @@ scrub_control_stack(void)
 #ifdef LISP_FEATURE_C_STACK_IS_CONTROL_STACK
     sp = (lispobj *)&sp - 1;
 #else
-    sp = current_control_stack_pointer;
+    sp = access_control_stack_pointer(th);
 #endif
  scrub:
     if ((((os_vm_address_t)sp < (hard_guard_page_address + os_vm_page_size)) &&
@@ -2568,3 +2568,202 @@ scrub_control_stack(void)
     } while (((unsigned long)++sp) & (BYTES_ZERO_BEFORE_END - 1));
 #endif
 }
+
+#if !defined(LISP_FEATURE_X86) && !defined(LISP_FEATURE_X86_64)
+
+/* Scavenging Interrupt Contexts */
+
+static int boxed_registers[] = BOXED_REGISTERS;
+
+/* The GC has a notion of an "interior pointer" register, an unboxed
+ * register that typically contains a pointer to inside an object
+ * referenced by another pointer.  The most obvious of these is the
+ * program counter, although many compiler backends define a "Lisp
+ * Interior Pointer" register known to the runtime as reg_LIP, and
+ * various CPU architectures have other registers that also partake of
+ * the interior-pointer nature.  As the code for pairing an interior
+ * pointer value up with its "base" register, and fixing it up after
+ * scavenging is complete is horribly repetitive, a few macros paper
+ * over the monotony.  --AB, 2010-Jul-14 */
+
+/* These macros are only ever used over a lexical environment which
+ * defines a pointer to an os_context_t called context, thus we don't
+ * bother to pass that context in as a parameter. */
+
+/* Define how to access a given interior pointer. */
+#define ACCESS_INTERIOR_POINTER_pc \
+    *os_context_pc_addr(context)
+#define ACCESS_INTERIOR_POINTER_lip \
+    *os_context_register_addr(context, reg_LIP)
+#define ACCESS_INTERIOR_POINTER_lr \
+    *os_context_lr_addr(context)
+#define ACCESS_INTERIOR_POINTER_npc \
+    *os_context_npc_addr(context)
+#define ACCESS_INTERIOR_POINTER_ctr \
+    *os_context_ctr_addr(context)
+
+#define INTERIOR_POINTER_VARS(name) \
+    unsigned long name##_offset;    \
+    int name##_register_pair
+
+#define PAIR_INTERIOR_POINTER(name)                             \
+    pair_interior_pointer(context,                              \
+                          ACCESS_INTERIOR_POINTER_##name,       \
+                          &name##_offset,                       \
+                          &name##_register_pair)
+
+/* One complexity here is that if a paired register is not found for
+ * an interior pointer, then that pointer does not get updated.
+ * Originally, there was some commentary about using an index of -1
+ * when calling os_context_register_addr() on SPARC referring to the
+ * program counter, but the real reason is to allow an interior
+ * pointer register to point to the runtime, read-only space, or
+ * static space without problems. */
+#define FIXUP_INTERIOR_POINTER(name)                                    \
+    do {                                                                \
+        if (name##_register_pair >= 0) {                                \
+            ACCESS_INTERIOR_POINTER_##name =                            \
+                (*os_context_register_addr(context,                     \
+                                           name##_register_pair)        \
+                 & ~LOWTAG_MASK)                                        \
+                + name##_offset;                                        \
+        }                                                               \
+    } while (0)
+
+
+static void
+pair_interior_pointer(os_context_t *context, unsigned long pointer,
+                      unsigned long *saved_offset, int *register_pair)
+{
+    int i;
+
+    /*
+     * I (RLT) think this is trying to find the boxed register that is
+     * closest to the LIP address, without going past it.  Usually, it's
+     * reg_CODE or reg_LRA.  But sometimes, nothing can be found.
+     */
+    /* 0x7FFFFFFF on 32-bit platforms;
+       0x7FFFFFFFFFFFFFFF on 64-bit platforms */
+    *saved_offset = (((unsigned long)1) << (N_WORD_BITS - 1)) - 1;
+    *register_pair = -1;
+    for (i = 0; i < (sizeof(boxed_registers) / sizeof(int)); i++) {
+        unsigned long reg;
+        long offset;
+        int index;
+
+        index = boxed_registers[i];
+        reg = *os_context_register_addr(context, index);
+
+        /* An interior pointer is never relative to a non-pointer
+         * register (an oversight in the original implementation).
+         * The simplest argument for why this is true is to consider
+         * the fixnum that happens by coincide to be the word-index in
+         * memory of the header for some object plus two.  This is
+         * happenstance would cause the register containing the fixnum
+         * to be selected as the register_pair if the interior pointer
+         * is to anywhere after the first two words of the object.
+         * The fixnum won't be changed during GC, but the object might
+         * move, thus destroying the interior pointer.  --AB,
+         * 2010-Jul-14 */
+
+        if (is_lisp_pointer(reg) &&
+            ((reg & ~LOWTAG_MASK) <= pointer)) {
+            offset = pointer - (reg & ~LOWTAG_MASK);
+            if (offset < *saved_offset) {
+                *saved_offset = offset;
+                *register_pair = index;
+            }
+        }
+    }
+}
+
+static void
+scavenge_interrupt_context(os_context_t * context)
+{
+    int i;
+
+    /* FIXME: The various #ifdef noise here is precisely that: noise.
+     * Is it possible to fold it into the macrology so that we have
+     * one set of #ifdefs and then INTERIOR_POINTER_VARS /et alia/
+     * compile out for the registers that don't exist on a given
+     * platform? */
+
+    INTERIOR_POINTER_VARS(pc);
+#ifdef reg_LIP
+    INTERIOR_POINTER_VARS(lip);
+#endif
+#ifdef ARCH_HAS_LINK_REGISTER
+    INTERIOR_POINTER_VARS(lr);
+#endif
+#ifdef ARCH_HAS_NPC_REGISTER
+    INTERIOR_POINTER_VARS(npc);
+#endif
+#ifdef LISP_FEATURE_PPC
+    INTERIOR_POINTER_VARS(ctr);
+#endif
+
+    PAIR_INTERIOR_POINTER(pc);
+#ifdef reg_LIP
+    PAIR_INTERIOR_POINTER(lip);
+#endif
+#ifdef ARCH_HAS_LINK_REGISTER
+    PAIR_INTERIOR_POINTER(lr);
+#endif
+#ifdef ARCH_HAS_NPC_REGISTER
+    PAIR_INTERIOR_POINTER(npc);
+#endif
+#ifdef LISP_FEATURE_PPC
+    PAIR_INTERIOR_POINTER(ctr);
+#endif
+
+    /* Scavenge all boxed registers in the context. */
+    for (i = 0; i < (sizeof(boxed_registers) / sizeof(int)); i++) {
+        int index;
+        lispobj foo;
+
+        index = boxed_registers[i];
+        foo = *os_context_register_addr(context, index);
+        scavenge(&foo, 1);
+        *os_context_register_addr(context, index) = foo;
+
+        /* this is unlikely to work as intended on bigendian
+         * 64 bit platforms */
+
+        scavenge((lispobj *) os_context_register_addr(context, index), 1);
+    }
+
+    /* Now that the scavenging is done, repair the various interior
+     * pointers. */
+    FIXUP_INTERIOR_POINTER(pc);
+#ifdef reg_LIP
+    FIXUP_INTERIOR_POINTER(lip);
+#endif
+#ifdef ARCH_HAS_LINK_REGISTER
+    FIXUP_INTERIOR_POINTER(lr);
+#endif
+#ifdef ARCH_HAS_NPC_REGISTER
+    FIXUP_INTERIOR_POINTER(npc);
+#endif
+#ifdef LISP_FEATURE_PPC
+    FIXUP_INTERIOR_POINTER(ctr);
+#endif
+}
+
+void
+scavenge_interrupt_contexts(struct thread *th)
+{
+    int i, index;
+    os_context_t *context;
+
+    index = fixnum_value(SymbolValue(FREE_INTERRUPT_CONTEXT_INDEX,th));
+
+#if defined(DEBUG_PRINT_CONTEXT_INDEX)
+    printf("Number of active contexts: %d\n", index);
+#endif
+
+    for (i = 0; i < index; i++) {
+        context = th->interrupt_contexts[i];
+        scavenge_interrupt_context(context);
+    }
+}
+#endif /* x86oid targets */

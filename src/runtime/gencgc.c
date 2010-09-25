@@ -59,6 +59,9 @@
 #if defined(LUTEX_WIDETAG)
 #include "pthread-lutex.h"
 #endif
+#if !defined(LISP_FEATURE_X86) && !defined(LISP_FEATURE_X86_64)
+#include "genesis/cons.h"
+#endif
 
 /* forward declarations */
 page_index_t  gc_find_freeish_pages(long *restart_page_ptr, long nbytes,
@@ -2537,6 +2540,8 @@ possibly_valid_dynamic_space_pointer(lispobj *pointer)
     return looks_like_valid_lisp_pointer_p(pointer, start_addr);
 }
 
+#endif  // defined(LISP_FEATURE_X86) || defined(LISP_FEATURE_X86_64)
+
 /* Adjust large bignum and vector objects. This will adjust the
  * allocated region if the size has shrunk, and move unboxed objects
  * into unboxed pages. The pages are not promoted here, and the
@@ -2755,11 +2760,17 @@ preserve_pointer(void *addr)
      * address referring to something in a CodeObject). This is
      * expensive but important, since it vastly reduces the
      * probability that random garbage will be bogusly interpreted as
-     * a pointer which prevents a page from moving. */
+     * a pointer which prevents a page from moving.
+     *
+     * This only needs to happen on x86oids, where this is used for
+     * conservative roots.  Non-x86oid systems only ever call this
+     * function on known-valid lisp objects. */
+#if defined(LISP_FEATURE_X86) || defined(LISP_FEATURE_X86_64)
     if (!(code_page_p(addr_page_index)
           || (is_lisp_pointer((lispobj)addr) &&
               possibly_valid_dynamic_space_pointer(addr))))
         return;
+#endif
 
     /* Find the beginning of the region.  Note that there may be
      * objects in the region preceding the one that we were passed a
@@ -2838,9 +2849,6 @@ preserve_pointer(void *addr)
     /* Check that the page is now static. */
     gc_assert(page_table[addr_page_index].dont_move != 0);
 }
-
-#endif  // defined(LISP_FEATURE_X86) || defined(LISP_FEATURE_X86_64)
-
 
 /* If the given page is not write-protected, then scan it for pointers
  * to younger generations or the top temp. generation, if no
@@ -3826,169 +3834,19 @@ write_protect_generation_pages(generation_index_t generation)
 }
 
 #if !defined(LISP_FEATURE_X86) && !defined(LISP_FEATURE_X86_64)
-
 static void
-scavenge_control_stack()
+scavenge_control_stack(struct thread *th)
 {
-    unsigned long control_stack_size;
-
-    /* This is going to be a big problem when we try to port threads
-     * to PPC... CLH */
-    struct thread *th = arch_os_get_current_thread();
     lispobj *control_stack =
         (lispobj *)(th->control_stack_start);
+    unsigned long control_stack_size =
+        access_control_stack_pointer(th) - control_stack;
 
-    control_stack_size = current_control_stack_pointer - control_stack;
     scavenge(control_stack, control_stack_size);
-
-    /* Scrub the unscavenged control stack space, so that we can't run
-     * into any stale pointers in a later GC. */
-    scrub_control_stack();
 }
-
-/* Scavenging Interrupt Contexts */
-
-static int boxed_registers[] = BOXED_REGISTERS;
-
-static void
-scavenge_interrupt_context(os_context_t * context)
-{
-    int i;
-
-#ifdef reg_LIP
-    unsigned long lip;
-    unsigned long lip_offset;
-    int lip_register_pair;
-#endif
-    unsigned long pc_code_offset;
-
-#ifdef ARCH_HAS_LINK_REGISTER
-    unsigned long lr_code_offset;
-#endif
-#ifdef ARCH_HAS_NPC_REGISTER
-    unsigned long npc_code_offset;
 #endif
 
-#ifdef reg_LIP
-    /* Find the LIP's register pair and calculate it's offset */
-    /* before we scavenge the context. */
-
-    /*
-     * I (RLT) think this is trying to find the boxed register that is
-     * closest to the LIP address, without going past it.  Usually, it's
-     * reg_CODE or reg_LRA.  But sometimes, nothing can be found.
-     */
-    lip = *os_context_register_addr(context, reg_LIP);
-    lip_offset = 0x7FFFFFFF;
-    lip_register_pair = -1;
-    for (i = 0; i < (sizeof(boxed_registers) / sizeof(int)); i++) {
-        unsigned long reg;
-        long offset;
-        int index;
-
-        index = boxed_registers[i];
-        reg = *os_context_register_addr(context, index);
-        if ((reg & ~((1L<<N_LOWTAG_BITS)-1)) <= lip) {
-            offset = lip - reg;
-            if (offset < lip_offset) {
-                lip_offset = offset;
-                lip_register_pair = index;
-            }
-        }
-    }
-#endif /* reg_LIP */
-
-    /* Compute the PC's offset from the start of the CODE */
-    /* register. */
-    pc_code_offset = *os_context_pc_addr(context)
-        - *os_context_register_addr(context, reg_CODE);
-#ifdef ARCH_HAS_NPC_REGISTER
-    npc_code_offset = *os_context_npc_addr(context)
-        - *os_context_register_addr(context, reg_CODE);
-#endif /* ARCH_HAS_NPC_REGISTER */
-
-#ifdef ARCH_HAS_LINK_REGISTER
-    lr_code_offset =
-        *os_context_lr_addr(context) -
-        *os_context_register_addr(context, reg_CODE);
-#endif
-
-    /* Scanvenge all boxed registers in the context. */
-    for (i = 0; i < (sizeof(boxed_registers) / sizeof(int)); i++) {
-        int index;
-        lispobj foo;
-
-        index = boxed_registers[i];
-        foo = *os_context_register_addr(context, index);
-        scavenge(&foo, 1);
-        *os_context_register_addr(context, index) = foo;
-
-        scavenge((lispobj*) &(*os_context_register_addr(context, index)), 1);
-    }
-
-#ifdef reg_LIP
-    /* Fix the LIP */
-
-    /*
-     * But what happens if lip_register_pair is -1?
-     * *os_context_register_addr on Solaris (see
-     * solaris_register_address in solaris-os.c) will return
-     * &context->uc_mcontext.gregs[2]. But gregs[2] is REG_nPC. Is
-     * that what we really want? My guess is that that is not what we
-     * want, so if lip_register_pair is -1, we don't touch reg_LIP at
-     * all. But maybe it doesn't really matter if LIP is trashed?
-     */
-    if (lip_register_pair >= 0) {
-        *os_context_register_addr(context, reg_LIP) =
-            *os_context_register_addr(context, lip_register_pair)
-            + lip_offset;
-    }
-#endif /* reg_LIP */
-
-    /* Fix the PC if it was in from space */
-    if (from_space_p(*os_context_pc_addr(context)))
-        *os_context_pc_addr(context) =
-            *os_context_register_addr(context, reg_CODE) + pc_code_offset;
-
-#ifdef ARCH_HAS_LINK_REGISTER
-    /* Fix the LR ditto; important if we're being called from
-     * an assembly routine that expects to return using blr, otherwise
-     * harmless */
-    if (from_space_p(*os_context_lr_addr(context)))
-        *os_context_lr_addr(context) =
-            *os_context_register_addr(context, reg_CODE) + lr_code_offset;
-#endif
-
-#ifdef ARCH_HAS_NPC_REGISTER
-    if (from_space_p(*os_context_npc_addr(context)))
-        *os_context_npc_addr(context) =
-            *os_context_register_addr(context, reg_CODE) + npc_code_offset;
-#endif /* ARCH_HAS_NPC_REGISTER */
-}
-
-void
-scavenge_interrupt_contexts(void)
-{
-    int i, index;
-    os_context_t *context;
-
-    struct thread *th=arch_os_get_current_thread();
-
-    index = fixnum_value(SymbolValue(FREE_INTERRUPT_CONTEXT_INDEX,0));
-
-#if defined(DEBUG_PRINT_CONTEXT_INDEX)
-    printf("Number of active contexts: %d\n", index);
-#endif
-
-    for (i = 0; i < index; i++) {
-        context = th->interrupt_contexts[i];
-        scavenge_interrupt_context(context);
-    }
-}
-
-#endif
-
-#if defined(LISP_FEATURE_SB_THREAD)
+#if defined(LISP_FEATURE_SB_THREAD) && (defined(LISP_FEATURE_X86) || defined(LISP_FEATURE_X86_64))
 static void
 preserve_context_registers (os_context_t *c)
 {
@@ -4052,9 +3910,8 @@ garbage_collect_generation(generation_index_t generation, int raise)
     unsigned long bytes_freed;
     page_index_t i;
     unsigned long static_space_size;
-#if defined(LISP_FEATURE_X86) || defined(LISP_FEATURE_X86_64)
     struct thread *th;
-#endif
+
     gc_assert(generation <= HIGHEST_NORMAL_GENERATION);
 
     /* The oldest generation can't be raised. */
@@ -4178,6 +4035,19 @@ garbage_collect_generation(generation_index_t generation, int raise)
             }
         }
     }
+#else
+    /* Non-x86oid systems don't have "conservative roots" as such, but
+     * the same mechanism is used for objects pinned for use by alien
+     * code. */
+    for_each_thread(th) {
+        lispobj pin_list = SymbolTlValue(PINNED_OBJECTS,th);
+        while (pin_list != NIL) {
+            struct cons *list_entry =
+                (struct cons *)native_pointer(pin_list);
+            preserve_pointer(list_entry->car);
+            pin_list = list_entry->cdr;
+        }
+    }
 #endif
 
 #if QSHOW
@@ -4197,8 +4067,18 @@ garbage_collect_generation(generation_index_t generation, int raise)
      * If not x86, we need to scavenge the interrupt context(s) and the
      * control stack.
      */
-    scavenge_interrupt_contexts();
-    scavenge_control_stack();
+    {
+        struct thread *th;
+        for_each_thread(th) {
+            scavenge_interrupt_contexts(th);
+            scavenge_control_stack(th);
+        }
+
+        /* Scrub the unscavenged control stack space, so that we can't run
+         * into any stale pointers in a later GC (this is done by the
+         * stop-for-gc handler in the other threads). */
+        scrub_control_stack();
+    }
 #endif
 
     /* Scavenge the Lisp functions of the interrupt handlers, taking

@@ -619,23 +619,23 @@ build_fake_control_stack_frames(struct thread *th,os_context_t *context)
 
     /* Build a fake stack frame or frames */
 
-    current_control_frame_pointer =
+    access_control_frame_pointer(th) =
         (lispobj *)(unsigned long)
             (*os_context_register_addr(context, reg_CSP));
     if ((lispobj *)(unsigned long)
             (*os_context_register_addr(context, reg_CFP))
-        == current_control_frame_pointer) {
+        == access_control_frame_pointer(th)) {
         /* There is a small window during call where the callee's
          * frame isn't built yet. */
         if (lowtag_of(*os_context_register_addr(context, reg_CODE))
             == FUN_POINTER_LOWTAG) {
             /* We have called, but not built the new frame, so
              * build it for them. */
-            current_control_frame_pointer[0] =
+            access_control_frame_pointer(th)[0] =
                 *os_context_register_addr(context, reg_OCFP);
-            current_control_frame_pointer[1] =
+            access_control_frame_pointer(th)[1] =
                 *os_context_register_addr(context, reg_LRA);
-            current_control_frame_pointer += 8;
+            access_control_frame_pointer(th) += 8;
             /* Build our frame on top of it. */
             oldcont = (lispobj)(*os_context_register_addr(context, reg_CFP));
         }
@@ -654,11 +654,11 @@ build_fake_control_stack_frames(struct thread *th,os_context_t *context)
         oldcont = (lispobj)(*os_context_register_addr(context, reg_CFP));
     }
 
-    current_control_stack_pointer = current_control_frame_pointer + 8;
+    access_control_stack_pointer(th) = access_control_frame_pointer(th) + 8;
 
-    current_control_frame_pointer[0] = oldcont;
-    current_control_frame_pointer[1] = NIL;
-    current_control_frame_pointer[2] =
+    access_control_frame_pointer(th)[0] = oldcont;
+    access_control_frame_pointer(th)[1] = NIL;
+    access_control_frame_pointer(th)[2] =
         (lispobj)(*os_context_register_addr(context, reg_CODE));
 #endif
 }
@@ -676,8 +676,12 @@ fake_foreign_function_call(os_context_t *context)
 
     /* Get current Lisp state from context. */
 #ifdef reg_ALLOC
+#ifdef LISP_FEATURE_SB_THREAD
+    thread->pseudo_atomic_bits =
+#else
     dynamic_space_free_pointer =
         (lispobj *)(unsigned long)
+#endif
             (*os_context_register_addr(context, reg_ALLOC));
 /*     fprintf(stderr,"dynamic_space_free_pointer: %p\n", */
 /*             dynamic_space_free_pointer); */
@@ -694,9 +698,8 @@ fake_foreign_function_call(os_context_t *context)
 #endif
 #endif
 #ifdef reg_BSP
-    current_binding_stack_pointer =
-        (lispobj *)(unsigned long)
-            (*os_context_register_addr(context, reg_BSP));
+    set_binding_stack_pointer(thread,
+        *os_context_register_addr(context, reg_BSP));
 #endif
 
     build_fake_control_stack_frames(thread,context);
@@ -715,8 +718,11 @@ fake_foreign_function_call(os_context_t *context)
 
     thread->interrupt_contexts[context_index] = context;
 
-#ifdef FOREIGN_FUNCTION_CALL_FLAG
-    foreign_function_call_active = 1;
+#if !defined(LISP_FEATURE_X86) && !defined(LISP_FEATURE_X86_64)
+    /* x86oid targets don't maintain the foreign function call flag at
+     * all, so leave them to believe that they are never in foreign
+     * code. */
+    foreign_function_call_active_p(thread) = 1;
 #endif
 }
 
@@ -730,14 +736,12 @@ undo_fake_foreign_function_call(os_context_t *context)
     /* Block all blockable signals. */
     block_blockable_signals(0, 0);
 
-#ifdef FOREIGN_FUNCTION_CALL_FLAG
-    foreign_function_call_active = 0;
-#endif
+    foreign_function_call_active_p(thread) = 0;
 
     /* Undo dynamic binding of FREE_INTERRUPT_CONTEXT_INDEX */
     unbind(thread);
 
-#ifdef reg_ALLOC
+#if defined(reg_ALLOC) && !defined(LISP_FEATURE_SB_THREAD)
     /* Put the dynamic space free pointer back into the context. */
     *os_context_register_addr(context, reg_ALLOC) =
         (unsigned long) dynamic_space_free_pointer
@@ -748,6 +752,17 @@ undo_fake_foreign_function_call(os_context_t *context)
       & ~LOWTAG_MASK)
       | ((unsigned long) dynamic_space_free_pointer & LOWTAG_MASK);
     */
+#endif
+#if defined(reg_ALLOC) && defined(LISP_FEATURE_SB_THREAD)
+    /* Put the pseudo-atomic bits and dynamic space free pointer back
+     * into the context (p-a-bits for p-a, and dynamic space free
+     * pointer for ROOM). */
+    *os_context_register_addr(context, reg_ALLOC) =
+        (unsigned long) dynamic_space_free_pointer
+        | (thread->pseudo_atomic_bits & LOWTAG_MASK);
+    /* And clear them so we don't get bit later by call-in/call-out
+     * not updating them. */
+    thread->pseudo_atomic_bits = 0;
 #endif
 }
 
@@ -977,9 +992,7 @@ interrupt_handle_pending(os_context_t *context)
 void
 interrupt_handle_now(int signal, siginfo_t *info, os_context_t *context)
 {
-#ifdef FOREIGN_FUNCTION_CALL_FLAG
     boolean were_in_lisp;
-#endif
     union interrupt_handler handler;
 
     check_blockables_blocked_or_lose(0);
@@ -995,10 +1008,8 @@ interrupt_handle_now(int signal, siginfo_t *info, os_context_t *context)
         return;
     }
 
-#ifdef FOREIGN_FUNCTION_CALL_FLAG
-    were_in_lisp = !foreign_function_call_active;
+    were_in_lisp = !foreign_function_call_active_p(arch_os_get_current_thread());
     if (were_in_lisp)
-#endif
     {
         fake_foreign_function_call(context);
     }
@@ -1055,9 +1066,7 @@ interrupt_handle_now(int signal, siginfo_t *info, os_context_t *context)
 #endif
     }
 
-#ifdef FOREIGN_FUNCTION_CALL_FLAG
     if (were_in_lisp)
-#endif
     {
         undo_fake_foreign_function_call(context); /* block signals again */
     }
@@ -1213,6 +1222,7 @@ void
 sig_stop_for_gc_handler(int signal, siginfo_t *info, os_context_t *context)
 {
     struct thread *thread=arch_os_get_current_thread();
+    boolean was_in_lisp;
 
     /* Test for GC_INHIBIT _first_, else we'd trap on every single
      * pseudo atomic until gc is finally allowed. */
@@ -1233,8 +1243,12 @@ sig_stop_for_gc_handler(int signal, siginfo_t *info, os_context_t *context)
 
     /* Not PA and GC not inhibited -- we can stop now. */
 
-    /* need the context stored so it can have registers scavenged */
-    fake_foreign_function_call(context);
+    was_in_lisp = !foreign_function_call_active_p(arch_os_get_current_thread());
+
+    if (was_in_lisp) {
+        /* need the context stored so it can have registers scavenged */
+        fake_foreign_function_call(context);
+    }
 
     /* Not pending anymore. */
     SetSymbolValue(GC_PENDING,NIL,thread);
@@ -1279,7 +1293,9 @@ sig_stop_for_gc_handler(int signal, siginfo_t *info, os_context_t *context)
              fixnum_value(thread_state(thread)));
     }
 
-    undo_fake_foreign_function_call(context);
+    if (was_in_lisp) {
+        undo_fake_foreign_function_call(context);
+    }
 }
 
 #endif
@@ -1482,7 +1498,7 @@ arrange_return_to_lisp_function(os_context_t *context, lispobj function)
     *os_context_register_addr(context,reg_LIP) =
         (os_context_register_t)(unsigned long)code;
     *os_context_register_addr(context,reg_CFP) =
-        (os_context_register_t)(unsigned long)current_control_frame_pointer;
+        (os_context_register_t)(unsigned long)access_control_frame_pointer(th);
 #endif
 #ifdef ARCH_HAS_NPC_REGISTER
     *os_context_npc_addr(context) =

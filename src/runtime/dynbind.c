@@ -27,20 +27,12 @@
 #include "genesis/thread.h"
 #include "genesis/static-symbols.h"
 
-#if defined(BINDING_STACK_POINTER)
-#define GetBSP() ((struct binding *)SymbolValue(BINDING_STACK_POINTER,thread))
-#define SetBSP(value) SetSymbolValue(BINDING_STACK_POINTER, (lispobj)(value),thread)
-#else
-#define GetBSP() ((struct binding *)current_binding_stack_pointer)
-#define SetBSP(value) (current_binding_stack_pointer=(lispobj *)(value))
-#endif
-
 void bind_variable(lispobj symbol, lispobj value, void *th)
 {
     struct binding *binding;
     struct thread *thread=(struct thread *)th;
-    binding = GetBSP();
-    SetBSP(binding+1);
+    binding = (struct binding *)get_binding_stack_pointer(thread);
+    set_binding_stack_pointer(thread,binding+1);
 #ifdef LISP_FEATURE_SB_THREAD
     {
         struct symbol *sym=(struct symbol *)native_pointer(symbol);
@@ -48,7 +40,7 @@ void bind_variable(lispobj symbol, lispobj value, void *th)
             lispobj *tls_index_lock=
                 &((struct symbol *)native_pointer(TLS_INDEX_LOCK))->value;
             FSHOW_SIGNAL((stderr, "entering dynbind tls alloc\n"));
-            set_pseudo_atomic_atomic(th);
+            set_pseudo_atomic_atomic(thread);
             get_spinlock(tls_index_lock,(long)th);
             if(!sym->tls_index) {
                 sym->tls_index=SymbolValue(FREE_TLS_INDEX,0);
@@ -60,8 +52,8 @@ void bind_variable(lispobj symbol, lispobj value, void *th)
             }
             release_spinlock(tls_index_lock);
             FSHOW_SIGNAL((stderr, "exiting dynbind tls alloc\n"));
-            clear_pseudo_atomic_atomic(th);
-            if (get_pseudo_atomic_interrupted(th))
+            clear_pseudo_atomic_atomic(thread);
+            if (get_pseudo_atomic_interrupted(thread))
                 do_pending_interrupt();
         }
     }
@@ -78,7 +70,7 @@ unbind(void *th)
     struct binding *binding;
     lispobj symbol;
 
-    binding = GetBSP() - 1;
+    binding = ((struct binding *)get_binding_stack_pointer(thread)) - 1;
 
     symbol = binding->symbol;
 
@@ -87,7 +79,7 @@ unbind(void *th)
     binding->symbol = 0;
     binding->value = 0;
 
-    SetBSP(binding);
+    set_binding_stack_pointer(thread,binding);
 }
 
 void
@@ -117,7 +109,7 @@ unbind_to_here(lispobj *bsp,void *th)
 {
     struct thread *thread=(struct thread *)th;
     struct binding *target = (struct binding *)bsp;
-    struct binding *binding = GetBSP();
+    struct binding *binding = (struct binding *)get_binding_stack_pointer(thread);
     lispobj symbol;
 
     while (target < binding) {
@@ -132,5 +124,5 @@ unbind_to_here(lispobj *bsp,void *th)
             binding->value = 0;
         }
     }
-    SetBSP(binding);
+    set_binding_stack_pointer(thread,binding);
 }

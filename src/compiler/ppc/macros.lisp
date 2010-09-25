@@ -55,7 +55,37 @@
                         (ash ,',offset word-shift)
                         (- other-pointer-lowtag))))))))
   (frob value)
-  (frob function))
+  (frob function)
+
+  ;; FIXME: These are only good for static-symbols, so why not
+  ;; statically-allocate the static-symbol TLS slot indices at
+  ;; cross-compile time so we can just use a fixed offset within the
+  ;; TLS block instead of mucking about with the extra memory access
+  ;; (and temp register, for stores)?
+  #!+sb-thread
+  (defmacro load-tl-symbol-value (reg symbol)
+    `(progn
+       (inst lwz ,reg null-tn
+             (+ (static-symbol-offset ',symbol)
+                (ash symbol-tls-index-slot word-shift)
+                (- other-pointer-lowtag)))
+       (inst lwzx ,reg thread-base-tn ,reg)))
+  #!-sb-thread
+  (defmacro load-tl-symbol-value (reg symbol)
+    `(load-symbol-value ,reg ,symbol))
+
+  #!+sb-thread
+  (defmacro store-tl-symbol-value (reg symbol temp)
+    `(progn
+       (inst lwz ,temp null-tn
+             (+ (static-symbol-offset ',symbol)
+                (ash symbol-tls-index-slot word-shift)
+                (- other-pointer-lowtag)))
+       (inst stwx ,reg thread-base-tn ,temp)))
+  #!-sb-thread
+  (defmacro store-tl-symbol-value (reg symbol temp)
+    (declare (ignore temp))
+    `(store-symbol-value ,reg ,symbol)))
 
 (defmacro load-type (target source &optional (offset 0))
   "Loads the type bits of a pointer into target independent of
@@ -79,16 +109,13 @@
     ;; (loadw ,lip ,function function-code-offset function-pointer-type)
     (inst addi ,lip ,function (- (* n-word-bytes simple-fun-code-offset) fun-pointer-lowtag))
     (inst mtctr ,lip)
-    (move code-tn ,function)
     (inst bctr)))
 
-(defmacro lisp-return (return-pc lip &key (offset 0) (frob-code t))
+(defmacro lisp-return (return-pc lip &key (offset 0))
   "Return to RETURN-PC."
   `(progn
      (inst addi ,lip ,return-pc (- (* (1+ ,offset) n-word-bytes) other-pointer-lowtag))
      (inst mtlr ,lip)
-     ,@(if frob-code
-         `((move code-tn ,return-pc)))
      (inst blr)))
 
 (defmacro emit-return-pc (label)
@@ -174,53 +201,68 @@
              (inst addi alloc-tn alloc-tn ,alloc-size)
              (inst add alloc-tn alloc-tn ,alloc-size))))
     #!+gencgc
-    (let ((fix-addr (gensym))
-          (inline-alloc (gensym)))
-      `(let ((,fix-addr (gen-label))
-             (,inline-alloc (gen-label)))
-         ;; Make temp-tn be the size
-         (cond ((numberp ,size)
-                (inst lr ,temp-tn ,size))
-               (t
-                (move ,temp-tn ,size)))
+    `(progn
+       ;; Make temp-tn be the size
+       (cond ((numberp ,size)
+              (inst lr ,temp-tn ,size))
+             (t
+              (move ,temp-tn ,size)))
 
+       #!-sb-thread
+       (inst lr ,flag-tn (make-fixup "boxed_region" :foreign))
+       #!-sb-thread
+       (inst lwz ,result-tn ,flag-tn 0)
+       #!+sb-thread
+       (inst lwz ,result-tn thread-base-tn (* thread-alloc-region-slot
+                                              n-word-bytes))
+
+       ;; we can optimize this to only use one fixup here, once we get
+       ;; it working
+       ;; (inst lr ,flag-tn (make-fixup "boxed_region" :foreign 4))
+       ;; (inst lwz ,flag-tn ,flag-tn 0)
+       #!-sb-thread
+       (inst lwz ,flag-tn ,flag-tn 4)
+       #!+sb-thread
+       (inst lwz ,flag-tn thread-base-tn (* (1+ thread-alloc-region-slot)
+                                            n-word-bytes))
+
+       (without-scheduling ()
+         ;; CAUTION: The C code depends on the exact order of
+         ;; instructions here.  In particular, immediately before the
+         ;; TW instruction must be an ADD or ADDI instruction, so it
+         ;; can figure out the size of the desired allocation and
+         ;; storing the new base pointer back to the allocation region
+         ;; must take two instructions (one on threaded targets).
+
+         ;; Now make result-tn point at the end of the object, to
+         ;; figure out if we overflowed the current region.
+         (inst add ,result-tn ,result-tn ,temp-tn)
+         ;; result-tn points to the new end of the region.  Did we go past
+         ;; the actual end of the region?  If so, we need a full alloc.
+         ;; The C code depends on this exact form of instruction.  If
+         ;; either changes, you have to change the other appropriately!
+         (inst tw :lge ,result-tn ,flag-tn)
+
+         ;; The C code depends on this instruction sequence taking up
+         ;; #!-sb-thread three #!+sb-thread one machine instruction.
+         ;; The lr of a fixup counts as two instructions.
+         #!-sb-thread
          (inst lr ,flag-tn (make-fixup "boxed_region" :foreign))
-         (inst lwz ,result-tn ,flag-tn 0)
-
-         ;; we can optimize this to only use one fixup here, once we get
-         ;; it working
-         ;; (inst lr ,flag-tn (make-fixup "boxed_region" :foreign 4))
-         ;; (inst lwz ,flag-tn ,flag-tn 0)
-         (inst lwz ,flag-tn ,flag-tn 4)
-
-         (without-scheduling ()
-           ;; CAUTION: The C code depends on the exact order of
-           ;; instructions here.  In particular, three instructions before
-           ;; the TW instruction must be an ADD or ADDI instruction, so it
-           ;; can figure out the size of the desired allocation.
-           ;; Now make result-tn point at the end of the object, to
-           ;; figure out if we overflowed the current region.
-           (inst add ,result-tn ,result-tn ,temp-tn)
-           ;; result-tn points to the new end of the region.  Did we go past
-           ;; the actual end of the region?  If so, we need a full alloc.
-           ;; The C code depends on this exact form of instruction.  If
-           ;; either changes, you have to change the other appropriately!
-           (inst cmpw ,result-tn ,flag-tn)
-
-           (inst bng ,inline-alloc)
-           (inst tw :lge ,result-tn ,flag-tn))
-         (inst b ,fix-addr)
-
-         (emit-label ,inline-alloc)
-         (inst lr ,flag-tn (make-fixup "boxed_region" :foreign))
+         #!-sb-thread
          (inst stw ,result-tn ,flag-tn 0)
+         #!+sb-thread
+         (inst stw ,result-tn thread-base-tn (* thread-alloc-region-slot
+                                                n-word-bytes)))
 
-         (emit-label ,fix-addr)
-         ;; At this point, result-tn points at the end of the object.
-         ;; Adjust to point to the beginning.
-         (inst sub ,result-tn ,result-tn ,temp-tn)
-         ;; Set the lowtag appropriately
-         (inst ori ,result-tn ,result-tn ,lowtag))))
+       ;; Should the allocation trap above have fired, the runtime
+       ;; arranges for execution to resume here, just after where we
+       ;; would have updated the free pointer in the alloc region.
+
+       ;; At this point, result-tn points at the end of the object.
+       ;; Adjust to point to the beginning.
+       (inst sub ,result-tn ,result-tn ,temp-tn)
+       ;; Set the lowtag appropriately
+       (inst ori ,result-tn ,result-tn ,lowtag)))
 
 (defmacro with-fixed-allocation ((result-tn flag-tn temp-tn type-code size
                                             &key (lowtag other-pointer-lowtag))
@@ -319,6 +361,11 @@
 OBJECTS will not be moved in memory for the duration of BODY.
 Useful for e.g. foreign calls where another thread may trigger
 garbage collection.  This is currently implemented by disabling GC"
+  #!-gencgc
   (declare (ignore objects))            ; should we eval these for side-effect?
+  #!-gencgc
   `(without-gcing
-    ,@body))
+    ,@body)
+  #!+gencgc
+  `(let ((*pinned-objects* (list* ,@objects *pinned-objects*)))
+     ,@body))

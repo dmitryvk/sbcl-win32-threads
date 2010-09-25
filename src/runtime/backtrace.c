@@ -114,13 +114,13 @@ cs_valid_pointer_p(struct call_frame *pointer)
 {
     struct thread *thread=arch_os_get_current_thread();
     return (((char *) thread->control_stack_start <= (char *) pointer) &&
-            ((char *) pointer < (char *) current_control_stack_pointer));
+            ((char *) pointer < (char *) access_control_stack_pointer(thread)));
 }
 
 static void
 call_info_from_lisp_state(struct call_info *info)
 {
-    info->frame = (struct call_frame *)current_control_frame_pointer;
+    info->frame = (struct call_frame *)access_control_frame_pointer(arch_os_get_current_thread());
     info->interrupted = 0;
     info->code = NULL;
     info->lra = 0;
@@ -218,7 +218,7 @@ previous_info(struct call_info *info)
 }
 
 void
-backtrace(int nframes)
+lisp_backtrace(int nframes)
 {
     struct call_info info;
 
@@ -529,7 +529,7 @@ describe_thread_state(void)
     printf("Pending handler = %p\n", data->pending_handler);
 }
 
-/* This function has been split from backtrace() to enable Lisp
+/* This function has been split from lisp_backtrace() to enable Lisp
  * backtraces from gdb with call backtrace_from_fp(...). Useful for
  * example when debugging threading deadlocks.
  */
@@ -577,7 +577,7 @@ backtrace_from_fp(void *fp, int nframes)
 }
 
 void
-backtrace(int nframes)
+lisp_backtrace(int nframes)
 {
   void *fp;
 

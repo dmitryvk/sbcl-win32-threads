@@ -29,22 +29,16 @@
   (apply #'make-instance (find-class class) initargs))
 
 (defmethod make-instance ((class class) &rest initargs)
+  (let ((instance-or-nil (maybe-call-ctor class initargs)))
+    (when instance-or-nil
+      (return-from make-instance instance-or-nil)))
   (unless (class-finalized-p class) (finalize-inheritance class))
   (let ((class-default-initargs (class-default-initargs class)))
     (when class-default-initargs
       (setf initargs (default-initargs initargs class-default-initargs)))
     (when initargs
-      (when (and (eq **boot-state** 'complete)
-                 (not (getf initargs :allow-other-keys)))
-        (let ((class-proto (class-prototype class)))
-          (check-initargs-1
-           class initargs
-           (append (compute-applicable-methods
-                    #'allocate-instance (list class))
-                   (compute-applicable-methods
-                    #'initialize-instance (list class-proto))
-                   (compute-applicable-methods
-                    #'shared-initialize (list class-proto t)))))))
+      (when (eq **boot-state** 'complete)
+        (check-mi-initargs class initargs)))
     (let ((instance (apply #'allocate-instance class initargs)))
       (apply #'initialize-instance instance initargs)
       instance)))

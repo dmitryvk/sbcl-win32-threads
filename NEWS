@@ -1,4 +1,33 @@
 ;;;; -*- coding: utf-8; fill-column: 78 -*-
+changes in sbcl-1.0.42 relative to sbcl-1.0.41
+  * build changes
+    ** Cross-compilation host is now specified to make.sh using
+       command-line argument --xc-host=<command> instead of a positional
+       argument. (thanks to Daniel Herring)
+    ** Install location can be specified to make.sh using command-line
+       argument --prefix=<path>. (lp#550889s, thanks to Daniel Herring)
+  * optimization: The default implementation of
+    COMPUTE-DISCRIMINATING-FUNCTION does much less wasted work.
+  * enhancement: Explicit memory barrier operations are now available for use
+    by multithreaded code.  See documentation for details.
+  * enhancement: Experimental support for threading on Linux/PPC.
+  * bug fix: RENAME-PACKAGE returns the package.  (Thanks to Eric Marsden)
+  * bug fix: EXPT signals an error if first argument is a zero and second
+    argument is a floating point zero. (lp#571581, thanks to Roman Marynchak)
+  * bug fix: DEFTYPE signals an error for non-list lambda-lists.
+    (lp#576594, thanks to Roman Marynchak)
+  * bug fix: make ASDF-INSTALL compatible with the now-included ASDF2.
+    (lp#612998, reported by Phil Hargett; patch from Jim Wise)
+
+changes in sbcl-1.0.41 relative to sbcl-1.0.40:
+  * optimization: validity of observed keyword initargs to MAKE-INSTANCE is
+    cached, leading to many fewer expensive calls to
+    COMPUTE-APPLICABLE-METHODS.
+  * optimization: in the (unoptimized) general method for MAKE-INSTANCE on a
+    CLASS argument, search for and call an appropriate optimized ctor function
+    if it exists.
+  * bug fix: WRITE always returns the correct value.
+
 changes in sbcl-1.0.40 relative to sbcl-1.0.39:
   * bug fix: readdir now works on :inode64 darwin builds (lp#592897)
   * bug fix: Name conflicts between symbols passed as arguments to a single
