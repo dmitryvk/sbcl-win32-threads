@@ -1089,7 +1089,7 @@ first thing to do is usually a WITH-INTERRUPTS or a
 WITHOUT-INTERRUPTS. Within a thread interrupts are queued, they are
 run in same the order they were sent."
   #!+(and sb-thread win32)
-  (let ((r (interrupt-lisp-thread (thread-os-thread thread) (get-lisp-obj-address (lambda () (sb!unix::invoke-interruption function))))))
+  (let ((r (interrupt-lisp-thread (thread-this thread) (get-lisp-obj-address (lambda () (sb!unix::invoke-interruption function))))))
     (zerop r))
   #!+(and (not sb-thread) win32)
   (progn

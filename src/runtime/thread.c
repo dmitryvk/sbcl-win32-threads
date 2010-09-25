@@ -659,21 +659,6 @@ int schedule_thread_interrupt(struct thread * th, lispobj interrupt_fn)
   odprintf("schedule_thread_interrupt(0x%p, 0x%p) end", th->os_thread, interrupt_fn);
 }
 
-struct thread * find_thread_by_os_thread(pthread_t thread)
-{
-  struct thread * retval = NULL;
-  struct thread * p;
-  
-  pthread_mutex_lock(&all_threads_lock);
-  for(p = all_threads; p; p = p->next) {
-    if (p->os_thread == thread)
-      retval = p;
-  }
-  pthread_mutex_unlock(&all_threads_lock);
-  
-  return retval;
-}
-
 const char * t_nil_str(lispobj value)
 {
 	if (value == T) return "T";
@@ -748,18 +733,17 @@ int check_pending_interrupts();
 
 // returns: 0 if interrupt is queued
 // -1 if max interrupts reached
-int interrupt_lisp_thread(pthread_t thread, lispobj interrupt_fn)
+int interrupt_lisp_thread(struct thread * thread, lispobj interrupt_fn)
 {
-  struct thread * th = find_thread_by_os_thread(thread);
   struct thread * self = arch_os_get_current_thread();
-  if (schedule_thread_interrupt(th, interrupt_fn) != 0) {
+  if (schedule_thread_interrupt(thread, interrupt_fn) != 0) {
     return -1;
   }
   
-  if (self == th) {
+  if (self == thread) {
     check_pending_interrupts();
   } else {
-    roll_thread_to_safepoint(th);
+    roll_thread_to_safepoint(thread);
   }
   
   return 0;
