@@ -640,21 +640,6 @@ struct threads_suspend_info suspend_info = {
   SUSPEND_REASON_NONE, 0, NULL, NULL
 };
 
-int sbcl_rand()
-{
-  static int a = 1664525;
-  static int c = 1013904223;
-  static int x = 134775813;
-  
-  x = a*x + c;
-  
-  return x;
-}
-
-void preempt_randomly()
-{
-}
-
 // returns: 0 if all is ok
 // -1 if max interrupts reached
 int schedule_thread_interrupt(struct thread * th, lispobj interrupt_fn)
@@ -673,9 +658,6 @@ int schedule_thread_interrupt(struct thread * th, lispobj interrupt_fn)
   }
   odprintf("schedule_thread_interrupt(0x%p, 0x%p) end", th->os_thread, interrupt_fn);
 }
-
-void gc_stop_the_world();
-void gc_start_the_world();
 
 struct thread * find_thread_by_os_thread(pthread_t thread)
 {
@@ -875,11 +857,8 @@ void gc_enter_unsafe_region()
 {
   struct thread * self = arch_os_get_current_thread();
   int errorCode = GetLastError();
-  preempt_randomly();
   bind_variable(GC_SAFE, NIL, self);
-  preempt_randomly();
   gc_safepoint();
-  preempt_randomly();
   SetLastError(errorCode);
 }
 
@@ -887,11 +866,8 @@ void gc_leave_region()
 {
   struct thread * self = arch_os_get_current_thread();
   int errorCode = GetLastError();
-  preempt_randomly();
   unbind_variable(GC_SAFE, self);
-  preempt_randomly();
   gc_safepoint();
-  preempt_randomly();
   SetLastError(errorCode);
 }
 
@@ -1105,8 +1081,6 @@ void gc_safepoint()
   if (!get_pseudo_atomic_atomic(self) && get_pseudo_atomic_interrupted(self))
     clear_pseudo_atomic_interrupted(self);
   
-  preempt_randomly();
-  
   done |= maybe_ack_gc_poll();
   done |= maybe_suspend_for_gc();
   done |= maybe_wait_until_gc_ends();
@@ -1120,8 +1094,6 @@ void gc_safepoint()
     goto maybe_again;
   }
     
-  preempt_randomly();
-  
   bind_variable(IN_SAFEPOINT, T, self);
   int bound = 1;
   
