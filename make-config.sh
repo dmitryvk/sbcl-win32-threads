@@ -261,6 +261,7 @@ case "$sbcl_os" in
         ;;
     win32)
         printf ' :win32' >> $ltf
+        printf ' :sb-pthread-futex' >> $ltf
         link_or_copy Config.$sbcl_arch-win32 Config
         link_or_copy $sbcl_arch-win32-os.h target-arch-os.h
         link_or_copy win32-os.h target-os.h
