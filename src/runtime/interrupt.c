@@ -444,7 +444,9 @@ unblock_deferrable_signals(sigset_t *where, sigset_t *old)
 void
 unblock_blockable_signals(sigset_t *where, sigset_t *old)
 {
+#if defined(LISP_FEATURE_WIN32)
     odprintf("unblock blockable");
+#endif
 #if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
     unblock_signals(&blockable_sigset, where, old);
 #endif
