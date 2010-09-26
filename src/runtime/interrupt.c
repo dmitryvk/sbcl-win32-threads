@@ -399,7 +399,9 @@ check_gc_signals_blocked_or_lose(sigset_t *sigset)
 void
 block_deferrable_signals(sigset_t *where, sigset_t *old)
 {
+#if defined(LISP_FEATURE_WIN32)
     odprintf("block deferrable");
+#endif
 #if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
     block_signals(&deferrable_sigset, where, old);
 #endif
@@ -408,7 +410,9 @@ block_deferrable_signals(sigset_t *where, sigset_t *old)
 void
 block_blockable_signals(sigset_t *where, sigset_t *old)
 {
+#if defined(LISP_FEATURE_WIN32)
     odprintf("block blockable");
+#endif
 #if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
     block_signals(&blockable_sigset, where, old);
 #endif
@@ -426,7 +430,9 @@ block_gc_signals(sigset_t *where, sigset_t *old)
 void
 unblock_deferrable_signals(sigset_t *where, sigset_t *old)
 {
+#if defined(LISP_FEATURE_WIN32)
     odprintf("unblock deferrable");
+#endif
 #if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
     if (interrupt_handler_pending_p())
         lose("unblock_deferrable_signals: losing proposition\n");
@@ -447,7 +453,9 @@ unblock_blockable_signals(sigset_t *where, sigset_t *old)
 void
 unblock_gc_signals(sigset_t *where, sigset_t *old)
 {
+#if defined(LISP_FEATURE_WIN32)
     odprintf("unblock gc");
+#endif
 #if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
     unblock_signals(&gc_sigset, where, old);
 #endif
@@ -1936,11 +1944,11 @@ handle_trap(os_context_t *context, int trap)
     case trap_PendingInterrupt:
         FSHOW((stderr, "/<trap pending interrupt>\n"));
         arch_skip_instruction(context);
-        #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
         gc_safepoint();
-        #else
+#else
         interrupt_handle_pending(context);
-        #endif
+#endif
         break;
     case trap_Error:
     case trap_Cerror:

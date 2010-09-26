@@ -122,9 +122,9 @@ GNAME(call_into_c):
 	fstp	%st(0)
 	fstp	%st(0)
 
-  pusha
-  call GNAME(gc_enter_safe_region)
-  popa
+	pusha
+	call GNAME(gc_enter_safe_region)
+	popa
 	call	*%eax		  # normal callout using Lisp stack
 	movl	%eax,%ecx	  # remember integer return value
 
@@ -148,9 +148,9 @@ GNAME(call_into_c):
 
 /* Restore the return value. */
 	movl	%ecx,%eax	# maybe return value
-  pusha
-  call GNAME(gc_leave_region)
-  popa
+	pusha
+	call GNAME(gc_leave_region)
+	popa
 
 /* Return. */
 	jmp	*%ebx
@@ -169,9 +169,9 @@ Lfp_rtn_value:
 
 /* We don't need to restore eax, because the result is in st(0). */
 
-  pusha
-  call GNAME(gc_leave_region)
-  popa
+	pusha
+	call GNAME(gc_leave_region)
+	popa
 /* Return. FIXME: It would be nice to restructure this to use RET. */	
 	jmp	*%ebx
 
@@ -210,9 +210,9 @@ GNAME(call_into_lisp_first_time):
 	.align	align_16byte,0x90
 GNAME(call_into_lisp):
 
-  pusha
-  call GNAME(gc_enter_unsafe_region)
-  popa
+	pusha
+	call GNAME(gc_enter_unsafe_region)
+	popa
   
 	pushl	%ebp		# Save old frame pointer.
 	movl	%esp,%ebp	# Establish new frame.
@@ -325,9 +325,9 @@ LsingleValue:
 	
 	popl	%ebp		# c-sp
 	movl	%edx,%eax	# c-val
-  pusha
-  call GNAME(gc_leave_region)
-  popa
+	pusha
+	call GNAME(gc_leave_region)
+	popa
 	ret
 	SIZE(GNAME(call_into_lisp))
 
@@ -563,6 +563,7 @@ DEFINE_ALLOC_TO_REG(alloc_16_to_edi,%edi,$16)
 
 /* FIXME Win32 */
 #define ALLOC_OVERFLOW(size)                                    \
+        /* Calculate the size for the allocation. */            \
         subl    START_REGION,size;                              \
         ALLOC(size)
 

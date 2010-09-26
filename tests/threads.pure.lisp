@@ -186,7 +186,6 @@
 ;;; wich _appear_ to be caused by malloc() and free() not being thread safe: an
 ;;; interrupted malloc in one thread can apparently block a free in another. There
 ;;; are also some indications that pthread_mutex_lock is not re-entrant.
-
 #+(and sb-thread (not darwin))
 (with-test (:name symbol-value-in-thread.3)
   (let* ((parent *current-thread*)

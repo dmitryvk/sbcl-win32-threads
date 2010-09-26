@@ -402,7 +402,9 @@
 
 (with-test (:name (:semaphore :wait-forever)
             :fails-on :win32)
+  #+win32
   (error "No timeout support on win32")
+  #-win32
   (let ((sem (make-semaphore :count 0)))
     (assert (raises-timeout-p
               (sb-ext:with-timeout 0.1

@@ -30,8 +30,6 @@ struct alloc_region { };
 
 #ifdef LISP_FEATURE_WIN32
 
-#define GC_SAFE_CHANGING (0xFFFFFFFFU)
-
 enum threads_suspend_reason { SUSPEND_REASON_NONE, SUSPEND_REASON_GC, SUSPEND_REASON_INTERRUPT, SUSPEND_REASON_GCING };
 
 struct threads_suspend_info {
@@ -78,14 +76,14 @@ static const char * get_thread_state_as_string(struct thread * thread)
 static inline void
 set_thread_state(struct thread *thread, lispobj state)
 {
-    #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     lispobj old_state;
-    #endif
+#endif
     pthread_mutex_lock(thread->state_lock);
-    #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     old_state = thread->state;
     odprintf("changing thread state of 0x%p from %s to %s", thread->os_thread, get_thread_state_string(old_state), get_thread_state_string(state));
-    #endif
+#endif
     thread->state = state;
     pthread_cond_broadcast(thread->state_cond);
     pthread_mutex_unlock(thread->state_lock);

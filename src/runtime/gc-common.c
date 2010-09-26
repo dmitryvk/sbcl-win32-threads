@@ -2414,11 +2414,10 @@ maybe_gc(os_context_t *context)
 {
     lispobj gc_happened;
     struct thread *thread = arch_os_get_current_thread();
-    
 
-    #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     if (context)
-    #endif
+#endif
     fake_foreign_function_call(context);
     /* SUB-GC may return without GCing if *GC-INHIBIT* is set, in
      * which case we will be running with no gc trigger barrier

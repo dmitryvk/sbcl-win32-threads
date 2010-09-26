@@ -360,14 +360,14 @@ testing whether the current thread is holding a mutex see
 HOLDING-MUTEX-P."
   ;; Make sure to get the current value.
   (sb!ext:compare-and-swap (mutex-%owner mutex) nil nil))
-  
+
 (defun get-mutex (mutex &optional (new-owner *current-thread*)
                                   (waitp t) (timeout nil))
   #!+sb-doc
   "Deprecated in favor of GRAB-MUTEX."
   (declare (type mutex mutex) (optimize (speed 3))
            #!-sb-thread (ignore waitp timeout))
-  (let ((sb!impl::*disable-safepoints* t))
+  (let (#!+win32 (sb!impl::*disable-safepoints* t))
   (unless new-owner
     (setq new-owner *current-thread*))
   (barrier (:read))
@@ -501,7 +501,7 @@ IF-NOT-OWNER is :FORCE)."
   (declare (type mutex mutex))
   ;; Order matters: set owner to NIL before releasing state.
   (let* ((self *current-thread*)
-         (sb!impl::*disable-safepoints* t)
+         #!+win32 (sb!impl::*disable-safepoints* t)
          (old-owner (sb!ext:compare-and-swap (mutex-%owner mutex) self nil)))
     (unless (eql self old-owner)
       (ecase if-not-owner
@@ -531,8 +531,7 @@ IF-NOT-OWNER is :FORCE)."
                                    +lock-contested+ +lock-free+)
           (with-pinned-objects (mutex)
             (futex-wake (mutex-state-address mutex) 1))))
-      nil)
-      nil))
+      nil)))
 
 
 ;;;; Waitqueues/condition variables
@@ -651,7 +650,7 @@ this call."
   #!-sb-thread (error "Not supported in unithread builds.")
   #!+sb-thread
   (declare (type (and fixnum (integer 1)) n))
-  (let ((sb!impl::*disable-safepoints* t))
+  (let (#!+win32 (sb!impl::*disable-safepoints* t))
   (/show0 "Entering CONDITION-NOTIFY")
   #!+sb-thread
   (progn

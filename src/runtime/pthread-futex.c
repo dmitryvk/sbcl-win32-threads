@@ -237,10 +237,11 @@ futex_wait(int *lock_word, int oldval, long sec, unsigned long usec)
     struct futex *futex;
     sigset_t oldset;
     struct timeval tv, *timeout;
+
 #if defined(LISP_FEATURE_WIN32)
     gc_enter_safe_region();
 #endif
-    
+
 again:
     if (sec < 0)
         timeout = NULL;

@@ -30,7 +30,6 @@
 #endif
 
 #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
-
 void map_gc_page();
 void unmap_gc_page();
 #endif

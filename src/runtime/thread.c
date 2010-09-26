@@ -358,7 +358,7 @@ free_thread_struct(struct thread *th)
 {
 #if defined(LIS_FEATURE_WIN32)
     if (th->interrupt_data) {
-        #if defined(LISP_FEATURE_WIN32)
+        #if defined(LISP_FEATURE_SB_THREAD)
         pthread_mutex_destroy(&th->interrupt_data->win32_data.lock);
         #endif
         os_invalidate_free((os_vm_address_t) th->interrupt_data,

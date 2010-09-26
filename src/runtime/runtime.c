@@ -296,7 +296,6 @@ struct runtime_options *runtime_options;
 char *saved_runtime_path = NULL;
 #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
 void pthreads_win32_init();
-extern pthread_mutex_t already_in_gc_lock;
 #endif
 
 
@@ -323,10 +322,9 @@ main(int argc, char *argv[], char *envp[])
     lispobj initial_function;
     const char *sbcl_home = getenv("SBCL_HOME");
 
-    #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
-    OutputDebugString("pthreads_win32_init");
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     pthreads_win32_init();
-    #endif
+#endif
 
     interrupt_init();
     block_blockable_signals(0, 0);
