@@ -421,7 +421,9 @@ block_blockable_signals(sigset_t *where, sigset_t *old)
 void
 block_gc_signals(sigset_t *where, sigset_t *old)
 {
+#if defined(LISP_FEATURE_WIN32)
     odprintf("block gc");
+#endif
 #if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
     block_signals(&gc_sigset, where, old);
 #endif
