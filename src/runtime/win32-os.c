@@ -426,16 +426,16 @@ handle_exception(EXCEPTION_RECORD *exception_record,
                  CONTEXT *context,
                  void *dispatcher_context)
 {
-#if defined(LISP_FEATURE_SB_THREAD)
     DWORD lasterror = GetLastError();
+#if defined(LISP_FEATURE_SB_THREAD)
     struct thread * self = arch_os_get_current_thread();
     os_context_t ctx;
     ctx.win32_context = context;
     pthread_sigmask(SIG_SETMASK, NULL, &ctx.sigmask);
     pthread_sigmask(SIG_BLOCK, &blockable_sigset, NULL);
+#endif
     /* For EXCEPTION_ACCESS_VIOLATION only. */
     void *fault_address = (void *)exception_record->ExceptionInformation[1];
-#endif
     odprintf("handle exception, EIP = 0x%p, code = 0x%p (addr = 0x%p)", context->Eip, exception_record->ExceptionCode, fault_address);
     if (exception_record->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND)) {
         /* If we're being unwound, be graceful about it. */
@@ -476,8 +476,6 @@ handle_exception(EXCEPTION_RECORD *exception_record,
     if (IS_TRAP_EXCEPTION(exception_record, context)) {
     #endif
         unsigned char trap;
-        #if defined(LISP_FEATURE_SB_THREAD)
-        #endif
 
         /* This is just for info in case the monitor wants to print an
          * approximation. */
@@ -623,10 +621,10 @@ handle_exception(EXCEPTION_RECORD *exception_record,
         /* If Lisp doesn't nlx, we need to put things back. */
         #if defined(LISP_FEATURE_SB_THREAD)
         undo_fake_foreign_function_call(&ctx);
+        gc_safepoint();
         #else
         undo_fake_foreign_function_call(context);
         #endif
-        gc_safepoint();
         SetLastError(lasterror);
 
         /* FIXME: HANDLE-WIN32-EXCEPTION should be allowed to decline */

@@ -356,7 +356,7 @@ new_thread_trampoline(struct thread *th)
 static void
 free_thread_struct(struct thread *th)
 {
-#if defined(LIS_FEATURE_WIN32)
+#if defined(LISP_FEATURE_WIN32)
     if (th->interrupt_data) {
         #if defined(LISP_FEATURE_SB_THREAD)
         pthread_mutex_destroy(&th->interrupt_data->win32_data.lock);
@@ -653,7 +653,7 @@ os_thread_t create_thread(lispobj initial_function) {
  * it's in the middle of allocation) then waits for another SIG_STOP_FOR_GC.
  */
 
-#if defined(LISP_FEATURE_WIN32)
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
 
 struct threads_suspend_info suspend_info = {
   0, PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
@@ -1276,7 +1276,7 @@ void gc_stop_the_world()
     gc_assert(lock_ret == 0);
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:got create_thread_lock\n"));
 #endif
-#ifdef LISP_FEATURE_WIN32
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     odprintf("taking world lock");
     pthread_mutex_lock(&suspend_info.world_lock);
     
@@ -1338,7 +1338,7 @@ void gc_stop_the_world()
         }
     }
 
-#ifdef LISP_FEATURE_WIN32    
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     /* Phase 2, wait until all threads 1) suspend themselves; or 2) are in gc-safe code */
     
     odprintf("phase 2");
@@ -1374,7 +1374,7 @@ void gc_stop_the_world()
         }
     }
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:end\n"));
-#ifdef LISP_FEATURE_WIN32
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     lock_suspend_info(__FILE__, __LINE__);
     suspend_info.reason = SUSPEND_REASON_GCING;
     unlock_suspend_info(__FILE__, __LINE__);
@@ -1392,7 +1392,7 @@ void gc_start_the_world()
      * restarting */
     FSHOW_SIGNAL((stderr,"/gc_start_the_world:begin\n"));
   
-#ifdef LISP_FEATURE_WIN32
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     odprintf("starting the world");
 
     lock_suspend_info(__FILE__, __LINE__);

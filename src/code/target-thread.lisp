@@ -367,7 +367,7 @@ HOLDING-MUTEX-P."
   "Deprecated in favor of GRAB-MUTEX."
   (declare (type mutex mutex) (optimize (speed 3))
            #!-sb-thread (ignore waitp timeout))
-  (let (#!+win32 (sb!impl::*disable-safepoints* t))
+  (let (#!+(and win32 sb-thread) (sb!impl::*disable-safepoints* t))
   (unless new-owner
     (setq new-owner *current-thread*))
   (barrier (:read))
@@ -501,7 +501,8 @@ IF-NOT-OWNER is :FORCE)."
   (declare (type mutex mutex))
   ;; Order matters: set owner to NIL before releasing state.
   (let* ((self *current-thread*)
-         #!+win32 (sb!impl::*disable-safepoints* t)
+         #!+(and win32 sb-thread)
+         (sb!impl::*disable-safepoints* t)
          (old-owner (sb!ext:compare-and-swap (mutex-%owner mutex) self nil)))
     (unless (eql self old-owner)
       (ecase if-not-owner
@@ -568,7 +569,7 @@ time we reacquire MUTEX and return to the caller.
 Note that if CONDITION-WAIT unwinds (due to eg. a timeout) instead of
 returning normally, it may do so without holding the mutex."
   #!-sb-thread (declare (ignore queue))
-  (let (#!+win32(sb!impl::*disable-safepoints* t))
+  (let (#!+(and win32 sb-thread) (sb!impl::*disable-safepoints* t))
   (assert mutex)
   #!-sb-thread (error "Not supported in unithread builds.")
   #!+sb-thread
@@ -650,7 +651,7 @@ this call."
   #!-sb-thread (error "Not supported in unithread builds.")
   #!+sb-thread
   (declare (type (and fixnum (integer 1)) n))
-  (let (#!+win32 (sb!impl::*disable-safepoints* t))
+  (let (#!+(and win32 sb-thread) (sb!impl::*disable-safepoints* t))
   (/show0 "Entering CONDITION-NOTIFY")
   #!+sb-thread
   (progn
