@@ -163,6 +163,36 @@
 (define-alien-routine ("Sleep@4" millisleep) void
   (milliseconds dword))
 
+#!+sb-thread
+(progn
+  (define-alien-routine ("win32_wait_object_or_signal" wait-object-or-signal) int
+    (handle handle))
+  (define-alien-type signed-filetime (signed 64))
+  (define-alien-routine ("CloseHandle@4" close-handle) bool
+    (handle handle))
+
+  (define-alien-routine ("CreateWaitableTimerA@12" create-waitable-timer) handle
+    (security-attributes (* t))
+    (manual-reset bool)
+    (name (* t)))
+
+  (define-alien-routine ("SetWaitableTimer@24" set-waitable-timer) bool
+    (handle handle)
+    (due-time signed-filetime :in-out)
+    (period dword)
+    (completion-routine (* t))
+    (arg-to-completion-routine (* t))
+    (resume bool))
+
+  (defun microsleep (microseconds)
+    (without-interrupts
+      (let ((timer (create-waitable-timer nil 0 nil)))
+        (set-waitable-timer timer (- (* 10 microseconds)) 0 nil nil 0)
+        (unwind-protect
+             (do () ((with-local-interrupts
+                       (zerop (wait-object-or-signal timer)))))
+          (close-handle timer))))))
+
 #!+sb-unicode
 (progn
   (defvar *ansi-codepage* nil)
