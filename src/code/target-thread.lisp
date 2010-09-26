@@ -568,7 +568,7 @@ time we reacquire MUTEX and return to the caller.
 Note that if CONDITION-WAIT unwinds (due to eg. a timeout) instead of
 returning normally, it may do so without holding the mutex."
   #!-sb-thread (declare (ignore queue))
-  (let ((sb!impl::*disable-safepoints* t))
+  (let (#!+win32(sb!impl::*disable-safepoints* t))
   (assert mutex)
   #!-sb-thread (error "Not supported in unithread builds.")
   #!+sb-thread
