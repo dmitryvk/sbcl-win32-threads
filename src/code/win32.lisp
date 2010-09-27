@@ -168,15 +168,15 @@
   (define-alien-routine ("win32_wait_object_or_signal" wait-object-or-signal) int
     (handle handle))
   (define-alien-type signed-filetime (signed 64))
-  (define-alien-routine ("CloseHandle@4" close-handle) bool
+  (define-alien-routine ("CloseHandle" close-handle) bool
     (handle handle))
 
-  (define-alien-routine ("CreateWaitableTimerA@12" create-waitable-timer) handle
+  (define-alien-routine ("CreateWaitableTimerA" create-waitable-timer) handle
     (security-attributes (* t))
     (manual-reset bool)
     (name (* t)))
 
-  (define-alien-routine ("SetWaitableTimer@24" set-waitable-timer) bool
+  (define-alien-routine ("SetWaitableTimer" set-waitable-timer) bool
     (handle handle)
     (due-time signed-filetime :in-out)
     (period dword)
