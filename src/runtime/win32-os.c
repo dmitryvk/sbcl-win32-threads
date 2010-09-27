@@ -729,6 +729,8 @@ void __stdcall RtlUnwind(void *, void *, void *, void *); /* I don't have winter
 void scratch(void)
 {
     CloseHandle(0);
+    CreateWaitableTimerA(NULL,FALSE,NULL);
+    SetWaitableTimer(NULL,NULL,0L,NULL,NULL,FALSE);
     FlushConsoleInputBuffer(0);
     FormatMessageA(0, 0, 0, 0, 0, 0, 0);
     FreeLibrary(0);
@@ -939,4 +941,13 @@ int win32_unix_read(int fd, void * buf, int count)
   }
 }
 
+int win32_wait_object_or_signal(HANDLE waitFor)
+{
+  pthread_t me = pthread_self();
+  HANDLE handles[2];
+  handles[0] = waitFor;
+  handles[1] = me->private_events[1];
+  return
+    WaitForMultipleObjects(2,handles, FALSE,INFINITE);
+}
 /* EOF */

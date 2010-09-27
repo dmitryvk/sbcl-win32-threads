@@ -182,7 +182,10 @@ any non-negative real number."
              (sb!unix:nanosleep (expt 10 8) 0))
     (sb!unix:nanosleep sec nsec))
   #!+win32
+  #!-sb-thread
   (sb!win32:millisleep (truncate (* seconds 1000)))
+  #!+sb-thread
+  (sb!win32::microsleep (truncate (* seconds 1000000)))
   nil)
 
 ;;;; the default toplevel function
