@@ -13,6 +13,9 @@
 #else
 struct alloc_region { };
 #endif
+#ifdef LISP_FEATURE_WIN32
+#include "win32-thread-private-events.h"
+#endif
 #include "genesis/symbol.h"
 #include "genesis/static-symbols.h"
 #include "genesis/thread.h"

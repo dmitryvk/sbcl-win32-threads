@@ -86,7 +86,6 @@ DWORD WINAPI Thread_Function(LPVOID param)
   void* arg = self->arg;
   void* retval = NULL;
   pthread_fn fn = self->start_routine;
-  unsigned int nEvent;
 
   TlsSetValue(thread_self_tls_index, self);
   self->retval = fn(arg);
@@ -102,10 +101,6 @@ DWORD WINAPI Thread_Function(LPVOID param)
   pthread_cond_destroy(&self->cond);
   CloseHandle(self->handle);
 
-  for (nEvent = 0; nEvent<sizeof(self->private_events)/
-         sizeof(self->private_events[0]); ++nEvent) {
-    CloseHandle(self->private_events[nEvent]);
-  }
   free(self);
   return 0;
 }
@@ -115,7 +110,6 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_
   pthread_t pth = (pthread_t)malloc(sizeof(pthread_thread));
   pthread_t self = pthread_self();
   int i;
-  unsigned int nEvent;
   HANDLE createdThread = CreateThread(NULL, attr ? attr->stack_size : 0,
                                       Thread_Function, pth, CREATE_SUSPENDED, NULL);
   if (!createdThread)
@@ -126,10 +120,6 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_
   pth->uninterruptible_section_nesting = 0;
   pth->waiting_cond = NULL;
   pth->in_safepoint = 0;
-  for (nEvent = 0; nEvent<sizeof(self->private_events)/
-         sizeof(self->private_events[0]); ++nEvent) {
-    pth->private_events[nEvent] = CreateEvent(NULL,FALSE,FALSE,NULL);
-  }
 
   if (self) {
     pth->blocked_signal_set = self->blocked_signal_set;
@@ -540,17 +530,12 @@ void pthread_unlock_structures()
 void pthreads_win32_init()
 {
   pthread_t pth = (pthread_t)malloc(sizeof(pthread_thread));
-  unsigned int nEvent;
   thread_self_tls_index = TlsAlloc();
   pth->start_routine = NULL;
   pth->arg = NULL;
   pth->uninterruptible_section_nesting = 0;
   pth->waiting_cond = NULL;
   pth->in_safepoint = 0;
-  for (nEvent = 0; nEvent<sizeof(pth->private_events)/
-         sizeof(pth->private_events[0]); ++nEvent) {
-    pth->private_events[nEvent] = CreateEvent(NULL,FALSE,FALSE,NULL);
-  }
   sigemptyset(&pth->blocked_signal_set);
   {
     int i;

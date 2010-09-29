@@ -278,6 +278,9 @@ new_thread_trampoline(struct thread *th)
 {
     lispobj function;
     int result, lock_ret;
+#if defined(LISP_FEATURE_WIN32)
+    int i;
+#endif
 
     FSHOW((stderr,"/creating thread %lu\n", thread_self()));
     check_deferrables_blocked_or_lose(0);
@@ -335,6 +338,13 @@ new_thread_trampoline(struct thread *th)
                   (sizeof (struct interrupt_data)));
 #endif
 
+#if defined(LISP_FEATURE_WIN32)
+    for (i = 0; i<sizeof(th->private_events.events)/
+           sizeof(th->private_events.events[0]); ++i) {
+      CloseHandle(th->private_events.events[i]);
+    }
+#endif
+
 #ifdef LISP_FEATURE_MACH_EXCEPTION_HANDLER
     FSHOW((stderr, "Deallocating mach port %x\n", THREAD_STRUCT_TO_EXCEPTION_PORT(th)));
     mach_port_move_member(mach_task_self(),
@@ -386,7 +396,7 @@ create_thread_struct(lispobj initial_function) {
     struct thread *th=0;        /*  subdue gcc */
     void *spaces=0;
     void *aligned_spaces=0;
-#ifdef LISP_FEATURE_SB_THREAD
+#if defined(LISP_FEATURE_SB_THREAD) || defined(LISP_FEATURE_WIN32)
     unsigned int i;
 #endif
 
@@ -545,6 +555,13 @@ create_thread_struct(lispobj initial_function) {
 #if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
     th->interrupt_data->win32_data.interrupts_count = 0;
     pthread_mutex_init(&th->interrupt_data->win32_data.lock, NULL);
+#endif
+
+#if defined(LISP_FEATURE_WIN32)
+    for (i = 0; i<sizeof(th->private_events.events)/
+           sizeof(th->private_events.events[0]); ++i) {
+      th->private_events.events[i] = CreateEvent(NULL,FALSE,FALSE,NULL);
+    }
 #endif
 
     th->stepping = NIL;
@@ -742,7 +759,7 @@ void roll_thread_to_safepoint(struct thread * thread)
       set_thread_state(p, STATE_RUNNING);
   }
 
-  SetEvent(thread->os_thread->private_events[1]);
+  SetEvent(thread->private_events.events[1]);
   pthread_mutex_unlock(&suspend_info.world_lock);
   pthread_mutex_unlock(&all_threads_lock);
   

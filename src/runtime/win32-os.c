@@ -831,7 +831,7 @@ int win32_unix_write(int fd, void * buf, int count)
   HANDLE handle;
   DWORD written_bytes;
   OVERLAPPED overlapped;
-  pthread_t me = pthread_self();
+  struct thread * self = arch_os_get_current_thread();
   BOOL synchronous;
   BOOL waitInGOR;
 
@@ -841,7 +841,7 @@ int win32_unix_write(int fd, void * buf, int count)
   odprintf("handle = 0x%p", handle);
   /* let's not try to distinguish sockets/console/whatever.. */
   /* win32_prepare_position(handle, &overlapped); */
-  overlapped.hEvent = me->private_events[0];
+  overlapped.hEvent = self->private_events.events[0];
 
   if (WriteFile(handle, buf, count, &written_bytes,
                 synchronous ? NULL : &overlapped)) {
@@ -854,7 +854,7 @@ int win32_unix_write(int fd, void * buf, int count)
       errno = EIO;
       return -1;
     } else {
-      if(WaitForMultipleObjects(2,me->private_events,
+      if(WaitForMultipleObjects(2,self->private_events.events,
                                    FALSE,INFINITE) != WAIT_OBJECT_0) {
         /* Something happened. Interrupt? */
         odprintf("write(%d, 0x%p, %d) EINTR",fd,buf,count);
@@ -883,7 +883,7 @@ int win32_unix_read(int fd, void * buf, int count)
   HANDLE handle;
   OVERLAPPED overlapped;
   DWORD read_bytes;
-  pthread_t me = pthread_self();
+  struct thread * self = arch_os_get_current_thread();
   DWORD errorCode;
   BOOL synchronous;
   BOOL waitInGOR;
@@ -891,7 +891,7 @@ int win32_unix_read(int fd, void * buf, int count)
   odprintf("read(%d, 0x%p, %d)", fd, buf, count);
   handle = (HANDLE)_get_osfhandle(fd);
   odprintf("handle = 0x%p", handle);
-  overlapped.hEvent = me->private_events[0];
+  overlapped.hEvent = self->private_events.events[0];
   /* If it has a position, we won't try overlapped */
   synchronous = seekable_p(handle);
 
@@ -911,7 +911,7 @@ int win32_unix_read(int fd, void * buf, int count)
       errno = EIO;
       return -1;
     } else {
-      if(WaitForMultipleObjects(2,me->private_events,
+      if(WaitForMultipleObjects(2,self->private_events.events,
                                 FALSE,INFINITE) != WAIT_OBJECT_0) {
         /* Something happened. Interrupt? */
         odprintf("read(%d, 0x%p, %d) EINTR",fd,buf,count);
@@ -943,10 +943,10 @@ int win32_unix_read(int fd, void * buf, int count)
 
 int win32_wait_object_or_signal(HANDLE waitFor)
 {
-  pthread_t me = pthread_self();
+  struct thread * self = arch_os_get_current_thread();
   HANDLE handles[2];
   handles[0] = waitFor;
-  handles[1] = me->private_events[1];
+  handles[1] = self->private_events.events[1];
   return
     WaitForMultipleObjects(2,handles, FALSE,INFINITE);
 }
