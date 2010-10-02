@@ -557,7 +557,7 @@
 ;; This fails on threaded PPC because the hash-table implementation
 ;; uses recursive system spinlocks, which cons (see below for test
 ;; (:no-consing :spinlock), which also fails on threaded PPC).
-(with-test (:name (:no-consing :hash-tables) :fails-on (and :ppc :sb-thread))
+(with-test (:name (:no-consing :hash-tables) :fails-on '(and :ppc :sb-thread))
   (assert-no-consing (test-hash-table)))
 
 ;;; with-spinlock and with-mutex should use DX and not cons
@@ -894,4 +894,12 @@
              (flet ((bar () t))
                (cons #'bar (lambda () (declare (dynamic-extent #'bar))))))
           'sb-ext:compiler-note)))
+
+(with-test (:name :bug-586105 :fails-on '(not (and :stack-allocatable-vectors
+                                                   :stack-allocatable-lists)))
+  (flet ((test (x)
+           (let ((vec (make-array 1 :initial-contents (list (list x)))))
+             (declare (dynamic-extent vec))
+             (assert (eql x (car (aref vec 0)))))))
+    (assert-no-consing (test 42))))
 

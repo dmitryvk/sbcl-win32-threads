@@ -116,7 +116,7 @@
   #!+gencgc
   (progn
     (def!constant dynamic-space-start #x4f000000)
-    (def!constant dynamic-space-end   #x7efff000))
+    (def!constant dynamic-space-end   (!configure-dynamic-space-end #x7efff000)))
   #!-gencgc
   (progn
     (def!constant dynamic-0-space-start #x4f000000)
@@ -129,7 +129,7 @@
   #!+gencgc
   (progn
     (def!constant dynamic-space-start #x4f000000)
-    (def!constant dynamic-space-end   #x7efff000))
+    (def!constant dynamic-space-end   (!configure-dynamic-space-end #x7efff000)))
   #!-gencgc
   (progn
     (def!constant dynamic-0-space-start #x4f000000)
@@ -149,7 +149,7 @@
   #!+gencgc
   (progn
     (def!constant dynamic-space-start #x4f000000)
-    (def!constant dynamic-space-end   #x6afff000))
+    (def!constant dynamic-space-end   (!configure-dynamic-space-end #x6afff000)))
   #!-gencgc
   (progn
     (def!constant dynamic-0-space-start #x4f000000)
@@ -162,7 +162,7 @@
   #!+gencgc
   (progn
     (def!constant dynamic-space-start #x10000000)
-    (def!constant dynamic-space-end   #x6ffff000))
+    (def!constant dynamic-space-end   (!configure-dynamic-space-end #x6ffff000)))
   #!-gencgc
   (progn
     (def!constant dynamic-0-space-start #x10000000)
@@ -206,11 +206,6 @@
    *c-callable-static-symbols*
    '(
      #!+gencgc *restart-lisp-function*
-
-     ;; Swiped from x86-64 thread implementation.
-     #!+sb-thread *stop-for-gc-pending*
-     #!+sb-thread *free-tls-index*
-     #!+sb-thread *tls-index-lock*
 
      ;; CLH: 20060210 Taken from x86-64/parms.lisp per JES' suggestion
      ;; Needed for callbacks to work across saving cores. see

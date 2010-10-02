@@ -1864,4 +1864,28 @@
   (cacheing-initargs-redefinitions-check-fun :slot2)
   (let ((thing (cacheing-initargs-redefinitions-check-fun :slot)))
     (assert (not (slot-boundp thing 'slot)))))
+
+(with-test (:name :defmethod-specializer-builtin-class-alias)
+  (let ((alias (gensym)))
+    (setf (find-class alias) (find-class 'symbol))
+    (eval `(defmethod lp-618387 ((s ,alias))
+             (symbol-name s)))
+    (assert (equal "FOO" (funcall 'lp-618387 :foo)))))
+
+(with-test (:name :pcl-spurious-ignore-warnings)
+  (defgeneric no-spurious-ignore-warnings (req &key key))
+  (handler-bind ((warning (lambda (x) (error "~A" x))))
+    (eval
+     '(defmethod no-spurious-ignore-warnings ((req number) &key key)
+       (declare (ignore key))
+       (check-type req integer))))
+  (defgeneric should-get-an-ignore-warning (req &key key))
+  (let ((warnings 0))
+    (handler-bind ((warning (lambda (c) (setq warnings 1) (muffle-warning c))))
+      (eval '(defmethod should-get-an-ignore-warning ((req integer) &key key)
+              (check-type req integer))))
+    (assert (= warnings 1))))
+
+
+
 ;;;; success

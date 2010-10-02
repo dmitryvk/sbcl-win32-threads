@@ -594,22 +594,13 @@
 ;;; functional instead.
 (defun reference-leaf (start next result leaf &optional (name '.anonymous.))
   (declare (type ctran start next) (type (or lvar null) result) (type leaf leaf))
-  (when (functional-p leaf)
-    (assure-functional-live-p leaf))
+  (assure-leaf-live-p leaf)
   (let* ((type (lexenv-find leaf type-restrictions))
          (leaf (or (and (defined-fun-p leaf)
                         (not (eq (defined-fun-inlinep leaf)
                                  :notinline))
                         (let ((functional (defined-fun-functional leaf)))
-                          (when (and functional
-                                     (not (functional-kind functional))
-                                     ;; Bug MISC.320: ir1-transform
-                                     ;; can create a reference to a
-                                     ;; inline-expanded function,
-                                     ;; defined in another component.
-                                     (not (and (lambda-p functional)
-                                               (neq (lambda-component functional)
-                                                    *current-component*))))
+                          (when (and functional (not (functional-kind functional)))
                             (maybe-reanalyze-functional functional))))
                    (when (and (lambda-p leaf)
                               (memq (functional-kind leaf)
@@ -711,7 +702,7 @@
                       ;; CLHS 3.2.2.1.3 specifies that NOTINLINE
                       ;; suppresses compiler-macros.
                       (not (fun-lexically-notinline-p cmacro-fun-name)))
-                 (let ((res (careful-expand-macro cmacro-fun form)))
+                 (let ((res (careful-expand-macro cmacro-fun form t)))
                    (cond ((eq res form)
                           (ir1-convert-common-functoid start next result form op))
                          (t
@@ -772,7 +763,7 @@
 
 ;;; Expand FORM using the macro whose MACRO-FUNCTION is FUN, trapping
 ;;; errors which occur during the macroexpansion.
-(defun careful-expand-macro (fun form)
+(defun careful-expand-macro (fun form &optional cmacro)
   (let (;; a hint I (WHN) wish I'd known earlier
         (hint "(hint: For more precise location, try *BREAK-ON-SIGNALS*.)"))
     (flet (;; Return a string to use as a prefix in error reporting,
@@ -784,10 +775,11 @@
                    (*print-level* 3))
                (format
                 nil
-                #-sb-xc-host "(in macroexpansion of ~S)"
+                #-sb-xc-host "(in ~A of ~S)"
                 ;; longer message to avoid ambiguity "Was it the xc host
                 ;; or the cross-compiler which encountered the problem?"
-                #+sb-xc-host "(in cross-compiler macroexpansion of ~S)"
+                #+sb-xc-host "(in cross-compiler ~A of ~S)"
+                (if cmacro "compiler-macroexpansion" "macroexpansion")
                 form))))
       (handler-bind ((style-warning (lambda (c)
                                       (compiler-style-warn

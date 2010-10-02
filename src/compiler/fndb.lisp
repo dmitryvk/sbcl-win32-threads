@@ -380,7 +380,8 @@
 (defknown deposit-field (integer byte-specifier integer) integer
   (movable foldable flushable))
 (defknown random ((or (float (0.0)) (integer 1)) &optional random-state)
-  (or (float 0.0) (integer 0)) ())
+  (or (float 0.0) (integer 0))
+  (explicit-check))
 (defknown make-random-state (&optional
                              (or (member nil t) random-state unsigned-byte
                                  (simple-array (unsigned-byte 8) (*))
@@ -874,13 +875,16 @@
 
 (defknown array-has-fill-pointer-p (array) boolean
   (movable foldable flushable))
-(defknown fill-pointer (vector) index (foldable unsafely-flushable))
-(defknown vector-push (t vector) (or index null) ()
+(defknown fill-pointer (complex-vector) index
+    (unsafely-flushable explicit-check))
+(defknown vector-push (t complex-vector) (or index null)
+    (explicit-check)
   :destroyed-constant-args (nth-constant-args 2))
-(defknown vector-push-extend (t vector &optional (and index (integer 1)))
-  index ()
+(defknown vector-push-extend (t complex-vector &optional (and index (integer 1))) index
+    (explicit-check)
   :destroyed-constant-args (nth-constant-args 2))
-(defknown vector-pop (vector) t ()
+(defknown vector-pop (complex-vector) t
+    (explicit-check)
   :destroyed-constant-args (nth-constant-args 1))
 
 ;;; FIXME: complicated :DESTROYED-CONSTANT-ARGS
@@ -1539,7 +1543,8 @@
 (defknown %set-symbol-plist (symbol list) list (unsafe))
 (defknown %setnth (unsigned-byte list t) t (unsafe)
   :destroyed-constant-args (nth-constant-args 2))
-(defknown %set-fill-pointer (vector index) index (unsafe)
+(defknown %set-fill-pointer (complex-vector index) index
+    (unsafe explicit-check)
   :destroyed-constant-args (nth-constant-args 1))
 
 ;;;; ALIEN and call-out-to-C stuff

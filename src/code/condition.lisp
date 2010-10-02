@@ -680,7 +680,7 @@
   (:report
    (lambda (condition stream)
      (format stream
-             "The function ~S is undefined."
+             "The function ~/sb-impl::print-symbol-with-prefix/ is undefined."
              (cell-error-name condition)))))
 
 (define-condition special-form-function (undefined-function) ()
@@ -1245,7 +1245,7 @@ SB-EXT:PACKAGE-LOCKED-ERROR-SYMBOL."))
    (lambda (condition stream)
      (declare (type stream stream))
      (format stream
-             "I/O timeout ~(~A~)ing ~S."
+             "I/O timeout while doing ~(~A~) on ~S."
              (io-timeout-direction condition)
              (stream-error-stream condition)))))
 
@@ -1353,14 +1353,16 @@ handled by any other handler, it will be muffled.")
    (new-location :initarg :new-location
               :reader redefinition-with-defun-new-location))
   (:report (lambda (warning stream)
-             (format stream "redefining ~S in DEFUN"
+             (format stream "redefining ~/sb-impl::print-symbol-with-prefix/ ~
+                             in DEFUN"
                      (function-redefinition-warning-name warning)))))
 
 (define-condition redefinition-with-defgeneric (function-redefinition-warning)
   ((new-location :initarg :new-location
                  :reader redefinition-with-defgeneric-new-location))
   (:report (lambda (warning stream)
-             (format stream "redefining ~S in DEFGENERIC"
+             (format stream "redefining ~/sb-impl::print-symbol-with-prefix/ ~
+                             in DEFGENERIC"
                      (function-redefinition-warning-name warning)))))
 
 (define-condition redefinition-with-defmethod (redefinition-warning)

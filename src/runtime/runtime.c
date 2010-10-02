@@ -39,6 +39,7 @@
 #endif
 #include <errno.h>
 #include <locale.h>
+#include <limits.h>
 
 #if defined(SVR4) || defined(__linux__)
 #include <time.h>

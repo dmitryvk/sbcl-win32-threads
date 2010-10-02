@@ -3502,3 +3502,66 @@
                                                (declare (optimize (sb-c::float-accuracy 0)))
                                                (* x -1.0d0)))
                                1))))
+
+(with-test (:name :dotimes-non-integer-counter-value)
+  (assert (raises-error? (dotimes (i 8.6)) type-error)))
+
+(with-test (:name :bug-454681)
+  ;; This used to break due to reference to a dead lambda-var during
+  ;; inline expansion.
+  (assert (compile nil
+                   `(lambda ()
+                      (multiple-value-bind (iterator+977 getter+978)
+                          (does-not-exist-but-does-not-matter)
+                        (flet ((iterator+976 ()
+                                 (funcall iterator+977)))
+                          (declare (inline iterator+976))
+                          (let ((iterator+976 #'iterator+976))
+                            (funcall iterator+976))))))))
+
+(with-test (:name :complex-float-local-fun-args)
+  ;; As of 1.0.27.14, the lambda below failed to compile due to the
+  ;; compiler attempting to pass unboxed complex floats to Z and the
+  ;; MOVE-ARG method not expecting the register being used as a
+  ;; temporary frame pointer.  Reported by sykopomp in #lispgames,
+  ;; reduced test case provided by _3b`.
+  (compile nil '(lambda (a)
+                  (labels ((z (b c)
+                              (declare ((complex double-float) b c))
+                              (* b (z b c))))
+                          (loop for i below 10 do
+                                (setf a (z a a)))))))
+
+(with-test (:name :bug-309130)
+  (assert (eq :warning
+              (handler-case
+                  (compile nil `(lambda () (svref (make-array 8 :adjustable t) 1)))
+                ((and warning (not style-warning)) ()
+                  :warning))))
+  (assert (eq :warning
+              (handler-case
+                  (compile nil `(lambda (x)
+                                  (declare (optimize (debug 0)))
+                                  (declare (type vector x))
+                                  (list (fill-pointer x) (svref x 1))))
+                ((and warning (not style-warning)) ()
+                  :warning))))
+  (assert (eq :warning
+              (handler-case
+                  (compile nil `(lambda (x)
+                                  (list (vector-push (svref x 0) x))))
+                ((and warning (not style-warning)) ()
+                  :warning))))
+  (assert (eq :warning
+              (handler-case
+                  (compile nil `(lambda (x)
+                                  (list (vector-push-extend (svref x 0) x))))
+                ((and warning (not style-warning)) ()
+                  :warning)))))
+
+(with-test (:name :bug)
+  (assert 42
+          (funcall
+           (compile nil
+                    `(lambda ()
+                       (load-time-value (the (values fixnum) 42)))))))

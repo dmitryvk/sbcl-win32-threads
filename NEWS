@@ -1,4 +1,90 @@
 ;;;; -*- coding: utf-8; fill-column: 78 -*-
+changes relative to sbcl-1.0.43:
+  * enhancement: RUN-PROGRAM accepts :EXTERNAL-FORMAT argument to select the
+    external-format for its :INPUT, :OUTPUT, AND :ERROR :STREAMs.
+  * enhancement: ALLOCATION-INFORMATION also provides the page the object
+    resides on.
+  * enhancement: default dynamic-space size can be configured at build-time
+    without touching source, using the --dynamic-space-size argument to make.sh.
+  * bug fix: compiler failed to derive the result-type of MAKE-ARRAY as
+    (AND VECTOR (NOT SIMPLE-ARRAY)) when appropriate. (lp#309130)
+  * bug fix: (THE (VALUES ...)) in LOAD-TIME-VALUE caused a compiler-error.
+    (lp#646796)
+  * bug fix: interrupts arriving due to CL:OPEN caused an error.
+  * bug fix: overeager character buffering could cause input to block
+    spuriously when reading from a pipe (lp#643686)
+  * bug fix: more efficient timer expiry should avoid starvation on systems
+    where number of SIGALRMs per second is restricted. (lp#375515)
+  * improvements to the Windows port:
+    ** bug fix: stackoverwriting due to incorrect usage of PeekConsoleInput
+       on Windows. (thanks to Kalyanov Dmitry)
+    ** bug fix: build now works on cygwin with GCC 4.x installed. (thanks to
+       Kalyanov Dmitry)
+    ** bug fix: run-sbcl.sh now works on Cygwin. (thanks to Kalyanov Dmitry)
+
+changes in sbcl-1.0.43 relative to sbcl-1.0.42:
+  * incompatible change: FD-STREAMS no longer participate in the serve-event
+    event-loop by default. (lp#316072)
+    ** In addition to streams created by explicit calls to MAKE-FD-STREAM this
+       affects streams from CL:OPEN.
+    ** Streams from SOCKET-MAKE-STREAM still participate in serve-event by
+       default, but this is liable to change: applications needing serve-event
+       for socket streams should explicitly request it using :SERVE-EVENTS T
+       in the call.
+  * enhancement: SB-EXT:WORD type is provided for use with SB-EXT:ATOMIC-INCF
+    &co.
+  * enhancement: CLOS effective method functions and defclass slot typechecking
+    function now have debug names for use in backtraces and profiles.
+  * enhancement: ASDF has been updated to version 2.004. (lp#605260, thanks to
+    Faré Rideau)
+  * enhancement: symbols are printed using fully qualified names in several
+    error and warning messages which are often associated with package
+    conflicts or mixups (lp#622789, thanks to Attila Lendvai)
+  * bug fix: SB-BSD-SOCKETS:SOCKET-CONNECT was not thread safe. (lp#505497,
+    thanks to Andrew Golding)
+  * bug fix: reading /proc files on Linux works. (lp#425199)
+  * bug fix: DOTIMES accepted literal non-integer reals. (lp#619393, thanks to
+    Roman Marynchak)
+  * bug fix: WRITE-TO-STRING compiler macro binding special variable names,
+    breaking code that tried to write the value of a printer control variable.
+    (lp#581564, thanks to Stas Boukarev)
+  * bug fix: WRITE compiler macro did not handle output stream designators
+    correctly. (lp#598374, thanks to Stas Boukarev)
+  * bug fix: better availability of names of foreign functions in backtraces
+    on Linux. (lp#626962, thanks to Stas Boukarev)
+  * bug fix: scripting and build for Solaris and FreeBSD. (lp#615497,
+    lp#627581, thanks to Josh Elsasser and Jim Wise)
+  * bug fix: build fixes for OpenBSD -current and 4.8 (lp#615489, lp#615492,
+    thanks to Josh Elsasser)
+  * bug fix: using aliases for builtin classes as defmethod specializers
+    without adding DEFTYPEs for them works. (lp#618387)
+  * bug fix: timetravel by getrusage() no longer causes type-errors during GC.
+    (lp#544421)
+  * bug fix: legally dynamic-extent lists and vectors used as
+    initialization arguments to MAKE-ARRAY can be stack allocated. (lp#586105)
+  * bug fix: inline-expansion creating references to dead lambda-variables
+    (lp#454681, thanks to Alexey Dejneka)
+  * bug fix: better error message for bogus numerical arguments to RANDOM.
+    (lp#598986, thanks to Stas Boukarev)
+  * bug fix: the compiler occasionally inlined references from incompatible
+    environments occurs. (lp#308951)
+  * bug fix: the compiler threw an error when trying to compile a local
+    function (labels or flet) known to take a specialized complex argument.
+    (not in launchpad, reported by sykopomp in #lispgames)
+  * bug fix: package-locks failed to protect against compile-time effects of
+    DEFUN when the symbol previously had a macro definition. (lp#576637)
+  * bug fix: spurious ignore warnings even given (DECLARE IGNORE) in methods
+    when parameter bindings mutated.  (reported by Faré Rideau; lp #611361)
+  * bug fix: workaround for compiler hang in ORDER-UVL-SETS (lp#308914)
+  * bug fix: evaluation in debugger REPL works using the global context when
+    in frames that do not have sufficient debug information.
+  * bug fix: exceeding FD_SETSIZE limit now results in an sensible error
+    (lp#316068)
+  * bug fix: (SETF DOCUMENTATION) of a macro works properly. (lp#643958, thanks
+    to Stas Boukarev)
+  * bug fix: interrupt taking longer than the requested period caused SLEEP
+    to hang on Darwin. (lp#640516, thanks to Joe Lebroco for the analysis)
+
 changes in sbcl-1.0.42 relative to sbcl-1.0.41
   * build changes
     ** Cross-compilation host is now specified to make.sh using
