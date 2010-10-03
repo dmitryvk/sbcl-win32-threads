@@ -38,7 +38,7 @@
      (print-xml sexp xml)))
 
 (defun application-name ()
-  (format nil "SBCL ~A" (lisp-implementation-version)))
+  (format nil "Steel Bank Common Lisp ~A" (lisp-implementation-version)))
 
 ;;;; GUID generation
 ;;;;
@@ -197,7 +197,7 @@
                       "Target" "[INSTALLDIR]sbcl.exe"
                       "Arguments" "--core \"[#sbcl.core]\""))
          ("RegistryValue" ("Root" "HKCU"
-                           "Key" "Software\\Steel Bank Common Lisp"
+                           "Key" ,(application-name)
                            "Name" "installed"
                            "Type" "integer"
                            "Value" "1"
@@ -222,7 +222,7 @@
                             "System" "yes"
                             "Action" "set"
                             "Name" "PATH"
-                            "Part" "first"
+                            "Part" "last"
                             "Value" "[INSTALLDIR]"))
             ;; If we want to associate files with SBCL, this
             ;; is how it's done -- but doing this by default
