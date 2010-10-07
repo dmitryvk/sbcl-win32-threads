@@ -185,7 +185,7 @@ any non-negative real number."
   #!-sb-thread
   (sb!win32:millisleep (truncate (* seconds 1000)))
   #!+sb-thread
-  (sb!win32::microsleep (truncate (* seconds 1000000)))
+  (sb!win32:microsleep (truncate (* seconds 1000000)))
   nil)
 
 ;;;; the default toplevel function
