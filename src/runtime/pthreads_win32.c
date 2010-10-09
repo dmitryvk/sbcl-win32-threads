@@ -54,11 +54,6 @@ void pthread_np_resume(pthread_t thread)
   ResumeThread(thread->handle);
 }
 
-unsigned char pthread_np_interruptible(pthread_t thread)
-{
-  return thread->uninterruptible_section_nesting == 0 && thread->waiting_cond == NULL;
-}
-
 void pthread_np_request_interruption(pthread_t thread)
 {
   if (thread->waiting_cond) {
@@ -117,9 +112,7 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_
   pth->start_routine = start_routine;
   pth->arg = arg;
   pth->handle = createdThread;
-  pth->uninterruptible_section_nesting = 0;
   pth->waiting_cond = NULL;
-  pth->in_safepoint = 0;
 
   if (self) {
     pth->blocked_signal_set = self->blocked_signal_set;
@@ -277,32 +270,6 @@ void pthread_np_remove_pending_signal(pthread_t thread, int signum)
   thread->signal_is_pending[signum] = 0;
 }
 
-void pthread_checkpoint()
-{
-  pthread_t self = pthread_self();
-  if (self->uninterruptible_section_nesting == 0 && !self->in_safepoint) {
-    self->in_safepoint = 1;
-    pthread_np_safepoint();
-    self->in_safepoint = 0;
-  }
-}
-
-void pthread_np_enter_uninterruptible()
-{
-  pthread_t self = pthread_self();
-  if (self)
-    self->uninterruptible_section_nesting++;
-}
-
-void pthread_np_leave_uninterruptible()
-{
-  pthread_t self = pthread_self();
-  if (self) {
-    self->uninterruptible_section_nesting--;
-    pthread_checkpoint();
-  }
-}
-
 int pthread_mutex_lock(pthread_mutex_t *mutex)
 {
   if (*mutex == PTHREAD_MUTEX_INITIALIZER) {
@@ -313,7 +280,6 @@ int pthread_mutex_lock(pthread_mutex_t *mutex)
     }
     pthread_mutex_unlock(&mutex_init_lock);
   }
-  pthread_np_enter_uninterruptible();
   EnterCriticalSection(*mutex);
   return 0;
 }
@@ -328,7 +294,6 @@ int pthread_mutex_trylock(pthread_mutex_t *mutex)
     }
     pthread_mutex_unlock(&mutex_init_lock);
   }
-  pthread_np_enter_uninterruptible();
   if (TryEnterCriticalSection(*mutex))
     return 0;
   else
@@ -338,7 +303,6 @@ int pthread_mutex_trylock(pthread_mutex_t *mutex)
 int pthread_mutex_unlock(pthread_mutex_t *mutex)
 {
   LeaveCriticalSection(*mutex);
-  pthread_np_leave_uninterruptible();
   return 0;
 }
 
@@ -469,7 +433,6 @@ int pthread_cond_wait(pthread_cond_t * cv, pthread_mutex_t * cs)
   }
   pthread_self()->waiting_cond = NULL;
   cv->return_fn(w.event);
-  pthread_checkpoint();
   pthread_mutex_lock(cs);
   return 0;
 }
@@ -503,7 +466,6 @@ int pthread_cond_timedwait(pthread_cond_t * cv, pthread_mutex_t * cs, const stru
   if (rv == WAIT_TIMEOUT)
     cv_wakeup_remove(cv, &w);
   cv->return_fn(w.event);
-  pthread_checkpoint();
   pthread_mutex_lock(cs);
   if (rv == WAIT_TIMEOUT)
     return ETIMEDOUT;
@@ -533,9 +495,7 @@ void pthreads_win32_init()
   thread_self_tls_index = TlsAlloc();
   pth->start_routine = NULL;
   pth->arg = NULL;
-  pth->uninterruptible_section_nesting = 0;
   pth->waiting_cond = NULL;
-  pth->in_safepoint = 0;
   sigemptyset(&pth->blocked_signal_set);
   {
     int i;

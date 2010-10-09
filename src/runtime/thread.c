@@ -1206,10 +1206,6 @@ void gc_safepoint()
   SetLastError(lasterror);
 }
 
-void pthread_np_safepoint()
-{
-}
-
 void pthread_np_pending_signal_handler(int signum)
 {
   if (signum == SIG_STOP_FOR_GC || signum == SIGHUP) {

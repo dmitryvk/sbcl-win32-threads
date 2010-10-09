@@ -79,14 +79,10 @@ int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset);
 
 /* 1a - Thread non-portable */
 
-void pthread_np_safepoint();
 void pthread_np_suspend(pthread_t thread);
 void pthread_np_suspend_with_signal(pthread_t thread, int signum);
 void pthread_np_resume(pthread_t thread);
-unsigned char pthread_np_interruptible(pthread_t thread);
 void pthread_np_request_interruption(pthread_t thread);
-void pthread_np_enter_uninterruptible();
-void pthread_np_leave_uninterruptible();
 
 /* 2 - Mutex */
 
@@ -161,8 +157,6 @@ typedef struct pthread_thread {
   void* arg;
   HANDLE handle;
   pthread_cond_t *waiting_cond;
-  int uninterruptible_section_nesting;
-  unsigned int in_safepoint;
   sigset_t blocked_signal_set;
   unsigned int signal_is_pending[NSIG];
   void * retval;
