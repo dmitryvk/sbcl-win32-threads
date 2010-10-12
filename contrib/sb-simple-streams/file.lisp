@@ -223,7 +223,9 @@
           (let ((buffer
                  (handler-case
                   (sb-posix:mmap nil size prot sb-posix::MAP-SHARED fd 0)
-                  (sb-posix:syscall-error nil))))
+                  (sb-posix:syscall-error nil)
+		   #+win32
+                  (error nil))))
             (when (null buffer)
               (sb-unix:unix-close fd)
               (sb-ext:cancel-finalization stream)

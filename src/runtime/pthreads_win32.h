@@ -124,10 +124,12 @@ typedef struct pthread_condattr_t {
   cv_event_return_fn return_fn;
 } pthread_condattr_t;
 
+#ifndef _TIMESPEC_DEFINED
 typedef struct timespec {
   time_t tv_sec;
   long tv_nsec;
 } timespec;
+#endif
 
 // not implemented: PTHREAD_COND_INITIALIZER
 int pthread_cond_destroy(pthread_cond_t *cond);

@@ -26,6 +26,7 @@
  * yet.
  */
 
+#define RtlUnwind RtlUnwind_FromSystemHeaders
 #include <malloc.h>
 #include <stdio.h>
 #include <sys/param.h>
@@ -73,6 +74,15 @@ int linux_supports_futex=0;
 #endif
 
 #include <stdarg.h>
+
+#undef  RtlUnwind
+/* missing definitions for modern mingws */
+#ifndef EH_UNWINDING
+#define EH_UNWINDING 0x02
+#endif
+#ifndef EH_EXIT_UNWIND
+#define EH_EXIT_UNWIND 0x04
+#endif
 
 void odprint(const char * msg)
 {
@@ -762,8 +772,12 @@ void scratch(void)
     RtlUnwind(0, 0, 0, 0);
     SetStdHandle(0,0);
     GetStdHandle(0);
+    MapViewOfFile(0,0,0,0,0);
+    UnmapViewOfFile(0);
+    FlushViewOfFile(0,0);
     #ifndef LISP_FEATURE_SB_UNICODE
       CreateDirectoryA(0,0);
+      CreateFileMappingA(0,0,0,0,0,0);
       GetComputerNameA(0, 0);
       GetCurrentDirectoryA(0,0);
       GetEnvironmentVariableA(0, 0, 0);
@@ -774,6 +788,7 @@ void scratch(void)
       SetEnvironmentVariableA(0, 0);
     #else
       CreateDirectoryW(0,0);
+      CreateFileMappingW(0,0,0,0,0,0);
       FormatMessageW(0, 0, 0, 0, 0, 0, 0);
       GetComputerNameW(0, 0);
       GetCurrentDirectoryW(0,0);
@@ -843,8 +858,13 @@ int win32_unix_write(int fd, void * buf, int count)
   /* win32_prepare_position(handle, &overlapped); */
   overlapped.hEvent = self->private_events.events[0];
 
+  /* For seekable file writes, it's essential to go through the CRT
+     _write function: it knows about _O_APPEND and acts appropriately. */
+  if (synchronous) {
+    return _write(fd, buf, count);
+  }
   if (WriteFile(handle, buf, count, &written_bytes,
-                synchronous ? NULL : &overlapped)) {
+                &overlapped)) {
     odprintf("write(%d, 0x%p, %d) immeditately wrote %d bytes",
              fd, buf, count, written_bytes);
     /* win32_commit_position(handle,&overlapped); */
