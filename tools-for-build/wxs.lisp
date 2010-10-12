@@ -188,6 +188,16 @@
       ("Media" ("Id" 1
                 "Cabinet" "sbcl.cab"
                 "EmbedCab" "yes"))
+      ("Property" ("Id" "PREVIOUSVERSIONSINSTALLED"
+                   "Secure" "yes"))
+      ("Upgrade" ("Id" "BFF1D4CA-0153-4AAC-BB21-06DC4B8EAD7D")
+       ("UpgradeVersion" ("Minimum" "1.0.0"
+                          "Maximum" "99.0.0"
+                          "Property" "PREVIOUSVERSIONSINSTALLED"
+                          "IncludeMinimum" "yes"
+                          "IncludeMaximum" "no")))
+      ("InstallExecuteSequence" ()
+       ("RemoveExistingProducts" ("After" "InstallInitialize")))
       ("Directory" ("Id" "TARGETDIR"
                     "Name" "SourceDir")
        ("Directory" ("Id" "ProgramMenuFolder")

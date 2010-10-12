@@ -6,6 +6,11 @@ changes relative to sbcl-1.0.43:
     resides on.
   * enhancement: default dynamic-space size can be configured at build-time
     without touching source, using the --dynamic-space-size argument to make.sh.
+  * enhancement: DESCRIBE recognizes symbols naming optimization policy
+    qualities, and mentions ALWAYS-BOUND declarations.
+  * enhancement: ATOMIC-INCF now supports AREF of (SIMPLE-ARRAY SB-EXT:WORD (*))
+    as a place.
+  * enhancement: ASDF has been updated to 2.009.
   * bug fix: compiler failed to derive the result-type of MAKE-ARRAY as
     (AND VECTOR (NOT SIMPLE-ARRAY)) when appropriate. (lp#309130)
   * bug fix: (THE (VALUES ...)) in LOAD-TIME-VALUE caused a compiler-error.
@@ -21,6 +26,21 @@ changes relative to sbcl-1.0.43:
     ** bug fix: build now works on cygwin with GCC 4.x installed. (thanks to
        Kalyanov Dmitry)
     ** bug fix: run-sbcl.sh now works on Cygwin. (thanks to Kalyanov Dmitry)
+  * bug fix: non-unicode builds no longer fail (broken since 1.0.36.15).
+  * bug fix: compile-times no longer scale linearly with the size of
+    quoted lists in source-code. (lp#654289)
+  * bug fix: better errors for unknown external-formats in OPEN. (lp#561974)
+  * bug fix: DEBUG>SPEED no longer degrades ALIEN-FUNCALL performance quite
+    so badly. (lp#654485)
+  * bug fix: SB-INTROSPECT:FIND-DEFINITION-SOURCES-BY-NAME no longer signals
+    an error for eg. STRUCTURE. (lp#458015)
+  * bug fix: LOOP WITH NIL = ... signalled an unused variable style-warning.
+    (lp#613871, thanks to Roman Marynchak)
+  * bug fix: more reliable &REST list type derivation. (lp#655203)
+  * bug fix: PPRINT-LOGICAL-BLOCK multiply-evaluated :PER-LINE-PREFIX,
+    and issued pointles code-deletion notes for it, :PREFIX, and :SUFFIX.
+  * bug fix: the compiler didn't utilize the proclaimed ftype for functions
+    also declared NOTINLINE. (lp#655581)
 
 changes in sbcl-1.0.43 relative to sbcl-1.0.42:
   * incompatible change: FD-STREAMS no longer participate in the serve-event

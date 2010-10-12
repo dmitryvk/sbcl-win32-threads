@@ -254,6 +254,8 @@
         (when (eq (info :variable :where-from symbol) :declared)
           (format stream "~@:_Declared type: ~S"
                   (type-specifier (info :variable :type symbol))))
+        (when (info :variable :always-bound symbol)
+          (format stream "~@:_Declared always-bound."))
         (cond
           ((eq kind :alien)
            (let ((info (info :variable :alien-info symbol)))
@@ -307,6 +309,17 @@
           (when (eq (%fun-fun fun) (%fun-fun (constant-type-expander t)))
             (format stream "~@:_Expansion: ~S" (funcall fun (list symbol))))))
       (terpri stream)))
+
+  (when (or (member symbol sb-c::*policy-qualities*)
+            (assoc symbol sb-c::*policy-dependent-qualities*))
+    (pprint-logical-block (stream nil)
+      (pprint-newline :mandatory stream)
+      (pprint-indent :block 2 stream)
+      (format stream "~A names a~:[ dependent~;n~] optimization policy quality:"
+              symbol
+              (member symbol sb-c::*policy-qualities*))
+      (describe-documentation symbol 'optimize stream t))
+    (terpri stream))
 
   ;; Print out properties.
   (let ((plist (symbol-plist symbol)))

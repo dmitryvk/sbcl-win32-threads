@@ -205,14 +205,16 @@
                (inlinep (info :function :inlinep name)))
            (setf (gethash name *free-funs*)
                  (if (or expansion inlinep)
-                     (make-defined-fun
-                      :%source-name name
-                      :inline-expansion expansion
-                      :inlinep inlinep
-                      :where-from (info :function :where-from name)
-                      :type (if (eq inlinep :notinline)
-                                (specifier-type 'function)
-                                (info :function :type name)))
+                     (let ((where (info :function :where-from name)))
+                       (make-defined-fun
+                        :%source-name name
+                        :inline-expansion expansion
+                        :inlinep inlinep
+                        :where-from where
+                        :type (if (and (eq inlinep :notinline)
+                                       (neq where :declared))
+                                  (specifier-type 'function)
+                                  (info :function :type name))))
                      (find-global-fun name nil))))))))
 
 ;;; Return the LEAF structure for the lexically apparent function
@@ -487,16 +489,19 @@
           (trail form))
       (declare (fixnum pos))
       (macrolet ((frob ()
-                   '(progn
+                   `(progn
                       (when (atom subform) (return))
                       (let ((fm (car subform)))
-                        (if (consp fm)
-                            ;; If it's a cons, recurse
-                            (sub-find-source-paths fm (cons pos path))
-                            ;; Otherwise store the containing form. It's
-                            ;; not perfect, but better than nothing.
-                            (unless (zerop pos)
-                              (note-source-path subform pos path)))
+                        (cond ((consp fm)
+                               ;; If it's a cons, recurse.
+                               (sub-find-source-paths fm (cons pos path)))
+                              ((eq 'quote fm)
+                               ;; Don't look into quoted constants.
+                               (return))
+                              ((not (zerop pos))
+                               ;; Otherwise store the containing form. It's not
+                               ;; perfect, but better than nothing.
+                               (note-source-path subform pos path)))
                         (incf pos))
                       (setq subform (cdr subform))
                       (when (eq subform trail) (return)))))
