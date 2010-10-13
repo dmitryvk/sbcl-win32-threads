@@ -1,6 +1,8 @@
 #ifndef WIN32_PTHREAD_INCLUDED
 #define WIN32_PTHREAD_INCLUDED
 
+
+#include <signal.h>
 #include <time.h>
 #include <errno.h>
 #include <sys/types.h>
@@ -40,6 +42,8 @@
 #define SIG_DEFER SIGHUP
 
 #define NSIG 31     /* maximum signal number + 1 */
+
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
 
 void pthreads_win32_init();
 
@@ -183,5 +187,7 @@ int sigdelset(sigset_t *set, int signum);
 int sigismember(const sigset_t *set, int signum);
 
 typedef int sig_atomic_t;
+
+#endif
 
 #endif
