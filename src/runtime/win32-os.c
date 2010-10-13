@@ -605,7 +605,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
 
         #if defined(LISP_FEATURE_SB_THREAD)
         fake_foreign_function_call(&ctx);
-        
+	
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
 
         /* Allocate the SAP objects while the "interrupts" are still
@@ -858,8 +858,6 @@ int win32_unix_write(int fd, void * buf, int count)
   odprintf("write(%d, 0x%p, %d)", fd, buf, count);
   handle =(HANDLE)_get_osfhandle(fd);
   odprintf("handle = 0x%p", handle);
-  /* let's not try to distinguish sockets/console/whatever.. */
-  /* win32_prepare_position(handle, &overlapped); */
   overlapped.hEvent = self->private_events.events[0];
   SetFilePointerEx(handle,nooffset,&file_position, FILE_CURRENT);
   overlapped.Offset = file_position.LowPart;
@@ -868,9 +866,7 @@ int win32_unix_write(int fd, void * buf, int count)
                 &overlapped)) {
     odprintf("write(%d, 0x%p, %d) immeditately wrote %d bytes",
              fd, buf, count, written_bytes);
-    SetFilePointer(handle,written_bytes,NULL,FILE_CURRENT);
-    /* win32_commit_position(handle,&overlapped); */
-    return written_bytes;
+    goto done_something;
   } else {
     if (GetLastError()!=ERROR_IO_PENDING) {
       errno = EIO;
@@ -885,7 +881,6 @@ int win32_unix_write(int fd, void * buf, int count)
       } else {
         waitInGOR = FALSE;
       }
-      /* win32_commit_position(handle,&overlapped); */
       if (!GetOverlappedResult(handle,&overlapped,&written_bytes,waitInGOR)) {
         if (GetLastError()==ERROR_OPERATION_ABORTED) {
           errno = EINTR;
@@ -894,11 +889,14 @@ int win32_unix_write(int fd, void * buf, int count)
         }
         return -1;
       } else {
-        SetFilePointer(handle,written_bytes,NULL,FILE_CURRENT);
-        return written_bytes;
+        goto done_something;
       }
     }
   }
+ done_something:
+  file_position.QuadPart = written_bytes;
+  SetFilePointerEx(handle,file_position,NULL,FILE_CURRENT);
+  return written_bytes;
 }
 
 int win32_unix_read(int fd, void * buf, int count)
@@ -922,15 +920,12 @@ int win32_unix_read(int fd, void * buf, int count)
   if (ReadFile(handle,buf,count,&read_bytes,
                &overlapped)) {
     /* immediately */
-    /* win32_commit_position(handle,&overlapped); */
-    SetFilePointer(handle,read_bytes,NULL,FILE_CURRENT);
-    return read_bytes;
+    goto done_something;
   } else {
     errorCode = GetLastError();
     if (errorCode == ERROR_HANDLE_EOF || errorCode == ERROR_BROKEN_PIPE) {
       /* it is an `error' for positioned reads! oh wtf */
-      SetFilePointer(handle,read_bytes,NULL,FILE_CURRENT);
-      return read_bytes;
+      goto done_something;
     }
     if (errorCode!=ERROR_IO_PENDING) {
       /* is it some _real_ error? */
@@ -949,9 +944,8 @@ int win32_unix_read(int fd, void * buf, int count)
       }
       if (!GetOverlappedResult(handle,&overlapped,&read_bytes,waitInGOR)) {
         errorCode = GetLastError();
-        SetFilePointer(handle,read_bytes,NULL,FILE_CURRENT);
         if (errorCode == ERROR_HANDLE_EOF) {
-          return read_bytes;
+          goto done_something;
         } else {
           if (errorCode == ERROR_OPERATION_ABORTED) {
             errno = EINTR;      /* that's it. */
@@ -961,11 +955,14 @@ int win32_unix_read(int fd, void * buf, int count)
           return -1;
         }
       } else {
-        SetFilePointer(handle,read_bytes,NULL,FILE_CURRENT);
-        return read_bytes;
+        goto done_something;
       }
     }
   }
+ done_something:
+  file_position.QuadPart = read_bytes;
+  SetFilePointerEx(handle,file_position,NULL,FILE_CURRENT);
+  return read_bytes;
 }
 
 int win32_wait_object_or_signal(HANDLE waitFor)
