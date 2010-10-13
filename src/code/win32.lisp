@@ -795,6 +795,10 @@ UNIX epoch: January 1st 1970."
   (handle handle)
   (flags int))
 
+;; Intended to be an imitation of sb!unix:unix-open based on
+;; CreateFile, as complete as possibly.
+;; FILE_FLAG_OVERLAPPED is a must for decent I/O.
+
 (defun win32-unixlike-open (path flags mode)
   (declare (type sb!unix:unix-pathname path)
            (type fixnum flags)
@@ -827,40 +831,3 @@ UNIX epoch: January 1st 1970."
                        file-flag-overlapped)
                       0)))
     (open-osfhandle handle (logior sb!unix::o_binary flags))))
-
-;; ;; Character device [type 2], pipes and sockets [type 3] are special:
-;; ;; overlapped I/O is always to be preferred, as they both block I/O
-;; ;; frequently and don't suffer from missing file pointer (current
-;; ;; position).
-
-;; (defun sequential-device-handle-p (handle)
-;;   (member (get-file-type handle) `(,file-type-char ,file-type-pipe)))
-
-;; (defun socket-handle-p (handle)
-;;   (plusp (socket-input-available handle)))
-
-;; (defconstant duplicate-close-source 1)
-;; (defconstant duplicate-same-access 2)
-
-;; ;; real read will be overlapped.
-;; ;; thus we're to save
-
-;; (define-alien-routine ("DuplicateHandle" duplicate-handle)
-;;     bool
-;;   (from-process handle)
-;;   (from-handle handle)
-;;   (to-process handle)
-;;   (to-handle handle :out)
-;;   (desired-access dword)
-;;   (inherit-handle bool)
-;;   (options dword))
-
-;; (defmacro with-valid-win32-handle ((handle form &optional dont-close) &body body)
-;;   `(sb!sys:without-interrupts
-;;      (let ((,handle ,form))
-;;        (unless (eql handle invalid-handle)
-;;       ,(if dont-close `(progn ,@body)
-;;            `(unwind-protect
-;;                  (sb!sys:with-local-interrupts ,@body)
-;;               (close-handle handle)))))))
-
