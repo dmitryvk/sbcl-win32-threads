@@ -830,4 +830,14 @@ UNIX epoch: January 1st 1970."
                        file-attribute-normal
                        file-flag-overlapped)
                       0)))
-    (open-osfhandle handle (logior sb!unix::o_binary flags))))
+    (if (eql handle invalid-handle)
+	(values nil
+		(let ((error-code (get-last-error)))
+		  (case error-code
+		    (2 sb!unix:enoent)
+		    (183 sb!unix:eexist)
+		    (otherwise (- error-code)))))
+	(let ((fd (open-osfhandle handle (logior sb!unix::o_binary flags))))
+	  (if (minusp fd)
+	      (values nil (sb!unix::get-errno))
+	      (values fd 0))))))
