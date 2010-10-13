@@ -77,6 +77,11 @@
   (bytes-written (* dword))
   (overlapped (* t)))
 
+;;; Wait for single object
+(define-alien-routine ("WaitForSingleObject" wait-for-single-object) dword
+  (handle handle)
+  (timeout dword))
+
 ;;; Copy data from a named or anonymous pipe into a buffer without
 ;;; removing it from the pipe.  BUFFER, BYTES-READ, BYTES-AVAIL, and
 ;;; BYTES-LEFT-THIS-MESSAGE may be NULL if no data is to be read.
@@ -116,13 +121,15 @@
 (defun handle-listen (handle)
   (with-alien ((avail dword)
                (buf (array char #.input-record-size)))
-    (unless (zerop (peek-named-pipe handle nil 0 nil (addr avail) nil))
-      (return-from handle-listen (plusp avail)))
+    (when (zerop (wait-for-single-object handle 0))
+      (unless
+	  (zerop (peek-named-pipe handle nil 0 nil (addr avail) nil))
+	(return-from handle-listen (plusp avail)))
 
-    (unless (zerop (peek-console-input handle
-                                       (cast buf (* t))
-                                       1 (addr avail)))
-      (return-from handle-listen (plusp avail)))
+      (unless (zerop (peek-console-input handle
+					 (cast buf (* t))
+					 1 (addr avail)))
+	(return-from handle-listen (plusp avail))))
 
     (let ((res (socket-input-available handle)))
       (unless (zerop res)
