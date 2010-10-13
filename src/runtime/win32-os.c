@@ -846,35 +846,22 @@ socket_input_available(HANDLE socket)
   return ret;
 }
 
-static BOOL seekable_p(HANDLE handle)
-{
-  LARGE_INTEGER position = {{0}};
-  return SetFilePointerEx(handle,position,NULL,FILE_CURRENT);
-}
-
 int win32_unix_write(int fd, void * buf, int count)
 {
   HANDLE handle;
   DWORD written_bytes;
   OVERLAPPED overlapped;
   struct thread * self = arch_os_get_current_thread();
-  /* BOOL synchronous; */
   BOOL waitInGOR;
   LARGE_INTEGER file_position, nooffset = {{0}};
 
   odprintf("write(%d, 0x%p, %d)", fd, buf, count);
   handle =(HANDLE)_get_osfhandle(fd);
-  /* synchronous = seekable_p(handle); */
   odprintf("handle = 0x%p", handle);
   /* let's not try to distinguish sockets/console/whatever.. */
   /* win32_prepare_position(handle, &overlapped); */
   overlapped.hEvent = self->private_events.events[0];
   SetFilePointerEx(handle,nooffset,&file_position, FILE_CURRENT);
-  /* For seekable file writes, it's essential to go through the CRT
-     _write function: it knows about _O_APPEND and acts appropriately. */
-  /* if (synchronous) { */
-  /*   return _write(fd, buf, count); */
-  /* } */
   overlapped.Offset = file_position.LowPart;
   overlapped.OffsetHigh = file_position.HighPart;
   if (WriteFile(handle, buf, count, &written_bytes,
@@ -921,7 +908,6 @@ int win32_unix_read(int fd, void * buf, int count)
   DWORD read_bytes = 0;
   struct thread * self = arch_os_get_current_thread();
   DWORD errorCode = 0;
-  /* BOOL synchronous; */
   BOOL waitInGOR = FALSE;
   LARGE_INTEGER file_position, nooffset={{0}};
 
@@ -930,7 +916,6 @@ int win32_unix_read(int fd, void * buf, int count)
   odprintf("handle = 0x%p", handle);
   overlapped.hEvent = self->private_events.events[0];
   /* If it has a position, we won't try overlapped */
-  /* synchronous = seekable_p(handle); */
   SetFilePointerEx(handle,nooffset,&file_position, FILE_CURRENT);
   overlapped.Offset = file_position.LowPart;
   overlapped.OffsetHigh = file_position.HighPart;
@@ -962,7 +947,6 @@ int win32_unix_read(int fd, void * buf, int count)
       } else {
         waitInGOR = FALSE;
       }
-      /* win32_commit_position(handle,&overlapped); */
       if (!GetOverlappedResult(handle,&overlapped,&read_bytes,waitInGOR)) {
         errorCode = GetLastError();
         SetFilePointer(handle,read_bytes,NULL,FILE_CURRENT);
