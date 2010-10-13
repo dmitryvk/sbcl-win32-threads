@@ -671,7 +671,16 @@ UNIX epoch: January 1st 1970."
           (alien-funcall afunc aname (addr length))))
       (cast-and-free aname))))
 
-;; File mapping support routines
+;; 64-bit file positioning
+(define-alien-routine ("_lseeki64" lseeki64)
+    (signed 64)
+  (fd int)
+  (position (signed 64))
+  (whence int))
+
+;;; File mapping support routines
+
+;; CreateFileMapping + MapViewOfFile are like mmap() together.
 (define-alien-routine ( #!+sb-unicode "CreateFileMappingW" #!-sb-unicode
                                       "CreateFileMappingA"
                                       create-file-mapping)
@@ -691,9 +700,167 @@ UNIX epoch: January 1st 1970."
   (offset-low dword)
   (size dword))
 
+;; UnmapViewOfFile is like munmap(), but lacks length parameter.
+;; Therefore partial unmapping is not supported.
 (define-alien-routine ("UnmapViewOfFile" unmap-view-of-file) bool
   (address (* t)))
 
+;; FlushViewOfFile is like msync()
 (define-alien-routine ("FlushViewOfFile" flush-view-of-file) bool
   (address (* t))
   (length dword))
+
+;; Constants for CreateFile `disposition'.
+(defconstant file-create-new 1)
+(defconstant file-create-always 2)
+(defconstant file-open-existing 3)
+(defconstant file-open-always 4)
+(defconstant file-truncate-existing 5)
+
+;; access rights
+(defconstant access-generic-read #x80000000)
+(defconstant access-generic-write #x40000000)
+(defconstant access-generic-execute #x20000000)
+(defconstant access-generic-all #x10000000)
+(defconstant access-file-append-data #x4)
+
+;; share modes
+(defconstant file-share-delete #x04)
+(defconstant file-share-read #x01)
+(defconstant file-share-write #x02)
+
+;; CreateFile (the real file-opening workhorse)
+(define-alien-routine ( #!+sb-unicode
+                        "CreateFileW"
+                        #!-sb-unicode
+                        "CreateFileA"
+                        create-file)
+    handle
+  (name (c-string #!+sb-unicode #!+sb-unicode :external-format :ucs-2))
+  (desired-access dword)
+  (share-mode dword)
+  (security-attributes (* t))
+  (creation-disposition dword)
+  (flags-and-attributes dword)
+  (template-file handle))
+
+(defconstant file-attribute-readonly #x1)
+(defconstant file-attribute-hidden #x2)
+(defconstant file-attribute-system #x4)
+(defconstant file-attribute-directory #x10)
+(defconstant file-attribute-archive #x20)
+(defconstant file-attribute-device #x40)
+(defconstant file-attribute-normal #x80)
+(defconstant file-attribute-temporary #x100)
+(defconstant file-attribute-sparse #x200)
+(defconstant file-attribute-reparse-point #x400)
+(defconstant file-attribute-reparse-compressed #x800)
+(defconstant file-attribute-reparse-offline #x1000)
+(defconstant file-attribute-not-content-indexed #x2000)
+(defconstant file-attribute-encrypted #x4000)
+
+(defconstant file-flag-overlapped #x40000000)
+
+
+
+;; GetFileAttribute is like a tiny subset of fstat(),
+;; enough to distinguish directories from anything else.
+(define-alien-routine ( #!+sb-unicode
+                        "GetFileAttributesW"
+                        #!-sb-unicode
+                        "GetFileAttributesA"
+                        get-file-attributes)
+    dword
+  (name (c-string #!+sb-unicode #!+sb-unicode :external-format :ucs-2)))
+
+;; GetFileSizeEx doesn't work with block devices :[
+(define-alien-routine ("GetFileSizeEx" get-file-size-ex)
+    bool
+  (handle handle) (file-size (signed 64) :in-out))
+
+
+;; Possible results of GetFileType.
+(defconstant file-type-disk 1)
+(defconstant file-type-char 2)
+(defconstant file-type-pipe 3)
+(defconstant file-type-remote 4)
+(defconstant file-type-unknown 0)
+
+(define-alien-routine ("GetFileType" get-file-type)
+    dword
+  (handle handle))
+
+(define-alien-routine ("_open_osfhandle" open-osfhandle)
+    int
+  (handle handle)
+  (flags int))
+
+(defun win32-unixlike-open (path flags mode)
+  (declare (type sb!unix:unix-pathname path)
+           (type fixnum flags)
+           (type sb!unix:unix-file-mode mode)
+           (ignorable mode))
+  (let ((handle
+         (create-file path
+                      (if (plusp (logand sb!unix:o_append flags))
+                          access-file-append-data
+                          (case (logand 3 flags)
+                            (0 access-generic-read)
+                            (1 access-generic-write)
+                            (2 access-generic-all)))
+                      (logior file-share-read
+                              file-share-delete
+                              file-share-write)
+                      nil
+                      (cond
+                        ((eql (logand (logior sb!unix:o_excl sb!unix:o_creat) flags)
+                              (logior sb!unix:o_excl sb!unix:o_creat))
+                         file-create-new)
+                        ((plusp (logand sb!unix:o_creat flags))
+                         file-create-always)
+                        ((plusp (logand sb!unix:o_trunc flags))
+                         file-truncate-existing)
+                        (t
+                         file-open-existing))
+                      (logior
+                       file-attribute-normal
+                       file-flag-overlapped)
+                      0)))
+    (open-osfhandle handle (logior sb!unix::o_binary flags))))
+
+;; ;; Character device [type 2], pipes and sockets [type 3] are special:
+;; ;; overlapped I/O is always to be preferred, as they both block I/O
+;; ;; frequently and don't suffer from missing file pointer (current
+;; ;; position).
+
+;; (defun sequential-device-handle-p (handle)
+;;   (member (get-file-type handle) `(,file-type-char ,file-type-pipe)))
+
+;; (defun socket-handle-p (handle)
+;;   (plusp (socket-input-available handle)))
+
+;; (defconstant duplicate-close-source 1)
+;; (defconstant duplicate-same-access 2)
+
+;; ;; real read will be overlapped.
+;; ;; thus we're to save
+
+;; (define-alien-routine ("DuplicateHandle" duplicate-handle)
+;;     bool
+;;   (from-process handle)
+;;   (from-handle handle)
+;;   (to-process handle)
+;;   (to-handle handle :out)
+;;   (desired-access dword)
+;;   (inherit-handle bool)
+;;   (options dword))
+
+;; (defmacro with-valid-win32-handle ((handle form &optional dont-close) &body body)
+;;   `(sb!sys:without-interrupts
+;;      (let ((,handle ,form))
+;;        (unless (eql handle invalid-handle)
+;;       ,(if dont-close `(progn ,@body)
+;;            `(unwind-protect
+;;                  (sb!sys:with-local-interrupts ,@body)
+;;               (close-handle handle)))))))
+

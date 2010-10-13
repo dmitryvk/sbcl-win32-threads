@@ -49,6 +49,7 @@
 (deftype unix-uid () '(unsigned-byte 32))
 (deftype unix-gid () '(unsigned-byte 32))
 
+
 ;;;; system calls
 
 (/show0 "unix.lisp 74")
@@ -278,6 +279,9 @@ corresponds to NAME, or NIL if there is none."
 (defconstant l_incr 1) ; to increment the file pointer
 (defconstant l_xtnd 2) ; to extend the file size
 
+(define-alien-type unix-offset #!-win32 off-t
+  #!+win32 (signed 64))
+
 ;;; Is a stream interactive?
 (defun unix-isatty (fd)
   (declare (type unix-fd fd))
@@ -293,10 +297,13 @@ corresponds to NAME, or NIL if there is none."
   "
   (declare (type unix-fd fd)
            (type (integer 0 2) whence))
-  (let ((result (alien-funcall (extern-alien #!-largefile "lseek"
+  (let ((result
+         #!-win32
+          (alien-funcall (extern-alien #!-largefile "lseek"
                                              #!+largefile "lseek_largefile"
                                              (function off-t int off-t int))
-                 fd offset whence)))
+                        fd offset whence)
+          #!+win32 (sb!win32:lseeki64 fd offset whence)))
     (if (minusp result)
         (values nil (get-errno))
       (values result 0))))
