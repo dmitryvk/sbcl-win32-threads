@@ -26,6 +26,5 @@
   #!+win32
   (when (minusp errno)
     (return-from strerror
-      (string-trim '(#\Return #\Newline #\Space)
-		   (sb!win32::get-last-error-message (- errno)))))
+      (sb!win32::get-last-error-message (- errno))))
   (alien-funcall (extern-alien "strerror" (function c-string int)) errno))
