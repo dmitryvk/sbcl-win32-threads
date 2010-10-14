@@ -30,7 +30,7 @@ OS_LIBS = -mno-cygwin -l ws2_32
 
 GC_SRC = gencgc.c
 
-CFLAGS =  -g -Wall -O3 -mno-cygwin
+CFLAGS =  -g -Wall -O3 -mno-cygwin -Iwin32_include
 ASFLAGS = $(CFLAGS)
 
 CPP = cpp

@@ -18,11 +18,7 @@
 #include "os.h"
 #include "arch.h"
 #include "lispregs.h"
-#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
-#include "pthreads_win32.h"
-#else
 #include <signal.h>
-#endif
 #include "alloc.h"
 #include "interrupt.h"
 #include "interr.h"
