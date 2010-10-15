@@ -129,13 +129,13 @@
       (unless (zerop (peek-console-input handle
 					 (cast buf (* t))
 					 1 (addr avail)))
-        (return-from handle-listen (plusp avail)))
+	(return-from handle-listen (plusp avail))))
 
-      (let ((res (socket-input-available handle)))
-	(unless (zerop res)
-	  (return-from handle-listen (= res 1))))
+    (let ((res (socket-input-available handle)))
+      (unless (zerop res)
+        (return-from handle-listen (= res 1))))
  
-      t)))
+    t))
 
 ;;; Listen for input on a C runtime file handle.  Returns true if
 ;;; there could be input available, or false if there is not.
