@@ -121,20 +121,18 @@
 (defun handle-listen (handle)
   (with-alien ((avail dword)
                (buf (array char #.input-record-size)))
+    (let ((res (socket-input-available handle)))
+      (unless (zerop res)
+	(return-from handle-listen (= res 1))))
     (when (zerop (wait-for-single-object handle 0))
       (unless
-	  (zerop (peek-named-pipe handle nil 0 nil (addr avail) nil))
-	(return-from handle-listen (plusp avail)))
-
-      (unless (zerop (peek-console-input handle
-					 (cast buf (* t))
-					 1 (addr avail)))
+          (zerop (peek-named-pipe handle nil 0 nil (addr avail) nil))
         (return-from handle-listen (plusp avail)))
 
-      (let ((res (socket-input-available handle)))
-	(unless (zerop res)
-	  (return-from handle-listen (= res 1))))
- 
+      (unless (zerop (peek-console-input handle
+                                         (cast buf (* t))
+                                         1 (addr avail)))
+        (return-from handle-listen (plusp avail)))
       t)))
 
 ;;; Listen for input on a C runtime file handle.  Returns true if
