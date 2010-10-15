@@ -3996,6 +3996,12 @@ garbage_collect_generation(generation_index_t generation, int raise)
                   if (!pthread_np_get_thread_context(th->os_thread, &context))
                     lose("Unable to get thread context for thread 0x%x\n", (int)th->os_thread);
                   win32_preserve_context_registers(&context);
+
+                  pthread_mutex_lock(&th->interrupt_data->win32_data.lock);
+                  for (i = 0; i < th->interrupt_data->win32_data.interrupts_count; ++i) {
+                    preserve_pointer((void*)th->interrupt_data->win32_data.interrupts[i]);
+                  }
+                  pthread_mutex_unlock(&th->interrupt_data->win32_data.lock);
                 }
 #endif
             } else {
