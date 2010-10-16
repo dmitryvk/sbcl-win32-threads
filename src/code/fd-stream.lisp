@@ -2104,10 +2104,7 @@
 (defun fd-stream-get-file-position (stream)
   (declare (fd-stream stream))
   (without-interrupts
-    (let ((posn (#!+win32
-		 sb!win32:lseeki64
-		 #!-win32
-		 sb!unix:unix-lseek
+    (let ((posn (sb!unix:unix-lseek
 		 (fd-stream-fd stream) 0 sb!unix:l_incr)))
       (declare (type (or (alien sb!unix:unix-offset) null) posn))
       ;; We used to return NIL for errno==ESPIPE, and signal an error
