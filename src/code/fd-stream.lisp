@@ -2104,12 +2104,16 @@
 (defun fd-stream-get-file-position (stream)
   (declare (fd-stream stream))
   (without-interrupts
-    (let ((posn (sb!win32:lseeki64 (fd-stream-fd stream) 0 sb!unix:l_incr)))
+    (let ((posn (#!+win32
+		 sb!win32:lseeki64
+		 #!-win32
+		 sb!unix:unix-lseek
+		 (fd-stream-fd stream) 0 sb!unix:l_incr)))
       (declare (type (or (alien sb!unix:unix-offset) null) posn))
       ;; We used to return NIL for errno==ESPIPE, and signal an error
       ;; in other failure cases. However, CLHS says to return NIL if
       ;; the position cannot be determined -- so that's what we do.
-      (when (integerp posn)
+      (when (and (integerp posn) (not (minusp posn)))
         ;; Adjust for buffered output: If there is any output
         ;; buffered, the *real* file position will be larger
         ;; than reported by lseek() because lseek() obviously
