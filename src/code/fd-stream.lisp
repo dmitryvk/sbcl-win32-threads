@@ -2048,6 +2048,7 @@
               :expected-type 'fd-stream
               :format-control "~S is not a stream associated with a file."
               :format-arguments (list fd-stream)))
+       #!-win32
      (multiple-value-bind (okay dev ino mode nlink uid gid rdev size
                                 atime mtime ctime blksize blocks)
          (sb!unix:unix-fstat (fd-stream-fd fd-stream))
@@ -2057,7 +2058,20 @@
          (simple-stream-perror "failed Unix fstat(2) on ~S" fd-stream dev))
        (if (zerop mode)
            nil
-           (truncate size (fd-stream-element-size fd-stream)))))
+             (truncate size (fd-stream-element-size fd-stream))))
+       #!+win32
+       (let* ((fd (fd-stream-fd fd-stream))
+              (handle (sb!win32:get-osfhandle fd))
+              (element-size (fd-stream-element-size fd-stream)))
+         (multiple-value-bind (got native-size)
+             (sb!win32:get-file-size-ex handle 0)
+           (if (zerop got)
+               (let* ((here (sb!unix:unix-lseek fd 0 sb!unix:l_incr))
+                      (there (sb!unix:unix-lseek fd 0 sb!unix:l_xtnd)))
+                 (and here there
+                      (prog1 (truncate there element-size)
+                        (sb!unix:unix-lseek fd here sb!unix:l_set))))
+               (truncate native-size element-size)))))
     (:file-string-length
      (etypecase arg1
        (character (fd-stream-character-size fd-stream arg1))
@@ -2090,12 +2104,13 @@
 (defun fd-stream-get-file-position (stream)
   (declare (fd-stream stream))
   (without-interrupts
-    (let ((posn (sb!unix:unix-lseek (fd-stream-fd stream) 0 sb!unix:l_incr)))
-      (declare (type (or (alien sb!unix:off-t) null) posn))
+    (let ((posn (sb!unix:unix-lseek
+		 (fd-stream-fd stream) 0 sb!unix:l_incr)))
+      (declare (type (or (alien sb!unix:unix-offset) null) posn))
       ;; We used to return NIL for errno==ESPIPE, and signal an error
       ;; in other failure cases. However, CLHS says to return NIL if
       ;; the position cannot be determined -- so that's what we do.
-      (when (integerp posn)
+      (when (and (integerp posn) (not (minusp posn)))
         ;; Adjust for buffered output: If there is any output
         ;; buffered, the *real* file position will be larger
         ;; than reported by lseek() because lseek() obviously
@@ -2120,7 +2135,7 @@
 (defun fd-stream-set-file-position (stream position-spec)
   (declare (fd-stream stream))
   (check-type position-spec
-              (or (alien sb!unix:off-t) (member nil :start :end))
+              (or (alien sb!unix:unix-offset) (member nil :start :end))
               "valid file position designator")
   (tagbody
    :again
@@ -2152,7 +2167,7 @@
                (t
                 (values (* position-spec (fd-stream-element-size stream))
                         sb!unix:l_set)))
-           (declare (type (alien sb!unix:off-t) offset))
+           (declare (type (alien sb!unix:unix-offset) offset))
            (let ((posn (sb!unix:unix-lseek (fd-stream-fd stream)
                                            offset origin)))
              ;; CLHS says to return true if the file-position was set
@@ -2164,7 +2179,7 @@
              ;; FIXME: We are still liable to signal an error if flushing
              ;; output fails.
              (return-from fd-stream-set-file-position
-               (typep posn '(alien sb!unix:off-t))))))))
+               (typep posn '(alien sb!unix:unix-offset))))))))
 
 
 ;;;; creation routines (MAKE-FD-STREAM and OPEN)
@@ -2406,7 +2421,10 @@
         ;; Now we can try the actual Unix open(2).
         (multiple-value-bind (fd errno)
             (if namestring
+                #!-win32
                 (sb!unix:unix-open namestring mask mode)
+                #!+win32
+                (sb!win32:win32-unixlike-open namestring mask mode)
                 (values nil sb!unix:enoent))
           (labels ((open-error (format-control &rest format-arguments)
                      (error 'simple-file-error

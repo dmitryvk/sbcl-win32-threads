@@ -233,6 +233,24 @@ search_for_core ()
                                sizeof(char));
     sprintf(lookhere, "%s%s", sbcl_home, stem);
     core = copied_existing_filename_or_null(lookhere);
+#ifdef LISP_FEATURE_WIN32
+    if (!core) {
+        CHAR exe_path[MAX_PATH];
+        DWORD length;
+        length = GetModuleFileNameA(NULL, exe_path, sizeof exe_path);
+        if (length &&
+            length < (MAX_PATH-1) &&
+            exe_path[length] == '\0') {
+            CHAR* dotPointer = strrchr(exe_path,'.');
+            if (((dotPointer-exe_path)+5)<MAX_PATH) {
+                strcpy(dotPointer,".core");
+                free(lookhere);
+                lookhere = exe_path;
+                core = copied_existing_filename_or_null(lookhere);
+            }
+        }
+    }
+#endif /*  LISP_FEATURE_WIN32 */
 
     if (!core) {
         lose("can't find core file at %s\n", lookhere);

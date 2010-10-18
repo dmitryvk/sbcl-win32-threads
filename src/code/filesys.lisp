@@ -296,6 +296,22 @@
             (sb!unix:unix-stat filename)
           (declare (ignore ino nlink gid rdev size atime
                            #!+win32 uid))
+          #!+win32
+          ;; on win32, stat regards UNC pathnames and device names as
+          ;; nonexisting, so we check once more with native API.
+          (unless existsp
+            (setf existsp
+                  (let ((handle (sb!win32:create-file
+                                 filename 0 0 nil
+                                 sb!win32:file-open-existing
+                                 0 0)))
+                    (when (/= -1 handle)
+                      (setf mode
+                            (or mode
+                                (if (logbitp 4
+                                             (sb!win32:get-file-attributes filename))
+                                    sb!unix:s-ifdir 0)))
+                      (progn (sb!win32:close-handle handle) t)))))
           (if existsp
               (case query-for
                 (:existence (nth-value
@@ -304,8 +320,9 @@
                               filename
                               (pathname-host pathname)
                               (sane-default-pathname-defaults)
-                              :as-directory (eql (logand mode sb!unix:s-ifmt)
-                                                 sb!unix:s-ifdir))))
+                              :as-directory (and mode
+                                                 (eql (logand mode sb!unix:s-ifmt)
+                                                      sb!unix:s-ifdir)))))
                 (:truename (nth-value
                             0
                             (parse-native-namestring
@@ -321,8 +338,9 @@
                              (pathname-host pathname)
                              (sane-default-pathname-defaults)
                              ;; ... but without any trailing slash.
-                             :as-directory (eql (logand  mode sb!unix:s-ifmt)
-                                                sb!unix:s-ifdir))))
+                             :as-directory (and mode
+                                                (eql (logand  mode sb!unix:s-ifmt)
+                                                     sb!unix:s-ifdir)))))
                 (:author
                  #!-win32
                  (sb!unix:uid-username uid))

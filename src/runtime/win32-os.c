@@ -26,6 +26,7 @@
  * yet.
  */
 
+#define _WIN32_WINNT 0x0500
 #define RtlUnwind RtlUnwind_FromSystemHeaders
 #include <malloc.h>
 #include <stdio.h>
@@ -604,7 +605,7 @@ handle_exception(EXCEPTION_RECORD *exception_record,
 
         #if defined(LISP_FEATURE_SB_THREAD)
         fake_foreign_function_call(&ctx);
-        
+	
         pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
 
         /* Allocate the SAP objects while the "interrupts" are still
@@ -738,9 +739,10 @@ void __stdcall RtlUnwind(void *, void *, void *, void *); /* I don't have winter
 
 void scratch(void)
 {
+    LARGE_INTEGER la = {{0}};
     CloseHandle(0);
     CreateWaitableTimerA(NULL,FALSE,NULL);
-    SetWaitableTimer(NULL,NULL,0L,NULL,NULL,FALSE);
+    DuplicateHandle(0,0,0,0,0,0,0);
     FlushConsoleInputBuffer(0);
     FormatMessageA(0, 0, 0, 0, 0, 0, 0);
     FreeLibrary(0);
@@ -749,6 +751,8 @@ void scratch(void)
     GetConsoleOutputCP();
     GetCurrentProcess();
     GetExitCodeProcess(0, 0);
+    GetFileSizeEx(0,&la);
+    GetFileType(0);
     GetLastError();
     GetOEMCP();
     GetProcAddress(0, 0);
@@ -759,10 +763,13 @@ void scratch(void)
     PeekConsoleInput(0, 0, 0, 0);
     PeekNamedPipe(0, 0, 0, 0, 0, 0);
     ReadFile(0, 0, 0, 0, 0);
+    SetWaitableTimer(NULL,NULL,0L,NULL,NULL,FALSE);
     Sleep(0);
     WriteFile(0, 0, 0, 0, 0);
     _get_osfhandle(0);
+    _open_osfhandle(0,0);
     _pipe(0,0,0);
+    _lseeki64(0,0,0);
     access(0,0);
     close(0);
     dup(0);
@@ -778,9 +785,11 @@ void scratch(void)
     #ifndef LISP_FEATURE_SB_UNICODE
       CreateDirectoryA(0,0);
       CreateFileMappingA(0,0,0,0,0,0);
+      CreateFileA(0,0,0,0,0,0,0);
       GetComputerNameA(0, 0);
       GetCurrentDirectoryA(0,0);
       GetEnvironmentVariableA(0, 0, 0);
+      GetFileAttributesA(0);
       GetVersionExA(0);
       MoveFileA(0,0);
       SHGetFolderPathA(0, 0, 0, 0, 0);
@@ -789,10 +798,12 @@ void scratch(void)
     #else
       CreateDirectoryW(0,0);
       CreateFileMappingW(0,0,0,0,0,0);
+      CreateFileW(0,0,0,0,0,0,0);
       FormatMessageW(0, 0, 0, 0, 0, 0, 0);
       GetComputerNameW(0, 0);
       GetCurrentDirectoryW(0,0);
       GetEnvironmentVariableW(0, 0, 0);
+      GetFileAttributesW(0);
       GetVersionExW(0);
       MoveFileW(0,0);
       SHGetFolderPathW(0, 0, 0, 0, 0);
@@ -835,40 +846,27 @@ socket_input_available(HANDLE socket)
   return ret;
 }
 
-static BOOL seekable_p(HANDLE handle)
-{
-  LARGE_INTEGER position = {{0}};
-  return SetFilePointerEx(handle,position,NULL,FILE_CURRENT);
-}
-
 int win32_unix_write(int fd, void * buf, int count)
 {
   HANDLE handle;
   DWORD written_bytes;
   OVERLAPPED overlapped;
   struct thread * self = arch_os_get_current_thread();
-  BOOL synchronous;
   BOOL waitInGOR;
+  LARGE_INTEGER file_position, nooffset = {{0}};
 
   odprintf("write(%d, 0x%p, %d)", fd, buf, count);
   handle =(HANDLE)_get_osfhandle(fd);
-  synchronous = seekable_p(handle);
   odprintf("handle = 0x%p", handle);
-  /* let's not try to distinguish sockets/console/whatever.. */
-  /* win32_prepare_position(handle, &overlapped); */
   overlapped.hEvent = self->private_events.events[0];
-
-  /* For seekable file writes, it's essential to go through the CRT
-     _write function: it knows about _O_APPEND and acts appropriately. */
-  if (synchronous) {
-    return _write(fd, buf, count);
-  }
+  SetFilePointerEx(handle,nooffset,&file_position, FILE_CURRENT);
+  overlapped.Offset = file_position.LowPart;
+  overlapped.OffsetHigh = file_position.HighPart;
   if (WriteFile(handle, buf, count, &written_bytes,
                 &overlapped)) {
     odprintf("write(%d, 0x%p, %d) immeditately wrote %d bytes",
              fd, buf, count, written_bytes);
-    /* win32_commit_position(handle,&overlapped); */
-    return written_bytes;
+    goto done_something;
   } else {
     if (GetLastError()!=ERROR_IO_PENDING) {
       errno = EIO;
@@ -883,7 +881,6 @@ int win32_unix_write(int fd, void * buf, int count)
       } else {
         waitInGOR = FALSE;
       }
-      /* win32_commit_position(handle,&overlapped); */
       if (!GetOverlappedResult(handle,&overlapped,&written_bytes,waitInGOR)) {
         if (GetLastError()==ERROR_OPERATION_ABORTED) {
           errno = EINTR;
@@ -892,39 +889,43 @@ int win32_unix_write(int fd, void * buf, int count)
         }
         return -1;
       } else {
-        return written_bytes;
+        goto done_something;
       }
     }
   }
+ done_something:
+  file_position.QuadPart = written_bytes;
+  SetFilePointerEx(handle,file_position,NULL,FILE_CURRENT);
+  return written_bytes;
 }
 
 int win32_unix_read(int fd, void * buf, int count)
 {
   HANDLE handle;
-  OVERLAPPED overlapped;
-  DWORD read_bytes;
+  OVERLAPPED overlapped = {0};
+  DWORD read_bytes = 0;
   struct thread * self = arch_os_get_current_thread();
-  DWORD errorCode;
-  BOOL synchronous;
-  BOOL waitInGOR;
+  DWORD errorCode = 0;
+  BOOL waitInGOR = FALSE;
+  LARGE_INTEGER file_position, nooffset={{0}};
 
   odprintf("read(%d, 0x%p, %d)", fd, buf, count);
   handle = (HANDLE)_get_osfhandle(fd);
   odprintf("handle = 0x%p", handle);
   overlapped.hEvent = self->private_events.events[0];
   /* If it has a position, we won't try overlapped */
-  synchronous = seekable_p(handle);
-
+  SetFilePointerEx(handle,nooffset,&file_position, FILE_CURRENT);
+  overlapped.Offset = file_position.LowPart;
+  overlapped.OffsetHigh = file_position.HighPart;
   if (ReadFile(handle,buf,count,&read_bytes,
-               synchronous? NULL:&overlapped)) {
+               &overlapped)) {
     /* immediately */
-    /* win32_commit_position(handle,&overlapped); */
-    return read_bytes;
+    goto done_something;
   } else {
     errorCode = GetLastError();
     if (errorCode == ERROR_HANDLE_EOF || errorCode == ERROR_BROKEN_PIPE) {
       /* it is an `error' for positioned reads! oh wtf */
-      return read_bytes;
+      goto done_something;
     }
     if (errorCode!=ERROR_IO_PENDING) {
       /* is it some _real_ error? */
@@ -941,11 +942,10 @@ int win32_unix_read(int fd, void * buf, int count)
       } else {
         waitInGOR = FALSE;
       }
-      /* win32_commit_position(handle,&overlapped); */
       if (!GetOverlappedResult(handle,&overlapped,&read_bytes,waitInGOR)) {
         errorCode = GetLastError();
         if (errorCode == ERROR_HANDLE_EOF) {
-          return read_bytes;
+          goto done_something;
         } else {
           if (errorCode == ERROR_OPERATION_ABORTED) {
             errno = EINTR;      /* that's it. */
@@ -955,10 +955,14 @@ int win32_unix_read(int fd, void * buf, int count)
           return -1;
         }
       } else {
-        return read_bytes;
+        goto done_something;
       }
     }
   }
+ done_something:
+  file_position.QuadPart = read_bytes;
+  SetFilePointerEx(handle,file_position,NULL,FILE_CURRENT);
+  return read_bytes;
 }
 
 int win32_wait_object_or_signal(HANDLE waitFor)
