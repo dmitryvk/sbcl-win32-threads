@@ -768,6 +768,7 @@ void scratch(void)
     WriteFile(0, 0, 0, 0, 0);
     _get_osfhandle(0);
     _open_osfhandle(0,0);
+    _rmdir(0);
     _pipe(0,0,0);
     _lseeki64(0,0,0);
     access(0,0);
