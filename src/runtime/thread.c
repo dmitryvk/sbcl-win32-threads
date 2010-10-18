@@ -17,7 +17,11 @@
 #ifndef LISP_FEATURE_WIN32
 #include <sched.h>
 #endif
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+#include "pthreads_win32.h"
+#else
 #include <signal.h>
+#endif
 #include <stddef.h>
 #include <errno.h>
 #include <sys/types.h>
