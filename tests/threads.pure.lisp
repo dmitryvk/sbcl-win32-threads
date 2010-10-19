@@ -40,7 +40,7 @@
 
 ;;; Terminating a thread that's waiting for the terminal.
 
-#+sb-thread
+#+(and sb-thread (not win32))
 (let ((thread (make-thread (lambda ()
                              (sb-thread::get-foreground)))))
   (sleep 1)
@@ -103,8 +103,10 @@
     (mapcar #'sb-thread:join-thread threads)
     (assert (not oops))))
 
+;; win32 doesn't have signal timers
 #+sb-thread
-(with-test (:name :semaphore-multiple-waiters)
+(with-test (:name :semaphore-multiple-waiters
+            :fails-on :win32)
   (let ((semaphore (make-semaphore :name "test sem")))
     (labels ((make-readers (n i)
                (values

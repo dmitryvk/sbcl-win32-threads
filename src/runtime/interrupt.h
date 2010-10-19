@@ -12,8 +12,12 @@
 #if !defined(_INCLUDE_INTERRUPT_H_)
 #define _INCLUDE_INTERRUPT_H_
 
+#include "sbcl.h"
+#include "runtime.h"
 #include <signal.h>
+#include <sys/types.h>
 #include <string.h>
+#include "os.h"
 
 /*
  * This is a workaround for some slightly silly Linux/GNU Libc
@@ -101,7 +105,18 @@ union interrupt_handler {
 
 extern union interrupt_handler interrupt_handlers[NSIG];
 
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+struct win32_interrupt_data {
+    int interrupts_count;
+    lispobj interrupts[MAX_INTERRUPTS];
+    pthread_mutex_t lock;
+};
+#endif
+
 struct interrupt_data {
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+    struct win32_interrupt_data win32_data;
+#endif
     /* signal information for pending signal.  pending_signal=0 when there
      * is no pending signal. */
     void (*pending_handler) (int, siginfo_t*, os_context_t*) ;

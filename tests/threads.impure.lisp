@@ -196,6 +196,8 @@
 ;;; For one of the interupt-thread tests, we want a foreign function
 ;;; that does not make syscalls
 
+#-win32
+(progn
 (with-open-file (o "threads-foreign.c" :direction :output :if-exists :supersede)
   (format o "void loop_forever() { while(1) ; }~%"))
 (sb-ext:run-program "/bin/sh"
@@ -205,7 +207,7 @@
 (sb-alien:load-shared-object (truename "threads-foreign.so"))
 (sb-alien:define-alien-routine loop-forever sb-alien:void)
 (delete-file "threads-foreign.c")
-
+)
 
 ;;; elementary "can we get a lock and release it again"
 (with-test (:name (:mutex :basics))
@@ -394,7 +396,11 @@
   `(handler-case (progn (progn ,@body) nil)
     (sb-ext:timeout () t)))
 
-(with-test (:name (:semaphore :wait-forever))
+(with-test (:name (:semaphore :wait-forever)
+            :fails-on :win32)
+  #+win32
+  (error "No timeout support on win32")
+  #-win32
   (let ((sem (make-semaphore :count 0)))
     (assert (raises-timeout-p
               (sb-ext:with-timeout 0.1
@@ -529,10 +535,15 @@
   (let ((child (test-interrupt (lambda () (loop)))))
     (terminate-thread child)))
 
-(with-test (:name (:interrupt-thread :interrupt-foreign-loop))
+(with-test (:name (:interrupt-thread :interrupt-foreign-loop)
+            :fails-on :win32)
+  #+win32 (error "Foreign loop is not interruptible on win32")
+  #-win32
   (test-interrupt #'loop-forever :quit))
 
-(with-test (:name (:interrupt-thread :interrupt-sleep))
+(with-test (:name (:interrupt-thread :interrupt-sleep)
+            :fails-on :win32)
+  #+win32 (error "Sleep is not interruptible on win32")
   (let ((child (test-interrupt (lambda () (loop (sleep 2000))))))
     (terminate-thread child)
     (wait-for-threads (list child))))
@@ -855,7 +866,9 @@
      (wait-for-gc)
      (decf sb-vm::*binding-stack-pointer* 2))))
 
-(with-test (:name (:binding-stack-gc-safety))
+(with-test (:name (:binding-stack-gc-safety)
+            :fails-on :win32)
+  #+win32 (error "Not appliable on platform with safepoints")
   (let (threads)
     (unwind-protect
          (progn

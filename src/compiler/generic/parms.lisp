@@ -81,6 +81,9 @@
     *gc-pending*
     #!-sb-thread
     *stepping*
+    #!+(and win32 sb-thread) sb!impl::*gc-safe*
+    #!+(and win32 sb-thread) sb!impl::*in-safepoint*
+    #!+(and win32 sb-thread) sb!impl::*disable-safepoints*
 
     ;; threading support
     #!+sb-thread *stop-for-gc-pending*

@@ -122,6 +122,11 @@ GNAME(call_into_c):
 	fstp	%st(0)
 	fstp	%st(0)
 
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+	pusha
+	call GNAME(gc_enter_safe_region)
+	popa
+#endif
 	call	*%eax		  # normal callout using Lisp stack
 	movl	%eax,%ecx	  # remember integer return value
 
@@ -145,6 +150,11 @@ GNAME(call_into_c):
 
 /* Restore the return value. */
 	movl	%ecx,%eax	# maybe return value
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+	pusha
+	call GNAME(gc_leave_region)
+	popa
+#endif
 
 /* Return. */
 	jmp	*%ebx
@@ -163,6 +173,11 @@ Lfp_rtn_value:
 
 /* We don't need to restore eax, because the result is in st(0). */
 
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+	pusha
+	call GNAME(gc_leave_region)
+	popa
+#endif
 /* Return. FIXME: It would be nice to restructure this to use RET. */	
 	jmp	*%ebx
 
@@ -200,6 +215,13 @@ GNAME(call_into_lisp_first_time):
 	
 	.align	align_16byte,0x90
 GNAME(call_into_lisp):
+
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+	pusha
+	call GNAME(gc_enter_unsafe_region)
+	popa
+#endif
+  
 	pushl	%ebp		# Save old frame pointer.
 	movl	%esp,%ebp	# Establish new frame.
 Lstack:
@@ -261,8 +283,13 @@ Ldone:
 #ifdef LISP_FEATURE_WIN32
 	/* Establish an SEH frame. */
 #ifdef LISP_FEATURE_SB_THREAD
-	/* FIXME: need to save BSP here. */
-#error "need to save BSP here, but don't know how yet."
+	/* Save binding stack pointer */
+	subl $4, %esp
+	pushl %eax
+	movl %fs:0x14, %eax
+	movl THREAD_BINDING_STACK_POINTER_OFFSET(%eax), %eax
+	movl %eax, 4(%esp)
+	popl %eax
 #else
 	pushl	BINDING_STACK_POINTER + SYMBOL_VALUE_OFFSET
 #endif
@@ -306,6 +333,11 @@ LsingleValue:
 	
 	popl	%ebp		# c-sp
 	movl	%edx,%eax	# c-val
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+	pusha
+	call GNAME(gc_leave_region)
+	popa
+#endif
 	ret
 	SIZE(GNAME(call_into_lisp))
 
@@ -539,6 +571,7 @@ DEFINE_ALLOC_TO_REG(alloc_16_to_edi,%edi,$16)
 #define START_REGION GNAME(boxed_region)
 #endif
 
+/* FIXME Win32 */
 #define ALLOC_OVERFLOW(size)                                    \
         /* Calculate the size for the allocation. */            \
         subl    START_REGION,size;                              \

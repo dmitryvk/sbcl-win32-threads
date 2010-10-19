@@ -14,7 +14,6 @@
  */
 
 #include <stdio.h>
-#include <signal.h>
 #include "sbcl.h"
 #include "runtime.h"
 #include "globals.h"
@@ -500,12 +499,14 @@ describe_thread_state(void)
     sigset_t mask;
     struct thread *thread = arch_os_get_current_thread();
     struct interrupt_data *data = thread->interrupt_data;
-#ifndef LISP_FEATURE_WIN32
+#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
     get_current_sigmask(&mask);
     printf("Signal mask:\n");
+#ifndef LISP_FEATURE_WIN32
     printf(" SIGALRM = %d\n", sigismember(&mask, SIGALRM));
     printf(" SIGINT = %d\n", sigismember(&mask, SIGINT));
     printf(" SIGPROF = %d\n", sigismember(&mask, SIGPROF));
+#endif
 #ifdef SIG_STOP_FOR_GC
     printf(" SIG_STOP_FOR_GC = %d\n", sigismember(&mask, SIG_STOP_FOR_GC));
 #endif

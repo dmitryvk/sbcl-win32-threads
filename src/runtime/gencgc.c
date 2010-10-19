@@ -26,7 +26,6 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <signal.h>
 #include <errno.h>
 #include <string.h>
 #include "sbcl.h"
@@ -3883,6 +3882,19 @@ preserve_context_registers (os_context_t *c)
         preserve_pointer(*ptr);
     }
 }
+
+#if defined(LISP_FEATURE_WIN32)
+void win32_preserve_context_registers(CONTEXT* context)
+{
+  preserve_pointer((void*)context->Eax);
+  preserve_pointer((void*)context->Ecx);
+  preserve_pointer((void*)context->Edx);
+  preserve_pointer((void*)context->Ebx);
+  preserve_pointer((void*)context->Esi);
+  preserve_pointer((void*)context->Edi);
+  preserve_pointer((void*)context->Eip);
+}
+#endif
 #endif
 
 /* Garbage collect a generation. If raise is 0 then the remains of the
@@ -3973,7 +3985,36 @@ garbage_collect_generation(generation_index_t generation, int raise)
                 /* Somebody is going to burn in hell for this, but casting
                  * it in two steps shuts gcc up about strict aliasing. */
                 esp = (void **)((void *)&raise);
+#if defined(LISP_FEATURE_WIN32)
+                {
+                  CONTEXT context;
+                  if (!pthread_np_get_thread_context(th->os_thread, &context))
+                    lose("Unable to get thread context for thread 0x%x\n", (int)th->os_thread);
+                  win32_preserve_context_registers(&context);
+
+                  pthread_mutex_lock(&th->interrupt_data->win32_data.lock);
+                  for (i = 0; i < th->interrupt_data->win32_data.interrupts_count; ++i) {
+                    preserve_pointer((void*)th->interrupt_data->win32_data.interrupts[i]);
+                  }
+                  pthread_mutex_unlock(&th->interrupt_data->win32_data.lock);
+                }
+#endif
             } else {
+#if defined(LISP_FEATURE_WIN32)
+                CONTEXT context;
+                pthread_np_suspend(th->os_thread);
+                if (!pthread_np_get_thread_context(th->os_thread, &context))
+                  lose("Unable to get thread context for thread 0x%x\n", (int)th->os_thread);
+                win32_preserve_context_registers(&context);
+                pthread_np_resume(th->os_thread);
+                esp = (void**)context.Esp;
+                
+                pthread_mutex_lock(&th->interrupt_data->win32_data.lock);
+                for (i = 0; i < th->interrupt_data->win32_data.interrupts_count; ++i) {
+                  preserve_pointer((void*)th->interrupt_data->win32_data.interrupts[i]);
+                }
+                pthread_mutex_unlock(&th->interrupt_data->win32_data.lock);
+#else
                 void **esp1;
                 free=fixnum_value(SymbolValue(FREE_INTERRUPT_CONTEXT_INDEX,th));
                 for(i=free-1;i>=0;i--) {
@@ -3985,6 +4026,7 @@ garbage_collect_generation(generation_index_t generation, int raise)
                         preserve_context_registers(c);
                     }
                 }
+#endif
             }
 #else
             esp = (void **)((void *)&raise);
@@ -4664,7 +4706,9 @@ general_alloc_internal(long nbytes, int page_type_flag, struct alloc_region *reg
                         (context ? os_context_sigmask_addr(context) : NULL);
                 }
 #else
+#ifndef LISP_FEATURE_WIN32
                 maybe_save_gc_mask_and_block_deferrables(NULL);
+#endif
 #endif
             }
         }

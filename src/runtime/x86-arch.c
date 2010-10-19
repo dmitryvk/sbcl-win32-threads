@@ -18,7 +18,6 @@
 #include "os.h"
 #include "arch.h"
 #include "lispregs.h"
-#include "signal.h"
 #include "alloc.h"
 #include "interrupt.h"
 #include "interr.h"
@@ -78,7 +77,11 @@ context_eflags_addr(os_context_t *context)
 #elif defined __NetBSD__
     return &(context->uc_mcontext.__gregs[_REG_EFL]);
 #elif defined LISP_FEATURE_WIN32
+#if defined(LISP_FEATURE_SB_THREAD)
+    return (int *)&context->win32_context->EFlags;
+#else
     return (int *)&context->EFlags;
+#endif
 #else
 #error unsupported OS
 #endif

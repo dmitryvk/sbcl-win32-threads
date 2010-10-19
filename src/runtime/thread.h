@@ -22,8 +22,29 @@ struct alloc_region { };
 #define STATE_RUNNING (make_fixnum(1))
 #define STATE_SUSPENDED (make_fixnum(2))
 #define STATE_DEAD (make_fixnum(3))
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+#define STATE_SUSPENDED_BRIEFLY (make_fixnum(4))
+#endif
 
 #ifdef LISP_FEATURE_SB_THREAD
+
+#ifdef LISP_FEATURE_WIN32
+
+enum threads_suspend_reason { SUSPEND_REASON_NONE, SUSPEND_REASON_GC, SUSPEND_REASON_INTERRUPT, SUSPEND_REASON_GCING };
+
+struct threads_suspend_info {
+  int suspend;
+  pthread_mutex_t world_lock;
+  pthread_mutex_t lock;
+  enum threads_suspend_reason reason;
+  int phase;
+  struct thread * gc_thread;
+  struct thread * interrupted_thread;
+};
+
+extern struct threads_suspend_info suspend_info;
+
+#endif
 
 /* Only access thread state with blockables blocked. */
 static inline lispobj
@@ -36,10 +57,33 @@ thread_state(struct thread *thread)
     return state;
 }
 
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+static const char * get_thread_state_string(lispobj state)
+{
+  if (state == STATE_RUNNING) return "RUNNING";
+  if (state == STATE_SUSPENDED) return "SUSPENDED";
+  if (state == STATE_DEAD) return "DEAD";
+  if (state == STATE_SUSPENDED_BRIEFLY) return "SUSPENDED_BRIEFLY";
+  return "unknown";
+}
+
+static const char * get_thread_state_as_string(struct thread * thread)
+{
+  return get_thread_state_string(thread_state(thread));
+}
+#endif
+
 static inline void
 set_thread_state(struct thread *thread, lispobj state)
 {
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+    lispobj old_state;
+#endif
     pthread_mutex_lock(thread->state_lock);
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+    old_state = thread->state;
+    odprintf("changing thread state of 0x%p from %s to %s", thread->os_thread, get_thread_state_string(old_state), get_thread_state_string(state));
+#endif
     thread->state = state;
     pthread_cond_broadcast(thread->state_cond);
     pthread_mutex_unlock(thread->state_lock);
@@ -215,6 +259,10 @@ static inline struct thread *arch_os_get_current_thread(void)
 #if defined(LISP_FEATURE_SB_THREAD)
 #if defined(LISP_FEATURE_X86)
     register struct thread *me=0;
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+    __asm__ __volatile__ ("movl %%fs:0x14, %0" : "=r"(me) :);
+    return me;
+#endif
     if(all_threads) {
 #if defined(LISP_FEATURE_DARWIN) && defined(LISP_FEATURE_RESTORE_FS_SEGMENT_REGISTER_FROM_TLS)
         sel_t sel;

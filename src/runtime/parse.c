@@ -14,7 +14,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
-#include <signal.h>
 
 #include "sbcl.h"
 #include "runtime.h"

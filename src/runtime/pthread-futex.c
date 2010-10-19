@@ -16,7 +16,7 @@
 #if defined(LISP_FEATURE_SB_THREAD) && defined(LISP_FEATURE_SB_PTHREAD_FUTEX)
 
 #include <errno.h>
-#include <pthread.h>
+#include "runtime.h"
 #include <stdlib.h>
 
 #include "runtime.h"
@@ -25,6 +25,10 @@
 #include "os.h"
 
 #define FUTEX_WAIT_NSEC (10000000) /* 10 msec */
+
+#if defined(LISP_FEATURE_WIN32)
+#define EWOULDBLOCK 3
+#endif
 
 #if 1
 # define futex_assert(ex)                                              \
@@ -230,6 +234,10 @@ futex_wait(int *lock_word, int oldval, long sec, unsigned long usec)
     sigset_t oldset;
     struct timeval tv, *timeout;
 
+#if defined(LISP_FEATURE_WIN32)
+    gc_enter_safe_region();
+#endif
+
 again:
     if (sec < 0)
         timeout = NULL;
@@ -260,8 +268,10 @@ again:
 
     /* It's not possible to unwind frames across pthread_cond_wait(3). */
     for (;;) {
+#if !defined(LISP_FEATURE_WIN32)
         int i;
         sigset_t pendset;
+#endif
         struct timespec abstime;
 
         ret = futex_relative_to_abs(&abstime, FUTEX_WAIT_NSEC);
@@ -274,9 +284,15 @@ again:
         if (result != ETIMEDOUT || futex_istimeout(timeout))
             break;
 
+        if (*(volatile int *)lock_word != oldval) {
+            result = 0;
+            goto done;
+        }
+
         /* futex system call of Linux returns with EINTR errno when
          * it's interrupted by signals.  Check pending signals here to
          * emulate this behaviour. */
+#if !defined(LISP_FEATURE_WIN32)
         sigpending(&pendset);
         for (i = 1; i < NSIG; i++) {
             if (sigismember(&pendset, i) && sigismember(&newset, i)) {
@@ -284,6 +300,7 @@ again:
                 goto done;
             }
         }
+#endif
     }
 done:
     ; /* Null statement is required between label and pthread_cleanup_pop. */
@@ -296,6 +313,10 @@ done:
         sched_yield();
         goto again;
     }
+	
+#if defined(LISP_FEATURE_WIN32)
+	gc_leave_region();
+#endif
 
     if (result == ETIMEDOUT)
         return 1;

@@ -17,7 +17,8 @@
 #ifndef LISP_FEATURE_WIN32
 #include <sched.h>
 #endif
-#include <signal.h>
+#include "runtime.h"
+#include "interrupt.h"
 #include <stddef.h>
 #include <errno.h>
 #include <sys/types.h>
@@ -44,6 +45,9 @@
 #include "interr.h"             /* for lose() */
 #include "alloc.h"
 #include "gc-internal.h"
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+#include "pseudo-atomic.h"
+#endif
 
 #ifdef LISP_FEATURE_WIN32
 /*
@@ -209,7 +213,11 @@ perform_thread_post_mortem(struct thread_post_mortem *post_mortem)
         gc_assert(!pthread_join(post_mortem->os_thread, NULL));
         gc_assert(!pthread_attr_destroy(post_mortem->os_attr));
         free(post_mortem->os_attr);
+#if defined(LISP_FEATURE_WIN32)
+        os_invalidate_free(post_mortem->os_address, THREAD_STRUCT_SIZE);
+#else
         os_invalidate(post_mortem->os_address, THREAD_STRUCT_SIZE);
+#endif
         free(post_mortem);
     }
 }
@@ -267,6 +275,9 @@ new_thread_trampoline(struct thread *th)
 {
     lispobj function;
     int result, lock_ret;
+#if defined(LISP_FEATURE_WIN32)
+    int i;
+#endif
 
     FSHOW((stderr,"/creating thread %lu\n", thread_self()));
     check_deferrables_blocked_or_lose(0);
@@ -313,8 +324,16 @@ new_thread_trampoline(struct thread *th)
     pthread_mutex_destroy(th->state_lock);
     pthread_cond_destroy(th->state_cond);
 
+#if defined(LISP_FEATURE_WIN32)
+  #if defined(LISP_FEATURE_SB_THREAD)
+    pthread_mutex_destroy(&th->interrupt_data->win32_data.lock);
+  #endif
+    os_invalidate_free((os_vm_address_t)th->interrupt_data,
+                  (sizeof (struct interrupt_data)));
+#else
     os_invalidate((os_vm_address_t)th->interrupt_data,
                   (sizeof (struct interrupt_data)));
+#endif
 
 #ifdef LISP_FEATURE_MACH_EXCEPTION_HANDLER
     FSHOW((stderr, "Deallocating mach port %x\n", THREAD_STRUCT_TO_EXCEPTION_PORT(th)));
@@ -337,11 +356,23 @@ new_thread_trampoline(struct thread *th)
 static void
 free_thread_struct(struct thread *th)
 {
+#if defined(LISP_FEATURE_WIN32)
+    if (th->interrupt_data) {
+        #if defined(LISP_FEATURE_SB_THREAD)
+        pthread_mutex_destroy(&th->interrupt_data->win32_data.lock);
+        #endif
+        os_invalidate_free((os_vm_address_t) th->interrupt_data,
+                      (sizeof (struct interrupt_data)));
+    }
+    os_invalidate_free((os_vm_address_t) th->os_address,
+                  THREAD_STRUCT_SIZE);
+#else
     if (th->interrupt_data)
         os_invalidate((os_vm_address_t) th->interrupt_data,
                       (sizeof (struct interrupt_data)));
     os_invalidate((os_vm_address_t) th->os_address,
                   THREAD_STRUCT_SIZE);
+#endif
 }
 
 /* this is called from any other thread to create the new one, and
@@ -355,7 +386,7 @@ create_thread_struct(lispobj initial_function) {
     struct thread *th=0;        /*  subdue gcc */
     void *spaces=0;
     void *aligned_spaces=0;
-#ifdef LISP_FEATURE_SB_THREAD
+#if defined(LISP_FEATURE_SB_THREAD) || defined(LISP_FEATURE_WIN32)
     unsigned int i;
 #endif
 
@@ -489,6 +520,11 @@ create_thread_struct(lispobj initial_function) {
 #ifdef LISP_FEATURE_SB_THREAD
     bind_variable(STOP_FOR_GC_PENDING,NIL,th);
 #endif
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+    bind_variable(GC_SAFE,NIL,th);
+    bind_variable(IN_SAFEPOINT,NIL,th);
+    bind_variable(DISABLE_SAFEPOINTS,NIL,th);
+#endif
 #ifndef LISP_FEATURE_C_STACK_IS_CONTROL_STACK
     access_control_stack_pointer(th)=th->control_stack_start;
 #endif
@@ -505,6 +541,11 @@ create_thread_struct(lispobj initial_function) {
     th->interrupt_data->allocation_trap_context = 0;
 #endif
     th->no_tls_value_marker=initial_function;
+    
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+    th->interrupt_data->win32_data.interrupts_count = 0;
+    pthread_mutex_init(&th->interrupt_data->win32_data.lock, NULL);
+#endif
 
     th->stepping = NIL;
     return th;
@@ -560,8 +601,12 @@ boolean create_os_thread(struct thread *th,os_thread_t *kid_tid)
     if((initcode = pthread_attr_init(th->os_attr)) ||
        /* call_into_lisp_first_time switches the stack for the initial
         * thread. For the others, we use this. */
+#if defined(LISP_FEATURE_WIN32)
+       (pthread_attr_setstacksize(th->os_attr, thread_control_stack_size)) ||
+#else
        (pthread_attr_setstack(th->os_attr,th->control_stack_start,
                               thread_control_stack_size)) ||
+#endif
        (retcode = pthread_create
         (kid_tid,th->os_attr,(void *(*)(void *))new_thread_trampoline,th))) {
         FSHOW_SIGNAL((stderr, "init = %d\n", initcode));
@@ -608,6 +653,605 @@ os_thread_t create_thread(lispobj initial_function) {
  * it's in the middle of allocation) then waits for another SIG_STOP_FOR_GC.
  */
 
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+
+struct threads_suspend_info suspend_info = {
+  0, PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
+  SUSPEND_REASON_NONE, 0, NULL, NULL
+};
+
+// returns: 0 if all is ok
+// -1 if max interrupts reached
+int schedule_thread_interrupt(struct thread * th, lispobj interrupt_fn)
+{
+  odprintf("schedule_thread_interrupt(0x%p, 0x%p) begin", th->os_thread, interrupt_fn);
+  pthread_mutex_lock(&th->interrupt_data->win32_data.lock);
+  if (th->interrupt_data->win32_data.interrupts_count == MAX_INTERRUPTS) {
+    pthread_mutex_unlock(&th->interrupt_data->win32_data.lock);
+    return -1;
+  } else {
+    ++th->interrupt_data->win32_data.interrupts_count;
+    th->interrupt_data->win32_data.interrupts[th->interrupt_data->win32_data.interrupts_count - 1] = interrupt_fn;
+    pthread_mutex_unlock(&th->interrupt_data->win32_data.lock);
+    SetSymbolValue(INTERRUPT_PENDING, T, th);
+    return 0;
+  }
+  odprintf("schedule_thread_interrupt(0x%p, 0x%p) end", th->os_thread, interrupt_fn);
+}
+
+const char * t_nil_str(lispobj value)
+{
+	if (value == T) return "T";
+	if (value == NIL) return "NIL";
+	return "?";
+}
+
+void lock_suspend_info(const char * file, int line)
+{
+  odprintf("locking suspend_info.lock (%s:%d)", file, line);
+  pthread_mutex_lock(&suspend_info.lock);
+  odprintf("locked suspend_info.lock (%s:%d)", file, line);
+}
+
+void unlock_suspend_info(const char * file, int line)
+{
+  odprintf("unlocking suspend_info.lock (%s:%d)", file, line);
+  pthread_mutex_unlock(&suspend_info.lock);
+}
+
+void roll_thread_to_safepoint(struct thread * thread)
+{
+  struct thread * p;
+  odprintf("roll_thread_to_safepoint(0x%p) begin", thread->os_thread);
+  pthread_mutex_lock(&all_threads_lock);
+  odprintf("all_threads_lock taken");
+  pthread_mutex_lock(&suspend_info.world_lock);
+  odprintf("world_lock taken");
+  
+  lock_suspend_info(__FILE__, __LINE__);
+  suspend_info.reason = SUSPEND_REASON_INTERRUPT;
+  suspend_info.interrupted_thread = thread;
+  suspend_info.phase = 1;
+  suspend_info.suspend = 1;
+  unlock_suspend_info(__FILE__, __LINE__);
+  
+  odprintf("unmapping gc page");
+  
+  unmap_gc_page();
+  
+  odprintf("unmapped gc page, doing interrupt phase 1");
+  
+  // Phase 1: Make sure that th is in gc-safe code or noted the need to interrupt
+  if (SymbolValue(GC_SAFE, thread) == NIL) {
+    wait_for_thread_state_change(thread, STATE_RUNNING);
+  } 
+  
+  odprintf("mapping gc page");
+  
+  map_gc_page();
+  
+  odprintf("mapped gc page");
+  
+  lock_suspend_info(__FILE__, __LINE__);
+  suspend_info.suspend = 0;
+  unlock_suspend_info(__FILE__, __LINE__);
+  odprintf("mapped gc page, iterating over threads and waking them");
+  
+  for (p = all_threads; p; p = p->next) {
+    if (thread_state(p) != STATE_DEAD)
+      set_thread_state(p, STATE_RUNNING);
+  }
+
+  pthread_mutex_unlock(&suspend_info.world_lock);
+  pthread_mutex_unlock(&all_threads_lock);
+  
+  odprintf("roll_thread_to_safepoint(0x%p) end", thread->os_thread);
+}
+
+int check_pending_interrupts();
+
+// returns: 0 if interrupt is queued
+// -1 if max interrupts reached
+int interrupt_lisp_thread(struct thread * thread, lispobj interrupt_fn)
+{
+  struct thread * self = arch_os_get_current_thread();
+  if (schedule_thread_interrupt(thread, interrupt_fn) != 0) {
+    return -1;
+  }
+  
+  if (self == thread) {
+    check_pending_interrupts();
+  } else {
+    roll_thread_to_safepoint(thread);
+  }
+  
+  return 0;
+}
+int thread_may_gc();
+int thread_may_suspend_for_gc();
+
+// returns 0 if skipped, 1 otherwise
+int check_pending_gc()
+{
+  struct thread * self = arch_os_get_current_thread();
+  if (SymbolValue(GC_PENDING, self) == T) {
+    if (thread_may_gc()) {
+      SetSymbolValue(GC_PENDING, NIL, self);
+      maybe_gc(NULL);
+      return 1;
+    }
+  }
+  return 0;
+}
+
+// returns 0 if skipped, 1 otherwise
+int check_pending_interrupts()
+{
+  struct thread * p = arch_os_get_current_thread();
+  sigset_t sigset;
+  int done = 0;
+  done |= check_pending_gc();
+  if (p->interrupt_data->win32_data.interrupts_count == 0) {
+    return done;
+  }
+  odprintf("In check_pending_interrupts, have %d interrupts", p->interrupt_data->win32_data.interrupts_count);
+  get_current_sigmask(&sigset);
+  if (sigismember(&sigset, SIGHUP)) {
+    if (SymbolValue(INTERRUPT_PENDING, p) == NIL) {
+      odprintf("SIGHUP is blocked, setting INTERRUPT_PENDING");
+      SetSymbolValue(INTERRUPT_PENDING, T, p);
+      pthread_np_add_pending_signal(p->os_thread, SIGHUP);
+      done = 1;
+    }
+    return done;
+  }
+  
+  if (SymbolValue(INTERRUPTS_ENABLED, p) == NIL) {
+    odprintf("INTERRUPTS_ENABLED = NIL, setting INTERRUPT_PENDING");
+    if (p->interrupt_data->win32_data.interrupts_count > 0 && SymbolValue(INTERRUPT_PENDING, p) == NIL) {
+      SetSymbolValue(INTERRUPT_PENDING, T, p);
+      done = 1;
+    }
+    return done;
+  }
+  SetSymbolValue(INTERRUPT_PENDING, NIL, p);
+  
+  while (1) {
+    pthread_mutex_lock(&p->interrupt_data->win32_data.lock);
+    if (p->interrupt_data->win32_data.interrupts_count > 0) {
+      done = 1;
+      odprintf("Have %d interrupts", p->interrupt_data->win32_data.interrupts_count);
+			lispobj objs[MAX_INTERRUPTS];
+			int i, n;
+			n = p->interrupt_data->win32_data.interrupts_count;
+			for (i = 0; i < p->interrupt_data->win32_data.interrupts_count; ++i)
+				objs[i] = p->interrupt_data->win32_data.interrupts[i];
+
+			p->interrupt_data->win32_data.interrupts_count = 0;
+      pthread_mutex_unlock(&p->interrupt_data->win32_data.lock);
+      for (i = 0; i < n; ++i) {
+				lispobj fn = objs[i];
+				objs[i] = 0;
+        odprintf("calling interrupt function 0x%p", fn);
+				funcall0(fn);
+				fn = 0;
+			}
+    } else {
+      odprintf("No more interrupts", p->interrupt_data->win32_data.interrupts_count);
+      pthread_mutex_unlock(&p->interrupt_data->win32_data.lock);
+      break;
+    }
+  }
+  
+  return done;
+}
+
+
+void gc_enter_safe_region()
+{
+  struct thread * self = arch_os_get_current_thread();
+  int errorCode = GetLastError();
+  bind_variable(GC_SAFE, thread_may_suspend_for_gc() ? T : NIL, self);
+  gc_safepoint();
+  SetLastError(errorCode);
+}
+
+void gc_enter_unsafe_region()
+{
+  struct thread * self = arch_os_get_current_thread();
+  int errorCode = GetLastError();
+  bind_variable(GC_SAFE, NIL, self);
+  gc_safepoint();
+  SetLastError(errorCode);
+}
+
+void gc_leave_region()
+{
+  struct thread * self = arch_os_get_current_thread();
+  int errorCode = GetLastError();
+  unbind_variable(GC_SAFE, self);
+  gc_safepoint();
+  SetLastError(errorCode);
+}
+
+void safepoint_cycle_state(int state)
+{
+  struct thread * self = arch_os_get_current_thread();
+  set_thread_state(self, state);
+  unlock_suspend_info(__FILE__, __LINE__);
+  wait_for_thread_state_change(self, state);
+}
+
+void suspend()
+{
+  struct thread * self = arch_os_get_current_thread();
+  safepoint_cycle_state(STATE_SUSPENDED);
+  SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
+}
+
+void suspend_briefly()
+{
+  if (suspend_info.phase == 1 || suspend_info.reason == SUSPEND_REASON_INTERRUPT) {
+    safepoint_cycle_state(STATE_SUSPENDED_BRIEFLY);
+  } else {
+    unlock_suspend_info(__FILE__, __LINE__);
+  }
+}
+
+int thread_may_gc()
+{
+  // Thread may gc if all of these are true:
+  // 1) SIG_STOP_FOR_GC is unblocked
+  // 2) GC_INHIBIT is NIL
+  // 3) INTERRUPTS_ENABLED is not-NIL
+  // 4) !pseudo_atomic
+
+  struct thread * self = arch_os_get_current_thread();
+  
+  sigset_t ss;
+  
+  pthread_sigmask(SIG_BLOCK, NULL, &ss);
+  if (sigismember(&ss, SIG_STOP_FOR_GC)) {
+    return 0;
+  }
+    
+  if (SymbolValue(GC_INHIBIT, self) != NIL) {
+    return 0;
+  }
+    
+  if (SymbolValue(GC_PENDING, self) != T && SymbolValue(GC_PENDING, self) != NIL) {
+    return 0;
+  }
+    
+  if (get_pseudo_atomic_atomic(self)) {
+    return 0;
+  }
+    
+  return 1;
+}
+
+int thread_may_suspend_for_gc()
+{
+  // Thread may gc if all of these are true:
+  // 1) SIG_STOP_FOR_GC is unblocked
+  // 2) GC_INHIBIT is NIL
+  // 3) INTERRUPTS_ENABLED is not-NIL
+  // 4) !pseudo_atomic
+
+  struct thread * self = arch_os_get_current_thread();
+  
+  sigset_t ss;
+  
+  pthread_sigmask(SIG_BLOCK, NULL, &ss);
+  if (sigismember(&ss, SIG_STOP_FOR_GC)) {
+    return 0;
+  }
+    
+  if (SymbolValue(GC_INHIBIT, self) != NIL) {
+    return 0;
+  }
+  
+  if (get_pseudo_atomic_atomic(self)) {
+    return 0;
+  }
+    
+  return 1;
+}
+
+int thread_may_interrupt()
+{
+  // Thread may be interrupted if all of these are true:
+  // 1) SIGHUP is unblocked
+  // 2) INTERRUPTS_ENABLED is not-nil
+  // 3) !pseudo_atomic
+  struct thread * self = arch_os_get_current_thread();
+  
+  sigset_t ss;
+  pthread_sigmask(SIG_BLOCK, NULL, &ss);
+  if (sigismember(&ss, SIGHUP))
+    return 0;
+    
+  if (SymbolValue(INTERRUPTS_ENABLED, self) == NIL)
+    return 0;
+  
+  if (get_pseudo_atomic_atomic(self)) {
+    return 0;
+  }
+  
+  return 1;
+}
+
+// returns: 0 if skipped, 1 otherwise
+int maybe_ack_gc_poll()
+{
+  struct thread * self = arch_os_get_current_thread();
+  if (!suspend_info.suspend) return 0;
+  odprintf("maybe_ack_gc_poll, suspend_info.suspend was set, locking suspend_info");
+  lock_suspend_info(__FILE__, __LINE__);
+  odprintf("maybe_ack_gc_poll, suspend_info.suspend is %d, gc_thread = 0x%p", suspend_info.suspend, suspend_info.gc_thread == self ? "me" : "notme");
+  if (!suspend_info.suspend) {
+    unlock_suspend_info(__FILE__, __LINE__);
+    return 0;
+  }
+  if (suspend_info.reason == SUSPEND_REASON_GC
+      && self != suspend_info.gc_thread
+      && suspend_info.phase == 1
+     ) {
+    suspend_briefly();
+    SetSymbolValue(STOP_FOR_GC_PENDING, T, self);
+    SetSymbolValue(INTERRUPT_PENDING, T, self);
+  } else
+  if (suspend_info.reason == SUSPEND_REASON_INTERRUPT) {
+    if (suspend_info.interrupted_thread == self && thread_may_interrupt()) {
+      suspend();
+      check_pending_interrupts();
+    } else {
+      suspend_briefly();
+    }
+  } else {
+    unlock_suspend_info(__FILE__, __LINE__);
+    return 0;
+  }
+  return 1;
+}
+
+// returns 0 if skipped, 1 otherwise
+int maybe_suspend_for_gc()
+{
+  if (!suspend_info.suspend) return 0;
+  lock_suspend_info(__FILE__, __LINE__);
+  if (!suspend_info.suspend) {
+    unlock_suspend_info(__FILE__, __LINE__);
+    return 0;
+  }
+  struct thread * self = arch_os_get_current_thread();
+  if (suspend_info.reason == SUSPEND_REASON_GC && suspend_info.phase == 2) {
+    if (self == suspend_info.gc_thread) {
+      unlock_suspend_info(__FILE__, __LINE__);
+      return 0;
+		} else {
+			if (thread_may_suspend_for_gc()) {
+				suspend();
+				//check_pending_interrupts();
+			} else {
+        unlock_suspend_info(__FILE__, __LINE__);
+        return 0;
+      }
+		}
+  } else {
+    unlock_suspend_info(__FILE__, __LINE__);
+    return 0;
+  }
+  return 1;
+}
+
+// rreturns 0 if skipped, 1 otherwise
+int maybe_wait_until_gc_ends()
+{
+  if (!suspend_info.suspend) return 0;
+  lock_suspend_info(__FILE__, __LINE__);
+  if (!suspend_info.suspend) {
+    unlock_suspend_info(__FILE__, __LINE__);
+    return 0;
+  }
+  struct thread * self = arch_os_get_current_thread();
+  if (suspend_info.reason == SUSPEND_REASON_GCING
+      && suspend_info.gc_thread != self
+     ) {
+    if (thread_may_suspend_for_gc()) {
+      suspend();
+    } else {
+      unlock_suspend_info(__FILE__, __LINE__);
+      lose("suspend_info.reason = SUSPEND_REASON_GCING, !thread_may_suspend_for_gc()");
+    }
+  } else {
+    unlock_suspend_info(__FILE__, __LINE__);
+    return 0;
+  }
+  return 1;
+}
+
+void gc_safepoint()
+{
+  DWORD lasterror = GetLastError();
+  struct thread * self = arch_os_get_current_thread();
+  int done = 0;
+  
+  again:
+  
+  odprintf("safepoint begins");
+  
+  if (!get_pseudo_atomic_atomic(self) && get_pseudo_atomic_interrupted(self))
+    clear_pseudo_atomic_interrupted(self);
+  
+  done |= maybe_ack_gc_poll();
+  done |= maybe_suspend_for_gc();
+  done |= maybe_wait_until_gc_ends();
+
+  if (SymbolValue(IN_SAFEPOINT, self) != NIL) {
+    odprintf("IN_SAFEPOINT, safepoint ends");
+    goto maybe_again;
+  }
+  if (SymbolValue(DISABLE_SAFEPOINTS, self) != NIL) {
+    odprintf("DISABLE_SAFEPOINTS, safepoint ends");
+    goto maybe_again;
+  }
+    
+  bind_variable(IN_SAFEPOINT, T, self);
+  int bound = 1;
+  
+  if (!suspend_info.suspend) {
+    unbind_variable(IN_SAFEPOINT, self);
+    done |= check_pending_interrupts();
+    SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
+    odprintf("safepoint ends");
+    goto maybe_again;
+  }
+  lock_suspend_info(__FILE__, __LINE__);
+  if (!suspend_info.suspend) {
+    unlock_suspend_info(__FILE__, __LINE__);
+    unbind_variable(IN_SAFEPOINT, self);
+    done |= check_pending_interrupts();
+    SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
+    odprintf("safepoint ends");
+    goto maybe_again;
+  }
+  if (suspend_info.reason == SUSPEND_REASON_GCING) {
+    if (suspend_info.gc_thread == self) {
+      unlock_suspend_info(__FILE__, __LINE__);
+    } else
+    if (thread_may_suspend_for_gc()) {
+      suspend();
+      done = 1;
+    } else {
+      unlock_suspend_info(__FILE__, __LINE__);
+      lose("suspend_info.reason = SUSPEND_REASON_GCING, !thread_may_suspend_for_gc()");
+    }
+  } else
+  if (suspend_info.reason == SUSPEND_REASON_GC) {
+    if (self == suspend_info.gc_thread) {
+      unlock_suspend_info(__FILE__, __LINE__);
+    } else
+    if (suspend_info.phase == 1) {
+			if (thread_may_suspend_for_gc()) {
+				suspend();
+        bound = 0;
+        unbind_variable(IN_SAFEPOINT, self);
+				check_pending_interrupts();
+				SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
+        done = 1;
+			} else {
+				suspend_briefly();
+				SetSymbolValue(STOP_FOR_GC_PENDING, T, self);
+				SetSymbolValue(INTERRUPT_PENDING, T, self);
+        done = 1;
+			}
+		} else {
+			if (thread_may_suspend_for_gc()) {
+				suspend();
+        bound = 0;
+        unbind_variable(IN_SAFEPOINT, self);
+				check_pending_interrupts();
+        done = 1;
+			} else {
+        unlock_suspend_info(__FILE__, __LINE__);
+      }
+		}
+  } else
+  if (suspend_info.reason == SUSPEND_REASON_INTERRUPT) {
+    if (suspend_info.interrupted_thread != self) {
+      suspend_briefly();
+      done = 1;
+    } else
+    if (thread_may_interrupt()) {
+      suspend();
+      bound = 0;
+      unbind_variable(IN_SAFEPOINT, self);
+      check_pending_interrupts();
+      done = 1;
+    } else {
+      suspend_briefly();
+      done = 1;
+    }
+  } else {
+    lose("in gc_safepoint, fell through");
+  }
+  if (bound)
+    unbind_variable(IN_SAFEPOINT, self);
+  odprintf("safepoint ends");
+  
+  maybe_again:
+  if (done) {
+    done = 0;
+    goto again;
+  }
+  SetLastError(lasterror);
+}
+
+void pthread_np_pending_signal_handler(int signum)
+{
+  if (signum == SIG_STOP_FOR_GC || signum == SIGHUP) {
+    gc_safepoint();
+  }
+}
+
+lispobj fn_by_pc(unsigned int pc)
+{
+  lispobj obj = (lispobj)search_read_only_space((void*)pc);
+  if (!obj)
+    obj = (lispobj)search_static_space((void*)pc);
+  if (!obj)
+    obj = (lispobj)search_dynamic_space((void*)pc);
+  return obj;
+}
+
+int pc_in_lisp_code(unsigned int pc)
+{
+  return
+    search_read_only_space((void*)pc) != NULL ||
+    search_static_space((void*)pc) != NULL ||
+    search_dynamic_space((void*)pc) != NULL;
+}
+
+int thread_get_pc(struct thread *th)
+{
+  CONTEXT ctx;
+  pthread_np_get_thread_context(th->os_thread, &ctx);
+  return ctx.Eip;
+}
+
+int thread_get_pc_susp(struct thread *th)
+{
+  CONTEXT ctx;
+  pthread_np_suspend(th->os_thread);
+  pthread_np_get_thread_context(th->os_thread, &ctx);
+  pthread_np_resume(th->os_thread);
+  return ctx.Eip;
+}
+
+int thread_in_lisp_code(struct thread *th)
+{
+  return pc_in_lisp_code(thread_get_pc(th));
+}
+
+const char * fn_name(lispobj fn)
+{
+  return "unknown";
+}
+
+const char * t_nil_s(lispobj symbol)
+{
+  struct tread * self = arch_os_get_current_thread();
+  return t_nil_str(SymbolValue(symbol, self));
+}
+
+void log_gc_state(const char * msg)
+{
+  odprintf(msg);
+}
+
+#endif
+
 /* To avoid deadlocks when gc stops the world all clients of each
  * mutex must enable or disable SIG_STOP_FOR_GC for the duration of
  * holding the lock, but they must agree on which. */
@@ -615,6 +1259,10 @@ void gc_stop_the_world()
 {
     struct thread *p,*th=arch_os_get_current_thread();
     int status, lock_ret;
+#ifdef LISP_FEATURE_WIN32
+    odprintf("stopping the world");
+#endif
+    
 #ifdef LOCK_CREATE_THREAD
     /* KLUDGE: Stopping the thread during pthread_create() causes deadlock
      * on FreeBSD. */
@@ -623,18 +1271,47 @@ void gc_stop_the_world()
     gc_assert(lock_ret == 0);
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:got create_thread_lock\n"));
 #endif
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+    odprintf("taking world lock");
+    pthread_mutex_lock(&suspend_info.world_lock);
+    
+    odprintf("phase 1 begins");
+    odprintf("taking lock");
+    lock_suspend_info(__FILE__, __LINE__);
+    odprintf("took the lock");
+    suspend_info.reason = SUSPEND_REASON_GC;
+    suspend_info.gc_thread = arch_os_get_current_thread();
+    suspend_info.phase = 1;
+    suspend_info.suspend = 1;
+    unlock_suspend_info(__FILE__, __LINE__);
+    
+    unmap_gc_page();
+    odprintf("gc_page unmapped");
+
+    odprintf("taking all_threads_lock");
+#endif
+
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:waiting on lock\n"));
     /* keep threads from starting while the world is stopped. */
-    lock_ret = pthread_mutex_lock(&all_threads_lock);      \
+    lock_ret = pthread_mutex_lock(&all_threads_lock);
     gc_assert(lock_ret == 0);
 
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:got lock\n"));
     /* stop all other threads by sending them SIG_STOP_FOR_GC */
+    /* Phase 1, make sure that all threads are: 1) have noted the need to interrupt; or 2) in gc-safe code */
+    
     for(p=all_threads; p; p=p->next) {
+#ifdef LISP_FEATURE_WIN32
+        odprintf("looking at 0x%p", p->os_thread);
+#endif
         gc_assert(p->os_thread != 0);
         FSHOW_SIGNAL((stderr,"/gc_stop_the_world: thread=%lu, state=%x\n",
                       p->os_thread, thread_state(p)));
+#ifdef LISP_FEATURE_WIN32
+        odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
+#endif
         if((p!=th) && ((thread_state(p)==STATE_RUNNING))) {
+#ifndef LISP_FEATURE_WIN32
             FSHOW_SIGNAL((stderr,"/gc_stop_the_world: suspending thread %lu\n",
                           p->os_thread));
             /* We already hold all_thread_lock, P can become DEAD but
@@ -647,11 +1324,30 @@ void gc_stop_the_world()
                 lose("cannot send suspend thread=%lu: %d, %s\n",
                      p->os_thread,status,strerror(status));
             }
+#else
+          if (SymbolValue(GC_SAFE, p) == T) continue;
+          odprintf("waiting for 0x%p to change state from RUNNING");
+          wait_for_thread_state_change(p, STATE_RUNNING);
+          odprintf("0x%p has changed state to %s", p->os_thread, get_thread_state_as_string(p));
+#endif
         }
     }
+
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+    /* Phase 2, wait until all threads 1) suspend themselves; or 2) are in gc-safe code */
+    
+    odprintf("phase 2");
+    
+    lock_suspend_info(__FILE__, __LINE__);
+    map_gc_page();
+    suspend_info.phase = 2;
+    unlock_suspend_info(__FILE__, __LINE__);
+#endif
+    
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:signals sent\n"));
     for(p=all_threads;p;p=p->next) {
         if (p!=th) {
+#ifndef LISP_FEATURE_WIN32
             FSHOW_SIGNAL
                 ((stderr,
                   "/gc_stop_the_world: waiting for thread=%lu: state=%x\n",
@@ -659,9 +1355,26 @@ void gc_stop_the_world()
             wait_for_thread_state_change(p, STATE_RUNNING);
             if (p->state == STATE_RUNNING)
                 lose("/gc_stop_the_world: unexpected state");
+#else
+            odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
+            if (SymbolValue(GC_SAFE, p) == NIL) {
+              if (thread_state(p) == STATE_SUSPENDED_BRIEFLY) {
+                set_thread_state(p, STATE_RUNNING);
+                odprintf("waiting for 0x%p to change state from RUNNING");
+                wait_for_thread_state_change(p, STATE_RUNNING);
+              }
+            }
+            odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
+#endif
         }
     }
     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:end\n"));
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+    lock_suspend_info(__FILE__, __LINE__);
+    suspend_info.reason = SUSPEND_REASON_GCING;
+    unlock_suspend_info(__FILE__, __LINE__);
+    odprintf("stopped the world");
+#endif
 }
 
 void gc_start_the_world()
@@ -673,15 +1386,29 @@ void gc_start_the_world()
      * all_threads, but it won't have been stopped so won't need
      * restarting */
     FSHOW_SIGNAL((stderr,"/gc_start_the_world:begin\n"));
+  
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+    odprintf("starting the world");
+
+    lock_suspend_info(__FILE__, __LINE__);
+    suspend_info.suspend = 0;
+    unlock_suspend_info(__FILE__, __LINE__);
+#endif
+    
     for(p=all_threads;p;p=p->next) {
         gc_assert(p->os_thread!=0);
         if (p!=th) {
             lispobj state = thread_state(p);
+#ifdef LISP_FEATURE_WIN32
+            odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
+#endif
             if (state != STATE_DEAD) {
+#ifndef LISP_FEATURE_WIN32
                 if(state != STATE_SUSPENDED) {
                     lose("gc_start_the_world: wrong thread state is %d\n",
                          fixnum_value(state));
                 }
+#endif
                 FSHOW_SIGNAL((stderr, "/gc_start_the_world: resuming %lu\n",
                               p->os_thread));
                 set_thread_state(p, STATE_RUNNING);
@@ -691,11 +1418,17 @@ void gc_start_the_world()
 
     lock_ret = pthread_mutex_unlock(&all_threads_lock);
     gc_assert(lock_ret == 0);
+#ifdef LISP_FEATURE_WIN32
+    pthread_mutex_unlock(&suspend_info.world_lock);
+#endif
 #ifdef LOCK_CREATE_THREAD
     lock_ret = pthread_mutex_unlock(&create_thread_lock);
     gc_assert(lock_ret == 0);
 #endif
 
+#ifdef LISP_FEATURE_WIN32
+    odprintf("started the world");
+#endif
     FSHOW_SIGNAL((stderr,"/gc_start_the_world:end\n"));
 }
 #endif
@@ -704,7 +1437,12 @@ int
 thread_yield()
 {
 #ifdef LISP_FEATURE_SB_THREAD
+#if defined(LISP_FEATURE_WIN32)
+    SwitchToThread();
+    return 0;
+#else
     return sched_yield();
+#endif
 #else
     return 0;
 #endif
@@ -730,6 +1468,9 @@ int
 kill_safely(os_thread_t os_thread, int signal)
 {
     FSHOW_SIGNAL((stderr,"/kill_safely: %lu, %d\n", os_thread, signal));
+#if defined(LISP_FEATURE_WIN32)
+    return 0;
+#else
     {
 #ifdef LISP_FEATURE_SB_THREAD
         sigset_t oldset;
@@ -776,4 +1517,5 @@ kill_safely(os_thread_t os_thread, int signal)
         }
 #endif
     }
+#endif
 }

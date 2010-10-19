@@ -367,6 +367,7 @@ HOLDING-MUTEX-P."
   "Deprecated in favor of GRAB-MUTEX."
   (declare (type mutex mutex) (optimize (speed 3))
            #!-sb-thread (ignore waitp timeout))
+  (let (#!+(and win32 sb-thread) (sb!impl::*disable-safepoints* t))
   (unless new-owner
     (setq new-owner *current-thread*))
   (barrier (:read))
@@ -442,7 +443,7 @@ HOLDING-MUTEX-P."
                  (bug "Old owner in free mutex: ~S" prev))
                t))
             (waitp
-             (bug "Failed to acquire lock with WAITP."))))))
+             (bug "Failed to acquire lock with WAITP.")))))))
 
 (defun grab-mutex (mutex &key (waitp t) (timeout nil))
   #!+sb-doc
@@ -500,6 +501,8 @@ IF-NOT-OWNER is :FORCE)."
   (declare (type mutex mutex))
   ;; Order matters: set owner to NIL before releasing state.
   (let* ((self *current-thread*)
+         #!+(and win32 sb-thread)
+         (sb!impl::*disable-safepoints* t)
          (old-owner (sb!ext:compare-and-swap (mutex-%owner mutex) self nil)))
     (unless (eql self old-owner)
       (ecase if-not-owner
@@ -566,6 +569,7 @@ time we reacquire MUTEX and return to the caller.
 Note that if CONDITION-WAIT unwinds (due to eg. a timeout) instead of
 returning normally, it may do so without holding the mutex."
   #!-sb-thread (declare (ignore queue))
+  (let (#!+(and win32 sb-thread) (sb!impl::*disable-safepoints* t))
   (assert mutex)
   #!-sb-thread (error "Not supported in unithread builds.")
   #!+sb-thread
@@ -636,7 +640,7 @@ returning normally, it may do so without holding the mutex."
             ((2))
             ;; EWOULDBLOCK, -1 here, is the possible spurious wakeup
             ;; case. 0 is the normal wakeup.
-            (otherwise (return))))))))
+            (otherwise (return)))))))))
 
 (defun condition-notify (queue &optional (n 1))
   #!+sb-doc
@@ -647,6 +651,7 @@ this call."
   #!-sb-thread (error "Not supported in unithread builds.")
   #!+sb-thread
   (declare (type (and fixnum (integer 1)) n))
+  (let (#!+(and win32 sb-thread) (sb!impl::*disable-safepoints* t))
   (/show0 "Entering CONDITION-NOTIFY")
   #!+sb-thread
   (progn
@@ -665,7 +670,7 @@ this call."
     (progn
       (setf (waitqueue-token queue) queue)
       (with-pinned-objects (queue)
-        (futex-wake (waitqueue-token-address queue) n)))))
+        (futex-wake (waitqueue-token-address queue) n))))))
 
 (defun condition-broadcast (queue)
   #!+sb-doc
@@ -929,6 +934,8 @@ have the foreground next."
 
 
 ;;;; The beef
+#!+(and win32 sb-thread)
+(sb!alien:define-alien-routine ("gc_safepoint" gc-safepoint) sb!alien:void)
 
 (defun make-thread (function &key name)
   #!+sb-doc
@@ -998,10 +1005,12 @@ around and can be retrieved by JOIN-THREAD."
                                ;; other threads, it's time to enable
                                ;; signals.
                                (sb!unix::unblock-deferrable-signals)
-                               (setf (thread-result thread)
-                                     (cons t
+                               (let ((r (cons t
                                            (multiple-value-list
-                                            (funcall real-function))))
+                                            (funcall real-function)))))
+                                  #!+win32
+                                  (gc-safepoint)
+                                  (setf (thread-result thread) r))
                                ;; Try to block deferrables. An
                                ;; interrupt may unwind it, but for a
                                ;; normal exit it prevents interrupt
@@ -1070,6 +1079,11 @@ return DEFAULT if given or else signal JOIN-THREAD-ERROR."
       (kill-safely (thread-os-thread *current-thread*) sb!unix:sigpipe))
     (when interruption
       (funcall interruption))))
+      
+#!+(and sb-thread win32)
+(sb!alien:define-alien-routine interrupt-lisp-thread sb!alien:int
+  (thread sb!alien:int)
+  (fn sb!alien:int))
 
 (defun interrupt-thread (thread function)
   #!+sb-doc
@@ -1083,11 +1097,18 @@ enable interrupts (GET-MUTEX when contended, for instance) so the
 first thing to do is usually a WITH-INTERRUPTS or a
 WITHOUT-INTERRUPTS. Within a thread interrupts are queued, they are
 run in same the order they were sent."
-  #!+win32
-  (declare (ignore thread))
-  #!+win32
-  (with-interrupt-bindings
-    (with-interrupts (funcall function)))
+  #!+(and sb-thread win32)
+  (let ((r (interrupt-lisp-thread
+            (sap-int (%thread-sap thread))
+            (get-lisp-obj-address
+             (lambda ()
+               (sb!unix::invoke-interruption function))))))
+    (zerop r))
+  #!+(and (not sb-thread) win32)
+  (progn
+    (declare (ignore thread))
+    (with-interrupt-bindings
+      (with-interrupts (funcall function))))
   #!-win32
   (let ((os-thread (thread-os-thread thread)))
     (cond ((not os-thread)

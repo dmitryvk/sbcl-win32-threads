@@ -9,6 +9,9 @@
  * files for more information.
  */
 
+#define _WIN32_WINNT 0x0500
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #include <stdlib.h>
 #include <sys/types.h>
 #include <string.h>
@@ -16,8 +19,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 #include "target-arch-os.h"
 #include "target-arch.h"
 
@@ -48,3 +49,4 @@ struct lisp_exception_frame {
 void wos_install_interrupt_handlers(struct lisp_exception_frame *handler);
 char *dirname(char *path);
 
+void os_invalidate_free(os_vm_address_t addr, os_vm_size_t len);

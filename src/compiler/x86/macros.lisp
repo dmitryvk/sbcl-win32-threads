@@ -112,6 +112,11 @@
 (defmacro load-tl-symbol-value (reg symbol)
   `(progn
     (inst mov ,reg (make-ea-for-symbol-tls-index ,symbol))
+    #!+win32
+    (progn
+      (inst add ,reg (make-ea :dword :disp #x14) :fs)
+      (inst mov ,reg (make-ea :dword :base ,reg)))
+    #!-win32
     (inst mov ,reg (make-ea :dword :base ,reg) :fs)))
 #!-sb-thread
 (defmacro load-tl-symbol-value (reg symbol) `(load-symbol-value ,reg ,symbol))
@@ -120,6 +125,11 @@
 (defmacro store-tl-symbol-value (reg symbol temp)
   `(progn
     (inst mov ,temp (make-ea-for-symbol-tls-index ,symbol))
+    #!+win32
+    (progn
+      (inst add ,temp (make-ea :dword :disp #x14) :fs)
+      (inst mov (make-ea :dword :base ,temp) ,reg))
+    #!-win32
     (inst mov (make-ea :dword :base ,temp) ,reg :fs)))
 #!-sb-thread
 (defmacro store-tl-symbol-value (reg symbol temp)
@@ -129,6 +139,13 @@
 (defmacro load-binding-stack-pointer (reg)
   #!+sb-thread
   `(progn
+     #!+win32
+     (progn
+       (inst mov ,reg (make-ea :dword :disp #x14) :fs)
+       (inst mov ,reg (make-ea :dword
+                               :base ,reg
+                               :disp (* 4 thread-binding-stack-pointer-slot))))
+     #!-win32
      (inst mov ,reg (make-ea :dword
                              :disp (* 4 thread-binding-stack-pointer-slot))
            :fs))
@@ -138,6 +155,14 @@
 (defmacro store-binding-stack-pointer (reg)
   #!+sb-thread
   `(progn
+     #!+win32
+     (progn
+       (inst push eax-tn)
+       (inst push ,reg)
+       (inst mov eax-tn (make-ea :dword :disp #x14) :fs)
+       (inst pop (make-ea :dword :base eax-tn :disp (* 4 thread-binding-stack-pointer-slot)))
+       (inst pop eax-tn))
+     #!-win32
      (inst mov (make-ea :dword
                         :disp (* 4 thread-binding-stack-pointer-slot))
            ,reg :fs))
@@ -265,6 +290,10 @@
     (dynamic-extent
      (allocation-dynamic-extent alloc-tn size lowtag))
     ((or (null inline) (policy inline (>= speed space)))
+     ;; FIXME Win32
+     #!+win32
+     (allocation-notinline alloc-tn size)
+     #!-win32
      (allocation-inline alloc-tn size))
     (t
      (allocation-notinline alloc-tn size)))
@@ -354,22 +383,45 @@
 ;;; pa section.
 #!+sb-thread
 (defmacro %clear-pseudo-atomic ()
+  #!+win32
+  '(progn
+    (inst push eax-tn)
+    (inst mov eax-tn (make-ea :dword :disp #x14) :fs)
+    (inst mov (make-ea :dword :base eax-tn :disp (* 4 thread-pseudo-atomic-bits-slot)) 0)
+    (inst pop eax-tn))
+  #!-win32
   '(inst mov (make-ea :dword :disp (* 4 thread-pseudo-atomic-bits-slot)) 0 :fs))
 
 #!+sb-thread
 (defmacro pseudo-atomic (&rest forms)
   (with-unique-names (label)
     `(let ((,label (gen-label)))
+       #!+win32
+       (progn
+         (inst push eax-tn)
+         (inst mov eax-tn (make-ea :dword :disp #x14) :fs)
+         (inst mov (make-ea :dword :base eax-tn :disp (* 4 thread-pseudo-atomic-bits-slot)) ebp-tn)
+         (inst pop eax-tn))
+       #!-win32
        (inst mov (make-ea :dword :disp (* 4 thread-pseudo-atomic-bits-slot))
              ebp-tn :fs)
        ,@forms
+       #!+win32
+       (progn
+         (inst push eax-tn)
+         (inst mov eax-tn (make-ea :dword :disp #x14) :fs)
+         (inst xor (make-ea :dword :base eax-tn :disp (* 4 thread-pseudo-atomic-bits-slot)) ebp-tn)
+         (inst pop eax-tn))
+       #!-win32
        (inst xor (make-ea :dword :disp (* 4 thread-pseudo-atomic-bits-slot))
              ebp-tn :fs)
        (inst jmp :z ,label)
        ;; if PAI was set, interrupts were disabled at the same time
        ;; using the process signal mask.
        (inst break pending-interrupt-trap)
-       (emit-label ,label))))
+       (emit-label ,label)
+       #!+win32
+       (inst test eax-tn (make-ea :dword :disp sb!vm::gc-safepoint-page-addr)))))
 
 #!-sb-thread
 (defmacro pseudo-atomic (&rest forms)

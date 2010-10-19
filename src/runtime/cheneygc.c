@@ -16,7 +16,6 @@
 #include <stdio.h>
 #include <sys/time.h>
 #include <sys/resource.h>
-#include <signal.h>
 #include "sbcl.h"
 #include "runtime.h"
 #include "os.h"

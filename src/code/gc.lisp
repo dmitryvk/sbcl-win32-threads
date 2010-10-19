@@ -231,6 +231,8 @@ run in any thread.")
                        ;; turn is a type-error.
                        (when (plusp run-time)
                          (incf *gc-run-time* run-time))))
+                   #!+win32
+                   (setf *stop-for-gc-pending* nil)
                    (setf *gc-pending* nil
                          new-usage (dynamic-usage))
                    #!+sb-thread

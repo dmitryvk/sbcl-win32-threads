@@ -1313,6 +1313,15 @@
   ;; register on -SB-THREAD.
   #!+sb-thread
   (progn
+    #!+(and win32 sb-thread)
+    (progn
+      (inst push eax-tn)
+      (inst mov eax-tn (make-ea :dword :disp #x14) :fs)
+      (inst cmp (make-ea :dword
+                         :base eax-tn
+                         :disp (* thread-stepping-slot n-word-bytes)) nil-value)
+      (inst pop eax-tn))
+    #!-(and win32 sb-thread)
     (inst cmp (make-ea :dword
                        :disp (* thread-stepping-slot n-word-bytes))
           nil-value :fs))
