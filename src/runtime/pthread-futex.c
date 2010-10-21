@@ -284,10 +284,12 @@ again:
         if (result != ETIMEDOUT || futex_istimeout(timeout))
             break;
 
+#if defined(LISP_FEATURE_WIN32)
         if (*(volatile int *)lock_word != oldval) {
-            result = 0;
+            result = EINTR;
             goto done;
         }
+#endif
 
         /* futex system call of Linux returns with EINTR errno when
          * it's interrupted by signals.  Check pending signals here to
