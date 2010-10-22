@@ -160,6 +160,7 @@
 ;;;; System Functions
 
 ;;; Sleep for MILLISECONDS milliseconds.
+#!-sb-thread
 (define-alien-routine ("Sleep@4" millisleep) void
   (milliseconds dword))
 
@@ -184,10 +185,10 @@
     (arg-to-completion-routine (* t))
     (resume bool))
 
-  (defun microsleep (microseconds)
+  (defun millisleep (milliseconds)
     (without-interrupts
       (let ((timer (create-waitable-timer nil 0 nil)))
-        (set-waitable-timer timer (- (* 10 microseconds)) 0 nil nil 0)
+        (set-waitable-timer timer (- (* 10000 milliseconds)) 0 nil nil 0)
         (unwind-protect
              (do () ((with-local-interrupts
                        (zerop (wait-object-or-signal timer)))))

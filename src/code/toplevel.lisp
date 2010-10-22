@@ -167,6 +167,7 @@ any non-negative real number."
            :format-arguments (list seconds)
            :datum seconds
            :expected-type '(real 0)))
+  
   #!-win32
   (multiple-value-bind (sec nsec)
       (if (integerp seconds)
@@ -182,11 +183,15 @@ any non-negative real number."
              (sb!unix:nanosleep (expt 10 8) 0))
     (sb!unix:nanosleep sec nsec))
   #!+win32
-  #!-sb-thread
-  (sb!win32:millisleep (truncate (* seconds 1000)))
-  #!+sb-thread
-  (sb!win32:microsleep (truncate (* seconds 1000000)))
-  nil)
+  (let ((sleep-units (truncate (* seconds 1000)))
+	(long-sleep (ash 1 28)))
+    (multiple-value-bind (long-sleeps remainder)
+	(floor sleep-units long-sleep)
+      (loop repeat long-sleeps
+	    do (sb!win32:millisleep long-sleep))
+      (unless (zerop remainder)
+	(sb!win32:millisleep remainder))
+      nil)))
 
 ;;;; the default toplevel function
 
