@@ -1003,33 +1003,18 @@
     (assert (= 0 (count-full-calls "FOO-MAYBE-INLINE" fun)))
     (assert (= 1 (count-full-calls "QUUX-MARKER" fun)))))
 
-(defun file-compile (toplevel-forms &key load)
-  (let* ((lisp "compile-impure-tmp.lisp")
-         (fasl (compile-file-pathname lisp)))
-    (unwind-protect
-         (progn
-           (with-open-file (f lisp :direction :output)
-             (dolist (form toplevel-forms)
-               (prin1 form f)))
-           (multiple-value-bind (fasl warn fail) (compile-file lisp)
-             (when load
-               (load fasl))
-             (values warn fail)))
-      (ignore-errors (delete-file lisp))
-      (ignore-errors (delete-file fasl)))))
-
 (with-test (:name :bug-405)
   ;; These used to break with a TYPE-ERROR
   ;;     The value NIL is not of type SB-C::PHYSENV.
   ;; in MERGE-LETS.
-  (file-compile
+  (ctu:file-compile
    '((LET (outer-let-var)
        (lambda ()
          (print outer-let-var)
          (MULTIPLE-VALUE-CALL 'some-function
            (MULTIPLE-VALUE-CALL (LAMBDA (a) 'foo)
              1))))))
-  (file-compile
+  (ctu:file-compile
    '((declaim (optimize (debug 3)))
      (defstruct bug-405-foo bar)
      (let ()
@@ -2005,5 +1990,90 @@
                                (ctu:compiler-derived-type (bug-655581)))))
     (assert derived)
     (assert (equal '(integer 42 42) type))))
+
+(test-util:with-test (:name :clear-derived-types-on-set-fdefn)
+  (let ((*evaluator-mode* :compile)
+        (*derive-function-types* t))
+    (eval `(progn
+             (defun clear-derived-types-on-set-fdefn-1 ()
+               "foo")
+             (setf (symbol-function 'clear-derived-types-on-set-fdefn-1)
+                   (constantly "foobar"))
+             (defun clear-derived-types-on-set-fdefn-2 ()
+               (length (clear-derived-types-on-set-fdefn-1)))))
+    (assert (= 6 (clear-derived-types-on-set-fdefn-2)))))
+
+(test-util:with-test (:name (:bug-655126 :derive-function-types t))
+  (let ((*evaluator-mode* :compile)
+        (*derive-function-types* t))
+    (eval `(defun bug-655126 (x) x))
+    ;; Full warnings are ok due to *derive-function-types* = T.
+    (assert (eq :full-warning
+                (handler-case
+                    (eval `(defun bug-655126-2 ()
+                             (bug-655126)))
+                  ((and warning (not style-warning)) ()
+                    :full-warning))))
+    (assert (eq 'bug-655126
+                (handler-case
+                    (eval `(defun bug-655126 (x y)
+                             (cons x y)))
+                  ((and warning (not sb-kernel:redefinition-warning)) ()
+                    :oops))))
+    (assert (eq :full-warning
+                (handler-case
+                    (eval `(defun bug-655126 (x)
+                             (bug-655126 x y)))
+                  ((and warning
+                    (not style-warning)
+                    (not sb-kernel:redefinition-warning)) ()
+                    :full-warning))))))
+
+(test-util:with-test (:name (:bug-655126 :derive-function-types nil))
+  (let ((*evaluator-mode* :compile))
+    (eval `(defun bug-655126/b (x) x))
+    ;; Just style-warning here.
+    (assert (eq :style-warning
+                (handler-case
+                    (eval `(defun bug-655126-2/b ()
+                             (bug-655126/b)))
+                  (style-warning ()
+                    :style-warning))))
+    (assert (eq 'bug-655126/b
+                (handler-case
+                    (eval `(defun bug-655126/b (x y)
+                             (cons x y)))
+                  ((and warning (not sb-kernel:redefinition-warning)) ()
+                    :oops))))
+    ;; Bogus self-call is always worth a full one.
+    (assert (eq :full-warning
+                (handler-case
+                    (eval `(defun bug-655126/b (x)
+                             (bug-655126/b x y)))
+                  ((and warning
+                    (not style-warning)
+                    (not sb-kernel:redefinition-warning)) ()
+                    :full-warning))))))
+
+(test-util:with-test (:name :bug-657499)
+  ;; Don't trust derived types within the compilation unit.
+  (ctu:file-compile
+   `((declaim (optimize safety))
+     (defun bug-657499-foo ()
+       (cons t t))
+     (defun bug-657499-bar ()
+       (let ((cons (bug-657499-foo)))
+         (setf (car cons) 3)
+         cons)))
+   :load t)
+  (locally (declare (optimize safety))
+    (setf (symbol-function 'bug-657499-foo) (constantly "foobar"))
+    (assert (eq :type-error
+                (handler-case
+                    (funcall 'bug-657499-bar)
+                  (type-error (e)
+                    (assert (eq 'cons (type-error-expected-type e)))
+                    (assert (equal "foobar" (type-error-datum e)))
+                    :type-error))))))
 
 ;;; success
