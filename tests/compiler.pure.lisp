@@ -3575,18 +3575,48 @@
                        (load-time-value (the (values fixnum) 42)))))))
 
 (with-test (:name :bug-654289)
-  (let* ((big (labels ((make-tree (n acc)
-                         (cond ((zerop n) acc)
-                               (t (make-tree (1- n) (cons acc acc))))))
-                (make-tree 10000 nil)))
-         (small '((1) (2) (3)))
-         (t0 (get-internal-run-time))
-         (f1 (compile nil `(lambda (x) (eq x (quote ,big)))))
-         (t1 (get-internal-run-time))
-         (f2 (compile nil `(lambda (x) (eq x (quote ,small)))))
-         (t2 (get-internal-run-time)))
-    (assert (funcall f1 big))
-    (assert (funcall f2 small))
-    ;; Compile time should not explode just because there's a big constant
-    ;; object in the source.
-    (assert (> 10 (abs (- (- t1 t0) (- t2 t1)))))))
+  ;; Test that compile-times don't explode when quoted constants
+  ;; get big.
+  (labels ((time-n (n)
+             (let* ((tree (make-tree (expt 10 n) nil))
+                    (t0 (get-internal-run-time))
+                    (f (compile nil `(lambda (x) (eq x (quote ,tree)))))
+                    (t1 (get-internal-run-time)))
+               (assert (funcall f tree))
+               (- t1 t0)))
+           (make-tree (n acc)
+             (cond ((zerop n) acc)
+                   (t (make-tree (1- n) (cons acc acc))))))
+    (let* ((times (loop for i from 0 upto 4
+                        collect (time-n i)))
+           (max-small (reduce #'max times :end 3))
+           (max-big (reduce #'max times :start 3)))
+      ;; This way is hopefully fairly CPU-performance insensitive.
+      (assert (> (* (+ 2 max-small) 2) max-big)))))
+
+(with-test (:name :bug-309063)
+  (let ((fun (compile nil `(lambda (x)
+                             (declare (type (integer 0 0) x))
+                             (ash x 100)))))
+    (assert (zerop (funcall fun 0)))))
+
+(with-test (:name :bug-655872)
+  (let ((f (compile nil `(lambda (x)
+                           (declare (optimize (safety 3)))
+                           (aref (locally (declare (optimize (safety 0)))
+                                   (coerce x '(simple-vector 128)))
+                                 60))))
+        (long (make-array 100 :element-type 'fixnum)))
+    (dotimes (i 100)
+      (setf (aref long i) i))
+    ;; 1. COERCE doesn't check the length in unsafe code.
+    (assert (eql 60 (funcall f long)))
+    ;; 2. The compiler doesn't trust the length from COERCE
+    (assert (eq :caught
+                (handler-case
+                    (funcall f (list 1 2 3))
+                  (sb-int:invalid-array-index-error (e)
+                    (assert (eql 60 (type-error-datum e)))
+                    (assert (equal '(integer 0 (3)) (type-error-expected-type e)))
+                    :caught))))))
+

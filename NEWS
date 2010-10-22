@@ -11,6 +11,18 @@ changes relative to sbcl-1.0.43:
   * enhancement: ATOMIC-INCF now supports AREF of (SIMPLE-ARRAY SB-EXT:WORD (*))
     as a place.
   * enhancement: ASDF has been updated to 2.009.
+  * enhancement: the system detects known type-erros in calls better,
+    signalling a full warning about violated proclaimed FTYPEs and violations
+    of derived FTYPEs within the same file, including self-calls.
+  * enhancement: new function: SB-EXT:DELETE-DIRECTORY is now provided.
+  * optimization: constant-folding exploits numeric and character types, in
+    addition member types.
+  * optimization: numeric, character and member types that are inhabited by
+    exactly one value are tested with EQL.
+  * optimization: more conditional branches are eliminated during IR1.
+    Branches are simplified before performing if/if-conversion, and simple
+    equivalent branches (that only read the same constant or variable) are
+    merged.
   * bug fix: compiler failed to derive the result-type of MAKE-ARRAY as
     (AND VECTOR (NOT SIMPLE-ARRAY)) when appropriate. (lp#309130)
   * bug fix: (THE (VALUES ...)) in LOAD-TIME-VALUE caused a compiler-error.
@@ -41,6 +53,32 @@ changes relative to sbcl-1.0.43:
     and issued pointles code-deletion notes for it, :PREFIX, and :SUFFIX.
   * bug fix: the compiler didn't utilize the proclaimed ftype for functions
     also declared NOTINLINE. (lp#655581)
+  * bug fix: the compiler could attempt to emit constant left shifts of 
+    greater value than n-word-bits. (lp#309063)
+  * bug fix: (SETF SYMBOL-FUNCTION) and (SETF FDEFINITION) clear derived
+    type information for the function being set. (lp#659220)
+  * bug fix: the system used to signal bogus STYLE-WARNINGs when functions
+    containing self-calls were recompiled with a new signature, and failed
+    to warn when a self-call using the old signature was left in. (lp#655126)
+  * bug fix: incorrect FILE-POSITION on streams opened using :EXTERNAL-FORMAT
+    :DEFAULT when the default external had character size other than 8 bits.
+    (lp#657183)
+  * bug fix: derived types of functions in the same file were implicitly
+    trusted, leading to potential heap corruption when those function were
+    defined incompatibly. (lp#657499)
+  * bug fix: existing ASDF source registries are ignored when building
+    contribs (lp#659105)
+  * bug fix: short-form DEFSETF checks that the second argument is a symbol
+    (lp#655824, thanks to Roman Marynchak)
+  * bug fix: (SETF MACRO-FUNCTION) clobbered macro-definitions before
+    package-lock violation was detected. (lp#660752)
+  * bug fix: the system can store different docstrings for a single function
+    under different names. (lp#661631, regression from 1.0.29.24)
+  * bug fix: source-locations of DEFGENERIC forms weren't getting recorded
+    properly. (lp#384801)
+  * bug fix: (COERCE X '(SIMPLE-VECTOR 5)) and similar coercions to vectors
+    of specified length could confuse the type derivation in unsafe code.
+    (lp#655872)
 
 changes in sbcl-1.0.43 relative to sbcl-1.0.42:
   * incompatible change: FD-STREAMS no longer participate in the serve-event
