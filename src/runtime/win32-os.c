@@ -890,8 +890,8 @@ int win32_unix_write(int fd, void * buf, int count)
     }
   }
  done_something:
-  file_position.QuadPart = written_bytes;
-  SetFilePointerEx(handle,file_position,NULL,FILE_CURRENT);
+  file_position.QuadPart += written_bytes;
+  SetFilePointerEx(handle,file_position,NULL,FILE_BEGIN);
   return written_bytes;
 }
 
@@ -956,8 +956,8 @@ int win32_unix_read(int fd, void * buf, int count)
     }
   }
  done_something:
-  file_position.QuadPart = read_bytes;
-  SetFilePointerEx(handle,file_position,NULL,FILE_CURRENT);
+  file_position.QuadPart += read_bytes;
+  SetFilePointerEx(handle,file_position,NULL,FILE_BEGIN);
   return read_bytes;
 }
 
