@@ -28,7 +28,11 @@
 #include <stdio.h>
 #include <string.h>
 #include "sbcl.h"
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+#include "pthreads_win32.h"
+#else
 #include <signal.h>
+#endif
 #include "runtime.h"
 #include "os.h"
 #include "interr.h"

@@ -56,7 +56,11 @@ void unmap_gc_page();
 
 #if QSHOW_SIGNAL_SAFE == 1 && !defined(LISP_FEATURE_WIN32)
 
+#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
+#include "pthreads_win32.h"
+#else
 #include <signal.h>
+#endif
 extern sigset_t blockable_sigset;
 
 #define QSHOW_BLOCK                                             \

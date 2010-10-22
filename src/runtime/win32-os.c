@@ -47,7 +47,11 @@
 #include "dynbind.h"
 
 #include <sys/types.h>
+#if defined(LISP_FEATURE_SB_THREAD)
+#include "pthreads_win32.h"
+#else
 #include <signal.h>
+#endif
 #include <sys/time.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -764,6 +768,7 @@ void scratch(void)
     WriteFile(0, 0, 0, 0, 0);
     _get_osfhandle(0);
     _open_osfhandle(0,0);
+    _rmdir(0);
     _pipe(0,0,0);
     _lseeki64(0,0,0);
     access(0,0);
