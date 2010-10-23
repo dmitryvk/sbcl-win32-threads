@@ -766,6 +766,8 @@ UNIX epoch: January 1st 1970."
 
 ;; GetFileAttribute is like a tiny subset of fstat(),
 ;; enough to distinguish directories from anything else.
+(defconstant invalid-file-attributes (mod -1 (ash 1 (alien-size dword))))
+
 (define-alien-routine ( #!+sb-unicode
                         "GetFileAttributesW"
                         #!-sb-unicode
