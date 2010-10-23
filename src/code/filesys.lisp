@@ -300,21 +300,13 @@
           ;; on win32, stat regards UNC pathnames and device names as
           ;; nonexisting, so we check once more with native API.
           (unless existsp
-            (setf existsp
-                  (let ((handle (sb!win32:create-file
-                                 filename 0 0 nil
-                                 sb!win32:file-open-existing
-                                 0 0)))
-                    (when (/= -1 handle)
-                      (setf mode
-                            (or mode
-				(let ((attributes
-				       (sb!win32:get-file-attributes filename)))
-				  (if (and
-				       (/= attributes #xFFFFFFFF)
-				       (logbitp 4 attributes))
-				      sb!unix:s-ifdir 0))))
-                      (progn (sb!win32:close-handle handle) t)))))
+	    (let* ((attributes (sb!win32:get-file-attributes filename))
+		   (error-code (sb!win32:get-last-error)))
+	      (setf existsp (/= 2 error-code))
+	      (unless mode
+		(when (/= attributes
+			  sb!win32:invalid-file-attributes)
+		  (setf mode (if (logbitp 4 attributes) sb!unix:s-ifdir 0))))))
           (if existsp
               (case query-for
                 (:existence (nth-value
