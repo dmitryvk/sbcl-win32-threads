@@ -803,7 +803,7 @@ UNIX epoch: January 1st 1970."
 ;; CreateFile, as complete as possibly.
 ;; FILE_FLAG_OVERLAPPED is a must for decent I/O.
 
-(defun win32-unixlike-open (path flags mode)
+(defun win32-unixlike-open (path flags mode &optional revertable)
   (declare (type sb!unix:unix-pathname path)
            (type fixnum flags)
            (type sb!unix:unix-file-mode mode)
@@ -825,12 +825,14 @@ UNIX epoch: January 1st 1970."
             (#b101 file-create-always))))
   (let ((handle
          (create-file path
+			(logior
+			 (if revertable #x10000 0)
                       (if (plusp (logand sb!unix:o_append flags))
                           access-file-append-data
-                          (case (logand 3 flags)
+			     (ecase (logand 3 flags)
                             (0 access-generic-read)
                             (1 access-generic-write)
-                            (2 access-generic-all)))
+			       ((2 3) access-generic-all))))
                       (logior file-share-read
                               file-share-delete
                               file-share-write)
