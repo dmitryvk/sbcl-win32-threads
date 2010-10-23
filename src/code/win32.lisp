@@ -189,6 +189,9 @@
     (arg-to-completion-routine (* t))
     (resume bool))
 
+  (define-alien-routine ("CancelWaitableTimer" cancel-waitable-timer) bool
+    (handle handle))
+
   (defun microsleep (microseconds)
     (without-interrupts
       (let ((timer (create-waitable-timer nil 0 nil)))
