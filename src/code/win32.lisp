@@ -724,6 +724,7 @@ UNIX epoch: January 1st 1970."
 (defconstant access-generic-execute #x20000000)
 (defconstant access-generic-all #x10000000)
 (defconstant access-file-append-data #x4)
+(defconstant access-delete #x00010000)
 
 ;; share modes
 (defconstant file-share-delete #x04)
@@ -807,6 +808,21 @@ UNIX epoch: January 1st 1970."
            (type fixnum flags)
            (type sb!unix:unix-file-mode mode)
            (ignorable mode))
+  (let* ((disposition-flags
+          (logior
+           (if (zerop (logand sb!unix:o_creat flags)) 0 #b100)
+           (if (zerop (logand sb!unix:o_excl flags)) 0 #b010)
+           (if (zerop (logand sb!unix:o_trunc flags)) 0 #b001)))
+         (create-disposition
+          ;; there are 8 combinations of creat|excl|trunc, some of
+          ;; them are equivalent. Case stmt below maps them to 5
+          ;; dispositions (see CreateFile manual).
+          (case disposition-flags
+            ((#b110 #b111) file-create-new)
+            ((#b001 #b011) file-truncate-existing)
+            ((#b000 #b010) file-open-existing)
+            (#b100 file-open-always)
+            (#b101 file-create-always))))
   (let ((handle
          (create-file path
                       (if (plusp (logand sb!unix:o_append flags))
@@ -819,16 +835,7 @@ UNIX epoch: January 1st 1970."
                               file-share-delete
                               file-share-write)
                       nil
-                      (cond
-                        ((eql (logand (logior sb!unix:o_excl sb!unix:o_creat) flags)
-                              (logior sb!unix:o_excl sb!unix:o_creat))
-                         file-create-new)
-                        ((plusp (logand sb!unix:o_creat flags))
-                         file-create-always)
-                        ((plusp (logand sb!unix:o_trunc flags))
-                         file-truncate-existing)
-                        (t
-                         file-open-existing))
+                        create-disposition
                       (logior
                        file-attribute-normal
                        file-flag-overlapped
@@ -844,4 +851,4 @@ UNIX epoch: January 1st 1970."
 	(let ((fd (open-osfhandle handle (logior sb!unix::o_binary flags))))
 	  (if (minusp fd)
 	      (values nil (sb!unix::get-errno))
-	      (values fd 0))))))
+                (values fd 0)))))))
