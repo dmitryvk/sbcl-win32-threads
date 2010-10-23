@@ -301,12 +301,15 @@
           ;; nonexisting, so we check once more with native API.
           (unless existsp
 	    (let* ((attributes (sb!win32:get-file-attributes filename))
-		   (error-code (sb!win32:get-last-error)))
-	      (setf existsp (/= 2 error-code))
+		   (error-code (sb!win32:get-last-error))
+		   (valid-attributes
+		    (/= attributes sb!win32:invalid-file-attributes)))
+	      (setf existsp (or valid-attributes
+				(eql error-code 87)))
+	      (when existsp
 	      (unless mode
-		(when (/= attributes
-			  sb!win32:invalid-file-attributes)
-		  (setf mode (if (logbitp 4 attributes) sb!unix:s-ifdir 0))))))
+		  (when valid-attributes
+		    (setf mode (if (logbitp 4 attributes) sb!unix:s-ifdir 0)))))))
           (if existsp
               (case query-for
                 (:existence (nth-value

@@ -761,12 +761,12 @@ UNIX epoch: January 1st 1970."
 (defconstant file-attribute-encrypted #x4000)
 
 (defconstant file-flag-overlapped #x40000000)
-
+(defconstant file-flag-sequential-scan #x8000000)
 
 
 ;; GetFileAttribute is like a tiny subset of fstat(),
 ;; enough to distinguish directories from anything else.
-(defconstant invalid-file-attributes (mod -1 (ash 1 (alien-size dword))))
+(defconstant invalid-file-attributes (mod -1 (ash 1 32)))
 
 (define-alien-routine ( #!+sb-unicode
                         "GetFileAttributesW"
@@ -831,7 +831,8 @@ UNIX epoch: January 1st 1970."
                          file-open-existing))
                       (logior
                        file-attribute-normal
-                       file-flag-overlapped)
+                       file-flag-overlapped
+                       file-flag-sequential-scan)
                       0)))
     (if (eql handle invalid-handle)
 	(values nil
