@@ -308,9 +308,12 @@
                     (when (/= -1 handle)
                       (setf mode
                             (or mode
-                                (if (logbitp 4
-                                             (sb!win32:get-file-attributes filename))
-                                    sb!unix:s-ifdir 0)))
+				(let ((attributes
+				       (sb!win32:get-file-attributes filename)))
+				  (if (and
+				       (/= attributes #xFFFFFFFF)
+				       (logbitp 4 attributes))
+				      sb!unix:s-ifdir 0))))
                       (progn (sb!win32:close-handle handle) t)))))
           (if existsp
               (case query-for
