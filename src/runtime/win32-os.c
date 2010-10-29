@@ -696,11 +696,15 @@ void scratch(void)
     LARGE_INTEGER la = {{0}};
     CloseHandle(0);
     CreateWaitableTimerA(NULL,FALSE,NULL);
+    CancelWaitableTimer(NULL);
     DuplicateHandle(0,0,0,0,0,0,0);
     FlushConsoleInputBuffer(0);
     FormatMessageA(0, 0, 0, 0, 0, 0, 0);
     FreeLibrary(0);
     GetACP();
+    GetCommTimeouts(0,0);
+    SetCommTimeouts(0,0);
+    ClearCommError(0,0,0);
     GetConsoleCP();
     GetConsoleOutputCP();
     GetCurrentProcess();
