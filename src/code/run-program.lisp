@@ -533,7 +533,7 @@ status slot."
 ;;; See the description of CommandLineToArgvW, URL at the time of
 ;;; writing follows:
 ;;; http://msdn.microsoft.com/en-us/library/bb776391(VS.85).aspx
-#+(win32)
+#+win32
 (defun mswin-escape-command-argument (arg)
   (if (string= "" arg)
       "\"\""
