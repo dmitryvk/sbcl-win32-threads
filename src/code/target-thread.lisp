@@ -368,6 +368,7 @@ HOLDING-MUTEX-P."
   (declare (type mutex mutex) (optimize (speed 3))
            #!-sb-thread (ignore waitp timeout))
   (let (#!+(and win32 sb-thread) (sb!impl::*disable-safepoints* t))
+  ;; FIXME: reindent after merging windows-threads
   (unless new-owner
     (setq new-owner *current-thread*))
   (barrier (:read))
@@ -652,6 +653,7 @@ this call."
   #!+sb-thread
   (declare (type (and fixnum (integer 1)) n))
   (let (#!+(and win32 sb-thread) (sb!impl::*disable-safepoints* t))
+  ;; FIXME: reindent after merging windows-threads
   (/show0 "Entering CONDITION-NOTIFY")
   #!+sb-thread
   (progn
