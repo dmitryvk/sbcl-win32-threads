@@ -368,6 +368,7 @@ HOLDING-MUTEX-P."
   (declare (type mutex mutex) (optimize (speed 3))
            #!-sb-thread (ignore waitp timeout))
   (let (#!+(and win32 sb-thread) (sb!impl::*disable-safepoints* t))
+  ;; FIXME: reindent after merging windows-threads
   (unless new-owner
     (setq new-owner *current-thread*))
   (barrier (:read))
@@ -652,6 +653,7 @@ this call."
   #!+sb-thread
   (declare (type (and fixnum (integer 1)) n))
   (let (#!+(and win32 sb-thread) (sb!impl::*disable-safepoints* t))
+  ;; FIXME: reindent after merging windows-threads
   (/show0 "Entering CONDITION-NOTIFY")
   #!+sb-thread
   (progn
@@ -1098,12 +1100,12 @@ first thing to do is usually a WITH-INTERRUPTS or a
 WITHOUT-INTERRUPTS. Within a thread interrupts are queued, they are
 run in same the order they were sent."
   #!+(and sb-thread win32)
-  (let ((r (interrupt-lisp-thread
-            (sap-int (%thread-sap thread))
-            (get-lisp-obj-address
-             (lambda ()
-               (sb!unix::invoke-interruption function))))))
-    (zerop r))
+  (let ((other-thread (sap-int (%thread-sap thread)))
+        (interrupt-function (lambda ()
+                              (sb!unix::invoke-interruption function))))
+    (sb!sys:with-pinned-objects (interrupt-function)
+      (let ((r (interrupt-lisp-thread other-thread (get-lisp-obj-address interrupt-function))))
+        (zerop r))))
   #!+(and (not sb-thread) win32)
   (progn
     (declare (ignore thread))
