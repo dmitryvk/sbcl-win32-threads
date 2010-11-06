@@ -357,7 +357,7 @@
         (inst mov temp
               (make-ea-for-symbol-tls-index *alien-stack*))
         #!+(and win32 sb-thread)
-        (inst add temp (make-ea :dword :disp #x14) :fs)
+        (inst add temp (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
         (inst sub (make-ea :dword :base temp) delta #!-(and win32 sb-thread) :fs)))
     (load-tl-symbol-value result *alien-stack*))
   #!-sb-thread
@@ -379,7 +379,7 @@
         (inst mov temp
               (make-ea-for-symbol-tls-index *alien-stack*))
         #!+(and win32 sb-thread)
-        (inst add temp (make-ea :dword :disp #x14) :fs)
+        (inst add temp (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
         (inst add (make-ea :dword :base temp) delta #!-(and win32 sb-thread) :fs))))
   #!-sb-thread
   (:generator 0
