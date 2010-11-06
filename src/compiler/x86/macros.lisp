@@ -618,3 +618,40 @@ collection."
                            `(touch-object ,pin))
                          pins)))))
       `(progn ,@body)))
+
+;;; Safepoints stuff
+
+#!+ (and sb-thread win32)
+(progn
+  (defun enter-safe-region-instructions ()
+    (inst pusha)
+    (inst call (make-fixup "gc_enter_safe_region" :foreign))
+    (inst popa))
+
+  (defun enter-unsafe-region-instructions ()
+    (inst pusha)
+    (inst call (make-fixup "gc_enter_unsafe_region" :foreign))
+    (inst popa))
+
+  (defun leave-region-instructions ()
+    (inst pusha)
+    (inst call (make-fixup "gc_leave_region" :foreign))
+    (inst popa))
+
+  (defun enter-safe-region-instructions/no-fixup ()
+    (inst pusha)
+    (inst mov eax-tn (foreign-symbol-address "gc_enter_safe_region"))
+    (inst call eax-tn)
+    (inst popa))
+
+  (defun enter-unsafe-region-instructions/no-fixup ()
+    (inst pusha)
+    (inst mov eax-tn (foreign-symbol-address "gc_enter_unsafe_region"))
+    (inst call eax-tn)
+    (inst popa))
+
+  (defun leave-region-instructions/no-fixup ()
+    (inst pusha)
+    (inst mov eax-tn (foreign-symbol-address "gc_leave_region"))
+    (inst call eax-tn)
+    (inst popa)))
