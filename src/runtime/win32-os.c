@@ -695,12 +695,17 @@ void scratch(void)
 {
     LARGE_INTEGER la = {{0}};
     CloseHandle(0);
+    closesocket(0);
     CreateWaitableTimerA(NULL,FALSE,NULL);
+    CancelWaitableTimer(NULL);
     DuplicateHandle(0,0,0,0,0,0,0);
     FlushConsoleInputBuffer(0);
     FormatMessageA(0, 0, 0, 0, 0, 0, 0);
     FreeLibrary(0);
     GetACP();
+    GetCommTimeouts(0,0);
+    SetCommTimeouts(0,0);
+    ClearCommError(0,0,0);
     GetConsoleCP();
     GetConsoleOutputCP();
     GetCurrentProcess();
@@ -814,9 +819,13 @@ int win32_unix_write(int fd, void * buf, int count)
   handle =(HANDLE)_get_osfhandle(fd);
   odprintf("handle = 0x%p", handle);
   overlapped.hEvent = self->private_events.events[0];
-  SetFilePointerEx(handle,nooffset,&file_position, FILE_CURRENT);
-  overlapped.Offset = file_position.LowPart;
-  overlapped.OffsetHigh = file_position.HighPart;
+  if (SetFilePointerEx(handle,nooffset,&file_position, FILE_CURRENT)) {
+    overlapped.Offset = file_position.LowPart;
+    overlapped.OffsetHigh = file_position.HighPart;
+  } else {
+    overlapped.Offset = 0;
+    overlapped.OffsetHigh = 0;
+  }
   if (WriteFile(handle, buf, count, &written_bytes,
                 &overlapped)) {
     odprintf("write(%d, 0x%p, %d) immeditately wrote %d bytes",
@@ -869,9 +878,13 @@ int win32_unix_read(int fd, void * buf, int count)
   odprintf("handle = 0x%p", handle);
   overlapped.hEvent = self->private_events.events[0];
   /* If it has a position, we won't try overlapped */
-  SetFilePointerEx(handle,nooffset,&file_position, FILE_CURRENT);
-  overlapped.Offset = file_position.LowPart;
-  overlapped.OffsetHigh = file_position.HighPart;
+  if (SetFilePointerEx(handle,nooffset,&file_position, FILE_CURRENT)) {
+    overlapped.Offset = file_position.LowPart;
+    overlapped.OffsetHigh = file_position.HighPart;
+  } else {
+    overlapped.Offset = 0;
+    overlapped.OffsetHigh = 0;
+  }
   if (ReadFile(handle,buf,count,&read_bytes,
                &overlapped)) {
     /* immediately */
