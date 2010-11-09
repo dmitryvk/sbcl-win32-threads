@@ -1100,12 +1100,16 @@ first thing to do is usually a WITH-INTERRUPTS or a
 WITHOUT-INTERRUPTS. Within a thread interrupts are queued, they are
 run in same the order they were sent."
   #!+(and sb-thread win32)
-  (let ((other-thread (sap-int (%thread-sap thread)))
-        (interrupt-function (lambda ()
-                              (sb!unix::invoke-interruption function))))
-    (sb!sys:with-pinned-objects (interrupt-function)
-      (let ((r (interrupt-lisp-thread other-thread (get-lisp-obj-address interrupt-function))))
-        (zerop r))))
+  (with-all-threads-lock
+    (if (thread-alive-p thread)
+	(let ((other-thread (sap-int (%thread-sap thread)))
+	      (interrupt-function (lambda ()
+				    (sb!unix::invoke-interruption function))))
+	  (sb!sys:with-pinned-objects (interrupt-function)
+	    (let ((r (interrupt-lisp-thread other-thread
+					    (get-lisp-obj-address interrupt-function))))
+	      (zerop r))))
+	(error 'interrupt-thread-error :thread thread)))
   #!+(and (not sb-thread) win32)
   (progn
     (declare (ignore thread))
