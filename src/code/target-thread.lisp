@@ -1162,7 +1162,7 @@ SB-EXT:QUIT - the usual cleanup forms will be evaluated"
           (when (= os-thread target) (return thread-sap))
           (setf thread-sap
                 (sap-ref-sap thread-sap (* sb!vm:n-word-bytes
-                                           sb!vm::thread-next-slot)))))))
+					   sb!vm::thread-next-slot)))))))
 
   (defun %symbol-value-in-thread (symbol thread)
     ;; Prevent the thread from dying completely while we look for the TLS

@@ -525,12 +525,21 @@
 
 (defun get-last-error-message (err)
   "http://msdn.microsoft.com/library/default.asp?url=/library/en-us/debug/base/retrieving_the_last_error_code.asp"
+  (let ((message
   (with-alien ((amsg (* char)))
     (syscall (("FormatMessage" 28 t)
               dword dword dword dword dword (* (* char)) dword dword)
              (cast-and-free amsg :free-function local-free)
              (logior FORMAT_MESSAGE_ALLOCATE_BUFFER FORMAT_MESSAGE_FROM_SYSTEM)
-             0 err 0 (addr amsg) 0 0)))
+		    0 err 0 (addr amsg) 0 0))))
+    (and message
+	 ;; KLUDGE: not string-trim, because #\Return character is
+	 ;; unavailable while cross-compiling.
+	 (subseq message 0
+		 (or (position-if-not
+		      (lambda (character)
+			(member (char-code character) '(10 13 32)))
+		      message :from-end t) 0)))))
 
 (defmacro win32-error (func-name &optional err)
   `(let ((err-code ,(or err `(get-last-error))))
@@ -875,7 +884,7 @@ UNIX epoch: January 1st 1970."
 ;; CreateFile, as complete as possibly.
 ;; FILE_FLAG_OVERLAPPED is a must for decent I/O.
 
-(defun win32-unixlike-open (path flags mode &optional revertable)
+(defun unixlike-open (path flags mode &optional revertable)
   (declare (type sb!unix:unix-pathname path)
            (type fixnum flags)
            (type sb!unix:unix-file-mode mode)
@@ -930,3 +939,18 @@ UNIX epoch: January 1st 1970."
 	  (if (minusp fd)
 	      (values nil (sb!unix::get-errno))
 		  (values fd 0))))))))
+
+(define-alien-routine ("closesocket" close-socket) int (handle handle))
+
+(defconstant ebadf 9)
+
+;;; For sockets, CloseHandle first and closesocket() afterwards is
+;;; legal: winsock tracks its handles separately (that's why we have
+;;; the problem with simple _close in the first place).
+(defun unixlike-close (fd)
+  (let ((handle (get-osfhandle fd)))
+    (if (= handle invalid-handle)
+	(values nil ebadf)
+	(let ((socketp (plusp (socket-input-available handle))))
+	  (multiple-value-prog1 (sb!unix:unix-close fd)
+	    (when socketp (close-socket handle)))))))

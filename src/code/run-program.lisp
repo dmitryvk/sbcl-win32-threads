@@ -538,7 +538,7 @@ status slot."
   (if (string= "" arg)
       "\"\""
       (flet ((white-space-p (character)
-	       (member character '(#\Return #\Space #\Tab))))
+               (member character '(#\Return #\Newline #\Space #\Tab))))
 	(let ((has-spaces (find-if #'white-space-p arg))
 	      (n-backslashes 0))
 	  (with-output-to-string (out)
