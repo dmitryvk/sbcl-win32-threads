@@ -173,10 +173,10 @@
   (:timeouts . 0))
 
 (deftest mailbox.multiple-producers-multiple-consumers
-    (test-mailbox-producers-consumers :n-senders 50
-                                      :n-receivers 50
-                                      :n-messages 1000)
-  (:received . 50000)
+    (test-mailbox-producers-consumers :n-senders 10
+                                      :n-receivers 10
+                                      :n-messages 100)
+  (:received . 1000)
   (:garbage  . 0)
   (:errors   . 0)
   (:timeouts . 0))
@@ -184,15 +184,15 @@
 (deftest mailbox.interrupts-safety.1
     (multiple-value-bind (received garbage errors timeouts)
         (test-mailbox-producers-consumers
-         :n-senders 50
-         :n-receivers 50
+         :n-senders 10
+         :n-receivers 10
          :n-messages 1000
          :interruptor #'(lambda (threads &aux (n (length threads)))
                           ;; 99 so even in the unlikely case that only
                           ;; receivers (or only senders) are shot
                           ;; dead, there's still one that survives to
                           ;; properly end the test.
-                          (loop repeat 99
+                          (loop repeat 19
                                 for victim = (nth (random n) threads)
                                 do (kill-thread victim)
                                    (sleep (random 0.0001)))))
