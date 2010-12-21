@@ -233,14 +233,14 @@
     (when (>= microseconds 1000)
       (millisleep (floor microseconds 1000)))))
 
+(define-alien-routine ("CloseHandle" close-handle) bool
+  (handle handle))
+
 #!+sb-thread
 (progn
   (define-alien-routine ("win32_wait_object_or_signal" wait-object-or-signal) int
     (handle handle))
   (define-alien-type signed-filetime (signed 64))
-  (define-alien-routine ("CloseHandle" close-handle) bool
-    (handle handle))
-
   (define-alien-routine ("CreateWaitableTimerA" create-waitable-timer) handle
     (security-attributes (* t))
     (manual-reset bool)
