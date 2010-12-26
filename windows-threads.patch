@@ -1,0 +1,4430 @@
+diff --git a/contrib/sb-concurrency/tests/test-mailbox.lisp b/contrib/sb-concurrency/tests/test-mailbox.lisp
+old mode 100644
+new mode 100755
+index 5243446..f9cbc2b
+--- a/contrib/sb-concurrency/tests/test-mailbox.lisp
++++ b/contrib/sb-concurrency/tests/test-mailbox.lisp
+@@ -173,10 +173,10 @@
+   (:timeouts . 0))
+ 
+ (deftest mailbox.multiple-producers-multiple-consumers
+-    (test-mailbox-producers-consumers :n-senders 100
+-                                      :n-receivers 100
+-                                      :n-messages 1000)
+-  (:received . 100000)
++    (test-mailbox-producers-consumers :n-senders 10
++                                      :n-receivers 10
++                                      :n-messages 100)
++  (:received . 1000)
+   (:garbage  . 0)
+   (:errors   . 0)
+   (:timeouts . 0))
+@@ -184,15 +184,15 @@
+ (deftest mailbox.interrupts-safety.1
+     (multiple-value-bind (received garbage errors timeouts)
+         (test-mailbox-producers-consumers
+-         :n-senders 100
+-         :n-receivers 100
++         :n-senders 10
++         :n-receivers 10
+          :n-messages 1000
+          :interruptor #'(lambda (threads &aux (n (length threads)))
+                           ;; 99 so even in the unlikely case that only
+                           ;; receivers (or only senders) are shot
+                           ;; dead, there's still one that survives to
+                           ;; properly end the test.
+-                          (loop repeat 99
++                          (loop repeat 19
+                                 for victim = (nth (random n) threads)
+                                 do (kill-thread victim)
+                                    (sleep (random 0.0001)))))
+diff --git a/make-config.sh b/make-config.sh
+index fcdd9f9..51ee466 100644
+--- a/make-config.sh
++++ b/make-config.sh
+@@ -261,6 +261,7 @@ case "$sbcl_os" in
+         ;;
+     win32)
+         printf ' :win32' >> $ltf
++        printf ' :sb-pthread-futex' >> $ltf
+         link_or_copy Config.$sbcl_arch-win32 Config
+         link_or_copy $sbcl_arch-win32-os.h target-arch-os.h
+         link_or_copy win32-os.h target-os.h
+diff --git a/package-data-list.lisp-expr b/package-data-list.lisp-expr
+index e99ff95..7e3f182 100644
+--- a/package-data-list.lisp-expr
++++ b/package-data-list.lisp-expr
+@@ -2722,6 +2722,7 @@ structure representations"
+                #!+linkage-table "LINKAGE-TABLE-SPACE-START"
+                #!+linkage-table "LINKAGE-TABLE-SPACE-END"
+                #!+linkage-table "LINKAGE-TABLE-ENTRY-SIZE"
++               #!+(and sb-thread win32) "GC-SAFEPOINT-PAGE-ADDR"
+                "TLS-SIZE"
+                "TRACE-TABLE-CALL-SITE"
+                "TRACE-TABLE-FUN-EPILOGUE" "TRACE-TABLE-FUN-PROLOGUE"
+diff --git a/src/code/cold-init.lisp b/src/code/cold-init.lisp
+index d8c1160..aaf100c 100644
+--- a/src/code/cold-init.lisp
++++ b/src/code/cold-init.lisp
+@@ -229,7 +229,8 @@
+   (show-and-call stream-cold-init-or-reset)
+   (show-and-call !loader-cold-init)
+   (show-and-call !foreign-cold-init)
+-  #!-win32 (show-and-call signal-cold-init-or-reinit)
++  #!-(and win32 (not sb-thread))
++  (show-and-call signal-cold-init-or-reinit)
+   (/show0 "enabling internal errors")
+   (setf (sb!alien:extern-alien "internal_errors_enabled" boolean) t)
+ 
+@@ -305,7 +306,7 @@ systems, UNIX-STATUS is used as the status code."
+     (os-cold-init-or-reinit)
+     (thread-init-or-reinit)
+     (stream-reinit t)
+-    #!-win32
++    #!-(and win32 (not sb-thread))
+     (signal-cold-init-or-reinit)
+     (setf (sb!alien:extern-alien "internal_errors_enabled" boolean) t)
+     (float-cold-init-or-reinit))
+diff --git a/src/code/early-impl.lisp b/src/code/early-impl.lisp
+index 51fe656..f9f3da3 100644
+--- a/src/code/early-impl.lisp
++++ b/src/code/early-impl.lisp
+@@ -38,6 +38,12 @@
+                   sb!unix::*unblock-deferrables-on-enabling-interrupts-p*
+                   *interrupts-enabled*
+                   *interrupt-pending*
++                  #!+(and win32 sb-thread)
++                  *gc-safe*
++                  #!+(and win32 sb-thread)
++                  *in-safepoint*
++                  #!+(and win32 sb-thread)
++                  *disable-safepoints*
+                   *free-interrupt-context-index*
+                   sb!kernel::*gc-epoch*
+                   sb!vm::*unwind-to-frame-function*
+diff --git a/src/code/gc.lisp b/src/code/gc.lisp
+index 042ab05..fa83985 100644
+--- a/src/code/gc.lisp
++++ b/src/code/gc.lisp
+@@ -231,6 +231,8 @@ run in any thread.")
+                        ;; turn is a type-error.
+                        (when (plusp run-time)
+                          (incf *gc-run-time* run-time))))
++                   #!+(and win32 sb-thread)
++                   (setf *stop-for-gc-pending* nil)
+                    (setf *gc-pending* nil
+                          new-usage (dynamic-usage))
+                    #!+sb-thread
+diff --git a/src/code/target-exception.lisp b/src/code/target-exception.lisp
+index 803a758..3ceacf2 100644
+--- a/src/code/target-exception.lisp
++++ b/src/code/target-exception.lisp
+@@ -101,3 +101,111 @@
+ ;;;   I don't know if we still need this or not. Better safe for now.
+ (defun receive-pending-interrupt ()
+   (receive-pending-interrupt))
++
++(in-package "SB!UNIX")
++
++#!+sb-thread
++(progn
++
++  (defun receive-pending-interrupt ()
++    (receive-pending-interrupt))
++
++  (defmacro with-interrupt-bindings (&body body)
++    `(let*
++         ;; KLUDGE: Whatever is on the PCL stacks before the interrupt
++         ;; handler runs doesn't really matter, since we're not on the
++         ;; same call stack, really -- and if we don't bind these (esp.
++         ;; the cache one) we can get a bogus metacircle if an interrupt
++         ;; handler calls a GF that was being computed when the interrupt
++         ;; hit.
++         ((sb!pcl::*cache-miss-values-stack* nil)
++          (sb!pcl::*dfun-miss-gfs-on-stack* nil))
++       ,@body))
++
++  ;;; Evaluate CLEANUP-FORMS iff PROTECTED-FORM does a non-local exit.
++  (defmacro nlx-protect (protected-form &rest cleanup-froms)
++    (with-unique-names (completep)
++      `(let ((,completep nil))
++         (without-interrupts
++           (unwind-protect
++                (progn
++                  (allow-with-interrupts
++                    ,protected-form)
++                  (setq ,completep t))
++             (unless ,completep
++               ,@cleanup-froms))))))
++
++  (declaim (inline %unblock-deferrable-signals %unblock-gc-signals))
++  (sb!alien:define-alien-routine ("unblock_deferrable_signals"
++                                  %unblock-deferrable-signals)
++      sb!alien:void
++    (where sb!alien:unsigned-long)
++    (old sb!alien:unsigned-long))
++  (sb!alien:define-alien-routine ("unblock_gc_signals" %unblock-gc-signals)
++      sb!alien:void
++    (where sb!alien:unsigned-long)
++    (old sb!alien:unsigned-long))
++
++  (defun block-deferrable-signals ()
++    (%block-deferrable-signals 0 0))
++
++  (defun unblock-deferrable-signals ()
++    (%unblock-deferrable-signals 0 0))
++
++  (defun unblock-gc-signals ()
++    (%unblock-gc-signals 0 0))
++    
++  (declaim (inline %block-deferrables-and-return-mask %apply-sigmask))
++  (sb!alien:define-alien-routine ("block_deferrables_and_return_mask"
++                                  %block-deferrables-and-return-mask)
++      sb!alien:unsigned-long)
++  (sb!alien:define-alien-routine ("apply_sigmask"
++                                  %apply-sigmask)
++      sb!alien:void
++      (mask sb!alien:unsigned-long))
++
++  (defmacro without-interrupts/with-deferrables-blocked (&body body)
++    (let ((mask-var (gensym)))
++      `(without-interrupts
++         (let ((,mask-var (%block-deferrables-and-return-mask)))
++           (unwind-protect
++               (progn ,@body)
++             (%apply-sigmask ,mask-var))))))
++
++  (defun invoke-interruption (function)
++    (without-interrupts/with-deferrables-blocked
++      ;; Reset signal mask: the C-side handler has blocked all
++      ;; deferrable signals before funcalling into lisp. They are to be
++      ;; unblocked the first time interrupts are enabled. With this
++      ;; mechanism there are no extra frames on the stack from a
++      ;; previous signal handler when the next signal is delivered
++      ;; provided there is no WITH-INTERRUPTS.
++      (let ((sb!unix::*unblock-deferrables-on-enabling-interrupts-p* t))
++        (with-interrupt-bindings
++          (let ((sb!debug:*stack-top-hint*
++                 (nth-value 1 (sb!kernel:find-interrupted-name-and-frame))))
++            (allow-with-interrupts
++              (nlx-protect (funcall function)
++                           ;; We've been running with deferrables
++                           ;; blocked in Lisp called by a C signal
++                           ;; handler. If we return normally the sigmask
++                           ;; in the interrupted context is restored.
++                           ;; However, if we do an nlx the operating
++                           ;; system will not restore it for us.
++                           (when sb!unix::*unblock-deferrables-on-enabling-interrupts-p*
++                             ;; This means that storms of interrupts
++                             ;; doing an nlx can still run out of stack.
++                             (unblock-deferrable-signals)))))))))
++
++  (defmacro in-interruption ((&key) &body body)
++    #!+sb-doc
++    "Convenience macro on top of INVOKE-INTERRUPTION."
++    `(dx-flet ((interruption () ,@body))
++       (invoke-interruption #'interruption)))
++    
++  (defun sb!kernel:signal-cold-init-or-reinit ()
++    #!+sb-doc
++    "Enable all the default signals that Lisp knows how to deal with."
++    (unblock-gc-signals)
++    (unblock-deferrable-signals)
++    (values)))
+diff --git a/src/code/target-thread.lisp b/src/code/target-thread.lisp
+index 111f92b..7e7474c 100644
+--- a/src/code/target-thread.lisp
++++ b/src/code/target-thread.lisp
+@@ -351,6 +351,8 @@ HOLDING-MUTEX-P."
+   "Deprecated in favor of GRAB-MUTEX."
+   (declare (type mutex mutex) (optimize (speed 3))
+            #!-sb-thread (ignore waitp timeout))
++  (let (#!+(and win32 sb-thread) (sb!impl::*disable-safepoints* t))
++  ;; FIXME: reindent after merging windows-threads
+   (unless new-owner
+     (setq new-owner *current-thread*))
+   (barrier (:read))
+@@ -426,7 +428,7 @@ HOLDING-MUTEX-P."
+                  (bug "Old owner in free mutex: ~S" prev))
+                t))
+             (waitp
+-             (bug "Failed to acquire lock with WAITP."))))))
++             (bug "Failed to acquire lock with WAITP.")))))))
+ 
+ (defun grab-mutex (mutex &key (waitp t) (timeout nil))
+   #!+sb-doc
+@@ -484,6 +486,8 @@ IF-NOT-OWNER is :FORCE)."
+   (declare (type mutex mutex))
+   ;; Order matters: set owner to NIL before releasing state.
+   (let* ((self *current-thread*)
++         #!+(and win32 sb-thread)
++         (sb!impl::*disable-safepoints* t)
+          (old-owner (sb!ext:compare-and-swap (mutex-%owner mutex) self nil)))
+     (unless (eql self old-owner)
+       (ecase if-not-owner
+@@ -571,6 +575,7 @@ call, checking the the associated data:
+ Also note that if CONDITION-WAIT unwinds (due to eg. a timeout) instead of
+ returning normally, it may do so without holding the mutex."
+   #!-sb-thread (declare (ignore queue))
++  (let (#!+(and win32 sb-thread) (sb!impl::*disable-safepoints* t))
+   (assert mutex)
+   #!-sb-thread (error "Not supported in unithread builds.")
+   #!+sb-thread
+@@ -641,7 +646,7 @@ returning normally, it may do so without holding the mutex."
+             ((2))
+             ;; EWOULDBLOCK, -1 here, is the possible spurious wakeup
+             ;; case. 0 is the normal wakeup.
+-            (otherwise (return))))))))
++            (otherwise (return)))))))))
+ 
+ (defun condition-notify (queue &optional (n 1))
+   #!+sb-doc
+@@ -652,6 +657,8 @@ this call."
+   #!-sb-thread (error "Not supported in unithread builds.")
+   #!+sb-thread
+   (declare (type (and fixnum (integer 1)) n))
++  (let (#!+(and win32 sb-thread) (sb!impl::*disable-safepoints* t))
++  ;; FIXME: reindent after merging windows-threads
+   (/show0 "Entering CONDITION-NOTIFY")
+   #!+sb-thread
+   (progn
+@@ -670,7 +677,7 @@ this call."
+     (progn
+       (setf (waitqueue-token queue) queue)
+       (with-pinned-objects (queue)
+-        (futex-wake (waitqueue-token-address queue) n)))))
++        (futex-wake (waitqueue-token-address queue) n))))))
+ 
+ (defun condition-broadcast (queue)
+   #!+sb-doc
+@@ -934,6 +941,8 @@ have the foreground next."
+ 
+ 
+ ;;;; The beef
++#!+(and win32 sb-thread)
++(sb!alien:define-alien-routine ("gc_safepoint" gc-safepoint) sb!alien:void)
+ 
+ (defun make-thread (function &key name)
+   #!+sb-doc
+@@ -1003,10 +1012,12 @@ around and can be retrieved by JOIN-THREAD."
+                                ;; other threads, it's time to enable
+                                ;; signals.
+                                (sb!unix::unblock-deferrable-signals)
+-                               (setf (thread-result thread)
+-                                     (cons t
++                               (let ((r (cons t
+                                            (multiple-value-list
+-                                            (funcall real-function))))
++                                            (funcall real-function)))))
++                                  #!+win32
++                                  (gc-safepoint)
++                                  (setf (thread-result thread) r))
+                                ;; Try to block deferrables. An
+                                ;; interrupt may unwind it, but for a
+                                ;; normal exit it prevents interrupt
+@@ -1075,6 +1086,11 @@ return DEFAULT if given or else signal JOIN-THREAD-ERROR."
+       (kill-safely (thread-os-thread *current-thread*) sb!unix:sigpipe))
+     (when interruption
+       (funcall interruption))))
++      
++#!+(and sb-thread win32)
++(sb!alien:define-alien-routine interrupt-lisp-thread sb!alien:int
++  (thread sb!alien:int)
++  (fn sb!alien:int))
+ 
+ (defun interrupt-thread (thread function)
+   #!+sb-doc
+@@ -1088,11 +1104,22 @@ enable interrupts (GET-MUTEX when contended, for instance) so the
+ first thing to do is usually a WITH-INTERRUPTS or a
+ WITHOUT-INTERRUPTS. Within a thread interrupts are queued, they are
+ run in same the order they were sent."
+-  #!+win32
+-  (declare (ignore thread))
+-  #!+win32
+-  (with-interrupt-bindings
+-    (with-interrupts (funcall function)))
++  #!+(and sb-thread win32)
++  (with-all-threads-lock
++    (if (thread-alive-p thread)
++	(let ((other-thread (sap-int (%thread-sap thread)))
++	      (interrupt-function (lambda ()
++				    (sb!unix::invoke-interruption function))))
++	  (sb!sys:with-pinned-objects (interrupt-function)
++	    (let ((r (interrupt-lisp-thread other-thread
++					    (get-lisp-obj-address interrupt-function))))
++	      (zerop r))))
++	(error 'interrupt-thread-error :thread thread)))
++  #!+(and (not sb-thread) win32)
++  (progn
++    (declare (ignore thread))
++    (with-interrupt-bindings
++      (with-interrupts (funcall function))))
+   #!-win32
+   (let ((os-thread (thread-os-thread thread)))
+     (cond ((not os-thread)
+diff --git a/src/compiler/generic/genesis.lisp b/src/compiler/generic/genesis.lisp
+index fac1eb4..dc6df79 100644
+--- a/src/compiler/generic/genesis.lisp
++++ b/src/compiler/generic/genesis.lisp
+@@ -2880,6 +2880,10 @@ core and return a descriptor to it."
+   ;; possibly this is another candidate for a rename (to
+   ;; pseudo-atomic-trap-number or pseudo-atomic-magic-constant
+   ;; [possibly applicable to other platforms])
++  
++  #!+(and win32 sb-thread)
++  (format t "#define GC_SAFEPOINT_PAGE_ADDR ((void*)0x~XUL) /* ~:*~A */~%"
++            sb!vm:gc-safepoint-page-addr)
+ 
+   (dolist (symbol '(sb!vm::float-traps-byte
+                     sb!vm::float-exceptions-byte
+diff --git a/src/compiler/generic/parms.lisp b/src/compiler/generic/parms.lisp
+index bbd4eae..09701de 100644
+--- a/src/compiler/generic/parms.lisp
++++ b/src/compiler/generic/parms.lisp
+@@ -81,6 +81,9 @@
+     *gc-pending*
+     #!-sb-thread
+     *stepping*
++    #!+(and win32 sb-thread) sb!impl::*gc-safe*
++    #!+(and win32 sb-thread) sb!impl::*in-safepoint*
++    #!+(and win32 sb-thread) sb!impl::*disable-safepoints*
+ 
+     ;; threading support
+     #!+sb-thread *stop-for-gc-pending*
+diff --git a/src/compiler/ir2tran.lisp b/src/compiler/ir2tran.lisp
+index ebec113..b1456b3 100644
+--- a/src/compiler/ir2tran.lisp
++++ b/src/compiler/ir2tran.lisp
+@@ -1250,7 +1250,9 @@
+ 
+     (let ((lab (gen-label)))
+       (setf (ir2-physenv-environment-start env) lab)
+-      (vop note-environment-start node block lab)))
++      (vop note-environment-start node block lab)
++      #!+(and win32 sb-thread)
++      (vop sb!vm::insert-gc-safepoint node block)))
+ 
+   (values))
+ 
+@@ -1773,6 +1775,22 @@
+                        2block
+                        #!+sb-dyncount *dynamic-counts-tn* #!-sb-dyncount nil
+                        num))))
++              #!+(and win32 sb-thread)
++              (let ((first-node (block-start-node block)))
++                (unless (or (and (bind-p first-node)
++                                 (xep-p (bind-lambda first-node)))
++                            (and (valued-node-p first-node)
++                                 (node-lvar first-node)
++                                 (eq (lvar-fun-name
++                                      (node-lvar first-node))
++                                     '%nlx-entry)))
++                  (when (and (rest (block-pred block))
++                             (member (loop-kind (block-loop block))
++                                     '(:natural :strange))
++                             (eq block (loop-head (block-loop block))))
++                    (vop sb!vm::insert-gc-safepoint
++                         first-node
++                         2block))))
+             (ir2-convert-block block)
+             (incf num))))))
+   (values))
+diff --git a/src/compiler/x86/c-call.lisp b/src/compiler/x86/c-call.lisp
+old mode 100644
+new mode 100755
+index 7eec472..d5e13c1
+--- a/src/compiler/x86/c-call.lisp
++++ b/src/compiler/x86/c-call.lisp
+@@ -272,7 +272,11 @@
+     ;; c-call.lisp. If you modify this, modify that one too...
+     (cond ((policy node (> space speed))
+            (move eax function)
+-           (inst call (make-fixup "call_into_c" :foreign)))
++           #!+(and win32 sb-thread)
++           (enter-safe-region-instructions)
++           (inst call (make-fixup "call_into_c" :foreign))
++           #!+(and win32 sb-thread)
++           (leave-region-instructions))
+           (t
+            ;; Setup the NPX for C; all the FP registers need to be
+            ;; empty; pop them all.
+@@ -283,7 +287,11 @@
+            ;; this, and it should not hurt others either.
+            (inst cld)
+ 
++           #!+(and win32 sb-thread)
++           (enter-safe-region-instructions)
+            (inst call function)
++           #!+(and win32 sb-thread)
++           (leave-region-instructions)
+            ;; To give the debugger a clue. FIXME: not really internal-error?
+            (note-this-location vop :internal-error)
+ 
+@@ -348,7 +356,9 @@
+       (let ((delta (logandc2 (+ amount 3) 3)))
+         (inst mov temp
+               (make-ea-for-symbol-tls-index *alien-stack*))
+-        (inst sub (make-ea :dword :base temp) delta :fs)))
++        #!+(and win32 sb-thread)
++        (inst add temp (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++        (inst sub (make-ea :dword :base temp) delta #!-(and win32 sb-thread) :fs)))
+     (load-tl-symbol-value result *alien-stack*))
+   #!-sb-thread
+   (:generator 0
+@@ -368,7 +378,9 @@
+       (let ((delta (logandc2 (+ amount 3) 3)))
+         (inst mov temp
+               (make-ea-for-symbol-tls-index *alien-stack*))
+-        (inst add (make-ea :dword :base temp) delta :fs))))
++        #!+(and win32 sb-thread)
++        (inst add temp (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++        (inst add (make-ea :dword :base temp) delta #!-(and win32 sb-thread) :fs))))
+   #!-sb-thread
+   (:generator 0
+     (unless (zerop amount)
+@@ -413,6 +425,9 @@ pointer to the arguments."
+               (inst push eax)                       ; arg1
+               (inst push (ash index 2))             ; arg0
+ 
++              #!+(and win32 sb-thread)
++              (enter-unsafe-region-instructions/no-fixup)
++              
+               ;; Indirect the access to ENTER-ALIEN-CALLBACK through
+               ;; the symbol-value slot of SB-ALIEN::*ENTER-ALIEN-CALLBACK*
+               ;; to ensure it'll work even if the GC moves ENTER-ALIEN-CALLBACK.
+@@ -422,6 +437,9 @@ pointer to the arguments."
+               (inst push eax) ; function
+               (inst mov  eax (foreign-symbol-address "funcall3"))
+               (inst call eax)
++              
++              #!+(and win32 sb-thread)
++              (leave-region-instructions/no-fixup)
+               ;; now put the result into the right register
+               (cond
+                 ((and (alien-integer-type-p return-type)
+diff --git a/src/compiler/x86/call.lisp b/src/compiler/x86/call.lisp
+index cd90c1f..14b3f3c 100644
+--- a/src/compiler/x86/call.lisp
++++ b/src/compiler/x86/call.lisp
+@@ -1333,6 +1333,15 @@
+   ;; register on -SB-THREAD.
+   #!+sb-thread
+   (progn
++    #!+(and win32 sb-thread)
++    (progn
++      (inst push eax-tn)
++      (inst mov eax-tn (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++      (inst cmp (make-ea :dword
++                         :base eax-tn
++                         :disp (* thread-stepping-slot n-word-bytes)) nil-value)
++      (inst pop eax-tn))
++    #!-(and win32 sb-thread)
+     (inst cmp (make-ea :dword
+                        :disp (* thread-stepping-slot n-word-bytes))
+           nil-value :fs))
+diff --git a/src/compiler/x86/cell.lisp b/src/compiler/x86/cell.lisp
+index bb82a39..ca7f96d 100644
+--- a/src/compiler/x86/cell.lisp
++++ b/src/compiler/x86/cell.lisp
+@@ -56,7 +56,7 @@
+          (new :scs (descriptor-reg any-reg)))
+   (:temporary (:sc descriptor-reg :offset eax-offset) eax)
+   #!+sb-thread
+-  (:temporary (:sc descriptor-reg) tls)
++  (:temporary (:sc descriptor-reg) tls #!+win32 tmp)
+   (:results (result :scs (descriptor-reg any-reg)))
+   (:policy :fast-safe)
+   (:vop-var vop)
+@@ -71,6 +71,11 @@
+       (progn
+         (loadw tls symbol symbol-tls-index-slot other-pointer-lowtag)
+         ;; Thread-local area, no LOCK needed.
++        #!+win32
++        (progn
++          (inst mov tmp (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++          (inst cmpxchg (make-ea :dword :base tmp :index tls) new))
++        #!-win32
+         (inst cmpxchg (make-ea :dword :base tls) new :fs)
+         (inst cmp eax no-tls-value-marker-widetag)
+         (inst jmp :ne check)
+@@ -110,13 +115,21 @@
+   (define-vop (set)
+     (:args (symbol :scs (descriptor-reg))
+            (value :scs (descriptor-reg any-reg)))
+-    (:temporary (:sc descriptor-reg) tls)
++    (:temporary (:sc descriptor-reg) tls #!+win32 tmp)
+     (:generator 4
+       (let ((global-val (gen-label))
+             (done (gen-label)))
+         (loadw tls symbol symbol-tls-index-slot other-pointer-lowtag)
++        #!+win32
++        (progn
++          (inst mov tmp (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++          (inst cmp (make-ea :dword :base tmp :index tls) no-tls-value-marker-widetag))
++        #!-win32
+         (inst cmp (make-ea :dword :base tls) no-tls-value-marker-widetag :fs)
+         (inst jmp :z global-val)
++        #!+win32
++        (inst mov (make-ea :dword :base tmp :index tls) value)
++        #!-win32
+         (inst mov (make-ea :dword :base tls) value :fs)
+         (inst jmp done)
+         (emit-label global-val)
+@@ -130,6 +143,8 @@
+     (:policy :fast-safe)
+     (:args (object :scs (descriptor-reg) :to (:result 1)))
+     (:results (value :scs (descriptor-reg any-reg)))
++    #!+win32
++    (:temporary (:sc descriptor-reg) tmp)
+     (:vop-var vop)
+     (:save-p :compute-only)
+     (:generator 9
+@@ -137,6 +152,11 @@
+              (err-lab (generate-error-code vop 'unbound-symbol-error object))
+              (ret-lab (gen-label)))
+         (loadw value object symbol-tls-index-slot other-pointer-lowtag)
++        #!+win32
++        (progn
++          (inst mov tmp (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++          (inst mov value (make-ea :dword :base tmp :index value)))
++        #!-win32
+         (inst mov value (make-ea :dword :base value) :fs)
+         (inst cmp value no-tls-value-marker-widetag)
+         (inst jmp :ne check-unbound-label)
+@@ -152,11 +172,18 @@
+     ;; the meaning of FAST-SYMBOL-VALUE is "do not signal an error if
+     ;; unbound", which is used in the implementation of COPY-SYMBOL.  --
+     ;; CSR, 2003-04-22
++    #!+win32
++    (:temporary (:sc descriptor-reg) tmp)
+     (:policy :fast)
+     (:translate symbol-value)
+     (:generator 8
+       (let ((ret-lab (gen-label)))
+         (loadw value object symbol-tls-index-slot other-pointer-lowtag)
++        #!+win32
++        (progn
++          (inst mov tmp (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++          (inst mov value (make-ea :dword :base tmp :index value)))
++        #!-win32
+         (inst mov value (make-ea :dword :base value) :fs)
+         (inst cmp value no-tls-value-marker-widetag)
+         (inst jmp :ne ret-lab)
+@@ -178,9 +205,16 @@
+   (:args (object :scs (descriptor-reg)))
+   (:conditional :ne)
+   (:temporary (:sc descriptor-reg #+nil(:from (:argument 0))) value)
++  #!+win32
++  (:temporary (:sc descriptor-reg) tmp)
+   (:generator 9
+     (let ((check-unbound-label (gen-label)))
+       (loadw value object symbol-tls-index-slot other-pointer-lowtag)
++      #!+win32
++      (progn
++        (inst mov tmp (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++        (inst mov value (make-ea :dword :base tmp :index value)))
++      #!-win32
+       (inst mov value (make-ea :dword :base value) :fs)
+       (inst cmp value no-tls-value-marker-widetag)
+       (inst jmp :ne check-unbound-label)
+@@ -278,6 +312,8 @@
+   (:args (val :scs (any-reg descriptor-reg))
+          (symbol :scs (descriptor-reg)))
+   (:temporary (:sc unsigned-reg) tls-index bsp)
++  #!+win32
++  (:temporary (:sc descriptor-reg) tmp)
+   (:generator 10
+     (let ((tls-index-valid (gen-label)))
+       (load-binding-stack-pointer bsp)
+@@ -297,9 +333,17 @@
+                     (#.esi-offset 'alloc-tls-index-in-esi))
+                   :assembly-routine))
+       (emit-label tls-index-valid)
++      #!+win32
++      (progn
++        (inst mov tmp (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++        (inst push (make-ea :dword :base tmp :index tls-index)))
++      #!-win32
+       (inst push (make-ea :dword :base tls-index) :fs)
+       (popw bsp (- binding-value-slot binding-size))
+       (storew symbol bsp (- binding-symbol-slot binding-size))
++      #!+win32
++      (inst mov (make-ea :dword :base tmp :index tls-index) val)
++      #!-win32
+       (inst mov (make-ea :dword :base tls-index) val :fs))))
+ 
+ #!-sb-thread
+@@ -319,6 +363,8 @@
+ #!+sb-thread
+ (define-vop (unbind)
+   (:temporary (:sc unsigned-reg) temp bsp tls-index)
++  #!+win32
++  (:temporary (:sc descriptor-reg) tmp)
+   (:generator 0
+     (load-binding-stack-pointer bsp)
+     ;; Load SYMBOL from stack, and get the TLS-INDEX.
+@@ -326,6 +372,11 @@
+     (loadw tls-index temp symbol-tls-index-slot other-pointer-lowtag)
+     ;; Load VALUE from stack, then restore it to the TLS area.
+     (loadw temp bsp (- binding-value-slot binding-size))
++    #!+win32
++    (progn
++      (inst mov tmp (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++      (inst mov (make-ea :dword :base tmp :index tls-index) temp))
++    #!-win32
+     (inst mov (make-ea :dword :base tls-index) temp :fs)
+     ;; Zero out the stack.
+     (storew 0 bsp (- binding-symbol-slot binding-size))
+@@ -350,6 +401,8 @@
+ (define-vop (unbind-to-here)
+   (:args (where :scs (descriptor-reg any-reg)))
+   (:temporary (:sc unsigned-reg) symbol value bsp #!+sb-thread tls-index)
++  #!+(and sb-thread win32)
++  (:temporary (:sc descriptor-reg) tmp)
+   (:generator 0
+     (load-binding-stack-pointer bsp)
+     (inst cmp where bsp)
+@@ -367,7 +420,12 @@
+ 
+     #!+sb-thread (loadw
+                   tls-index symbol symbol-tls-index-slot other-pointer-lowtag)
+-    #!+sb-thread (inst mov (make-ea :dword :base tls-index) value :fs)
++    #!+(and sb-thread win32)
++    (progn
++      (inst mov tmp (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++      (inst mov (make-ea :dword :base tmp :index tls-index) value))
++    #!+(and sb-thread (not win32))
++    (inst mov (make-ea :dword :base tls-index) value :fs)
+     (storew 0 bsp (- binding-symbol-slot binding-size))
+ 
+     SKIP
+diff --git a/src/compiler/x86/macros.lisp b/src/compiler/x86/macros.lisp
+index 18251b5..eb4f9e9 100644
+--- a/src/compiler/x86/macros.lisp
++++ b/src/compiler/x86/macros.lisp
+@@ -112,6 +112,11 @@
+ (defmacro load-tl-symbol-value (reg symbol)
+   `(progn
+     (inst mov ,reg (make-ea-for-symbol-tls-index ,symbol))
++    #!+win32
++    (progn
++      (inst add ,reg (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++      (inst mov ,reg (make-ea :dword :base ,reg)))
++    #!-win32
+     (inst mov ,reg (make-ea :dword :base ,reg) :fs)))
+ #!-sb-thread
+ (defmacro load-tl-symbol-value (reg symbol) `(load-symbol-value ,reg ,symbol))
+@@ -120,6 +125,11 @@
+ (defmacro store-tl-symbol-value (reg symbol temp)
+   `(progn
+     (inst mov ,temp (make-ea-for-symbol-tls-index ,symbol))
++    #!+win32
++    (progn
++      (inst add ,temp (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++      (inst mov (make-ea :dword :base ,temp) ,reg))
++    #!-win32
+     (inst mov (make-ea :dword :base ,temp) ,reg :fs)))
+ #!-sb-thread
+ (defmacro store-tl-symbol-value (reg symbol temp)
+@@ -129,6 +139,13 @@
+ (defmacro load-binding-stack-pointer (reg)
+   #!+sb-thread
+   `(progn
++     #!+win32
++     (progn
++       (inst mov ,reg (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++       (inst mov ,reg (make-ea :dword
++                               :base ,reg
++                               :disp (* 4 thread-binding-stack-pointer-slot))))
++     #!-win32
+      (inst mov ,reg (make-ea :dword
+                              :disp (* 4 thread-binding-stack-pointer-slot))
+            :fs))
+@@ -138,6 +155,14 @@
+ (defmacro store-binding-stack-pointer (reg)
+   #!+sb-thread
+   `(progn
++     #!+win32
++     (progn
++       (inst push eax-tn)
++       (inst push ,reg)
++       (inst mov eax-tn (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++       (inst pop (make-ea :dword :base eax-tn :disp (* 4 thread-binding-stack-pointer-slot)))
++       (inst pop eax-tn))
++     #!-win32
+      (inst mov (make-ea :dword
+                         :disp (* 4 thread-binding-stack-pointer-slot))
+            ,reg :fs))
+@@ -265,6 +290,10 @@
+     (dynamic-extent
+      (allocation-dynamic-extent alloc-tn size lowtag))
+     ((or (null inline) (policy inline (>= speed space)))
++     ;; FIXME Win32
++     #!+win32
++     (allocation-notinline alloc-tn size)
++     #!-win32
+      (allocation-inline alloc-tn size))
+     (t
+      (allocation-notinline alloc-tn size)))
+@@ -354,22 +383,45 @@
+ ;;; pa section.
+ #!+sb-thread
+ (defmacro %clear-pseudo-atomic ()
++  #!+win32
++  '(progn
++    (inst push eax-tn)
++    (inst mov eax-tn (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++    (inst mov (make-ea :dword :base eax-tn :disp (* 4 thread-pseudo-atomic-bits-slot)) 0)
++    (inst pop eax-tn))
++  #!-win32
+   '(inst mov (make-ea :dword :disp (* 4 thread-pseudo-atomic-bits-slot)) 0 :fs))
+ 
+ #!+sb-thread
+ (defmacro pseudo-atomic (&rest forms)
+   (with-unique-names (label)
+     `(let ((,label (gen-label)))
++       #!+win32
++       (progn
++         (inst push eax-tn)
++         (inst mov eax-tn (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++         (inst mov (make-ea :dword :base eax-tn :disp (* 4 thread-pseudo-atomic-bits-slot)) ebp-tn)
++         (inst pop eax-tn))
++       #!-win32
+        (inst mov (make-ea :dword :disp (* 4 thread-pseudo-atomic-bits-slot))
+              ebp-tn :fs)
+        ,@forms
++       #!+win32
++       (progn
++         (inst push eax-tn)
++         (inst mov eax-tn (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++         (inst xor (make-ea :dword :base eax-tn :disp (* 4 thread-pseudo-atomic-bits-slot)) ebp-tn)
++         (inst pop eax-tn))
++       #!-win32
+        (inst xor (make-ea :dword :disp (* 4 thread-pseudo-atomic-bits-slot))
+              ebp-tn :fs)
+        (inst jmp :z ,label)
+        ;; if PAI was set, interrupts were disabled at the same time
+        ;; using the process signal mask.
+        (inst break pending-interrupt-trap)
+-       (emit-label ,label))))
++       (emit-label ,label)
++       #!+win32
++       (inst test eax-tn (make-ea :dword :disp sb!vm::gc-safepoint-page-addr)))))
+ 
+ #!-sb-thread
+ (defmacro pseudo-atomic (&rest forms)
+@@ -566,3 +618,40 @@ collection."
+                            `(touch-object ,pin))
+                          pins)))))
+       `(progn ,@body)))
++
++;;; Safepoints stuff
++
++#!+ (and sb-thread win32)
++(progn
++  (defun enter-safe-region-instructions ()
++    (inst pusha)
++    (inst call (make-fixup "gc_enter_safe_region" :foreign))
++    (inst popa))
++
++  (defun enter-unsafe-region-instructions ()
++    (inst pusha)
++    (inst call (make-fixup "gc_enter_unsafe_region" :foreign))
++    (inst popa))
++
++  (defun leave-region-instructions ()
++    (inst pusha)
++    (inst call (make-fixup "gc_leave_region" :foreign))
++    (inst popa))
++
++  (defun enter-safe-region-instructions/no-fixup ()
++    (inst pusha)
++    (inst mov eax-tn (foreign-symbol-address "gc_enter_safe_region"))
++    (inst call eax-tn)
++    (inst popa))
++
++  (defun enter-unsafe-region-instructions/no-fixup ()
++    (inst pusha)
++    (inst mov eax-tn (foreign-symbol-address "gc_enter_unsafe_region"))
++    (inst call eax-tn)
++    (inst popa))
++
++  (defun leave-region-instructions/no-fixup ()
++    (inst pusha)
++    (inst mov eax-tn (foreign-symbol-address "gc_leave_region"))
++    (inst call eax-tn)
++    (inst popa)))
+diff --git a/src/compiler/x86/parms.lisp b/src/compiler/x86/parms.lisp
+index 8bf3674..9cb2d99 100644
+--- a/src/compiler/x86/parms.lisp
++++ b/src/compiler/x86/parms.lisp
+@@ -186,6 +186,8 @@
+ 
+ #!+win32
+ (progn
++  #!+sb-thread
++  (def!constant gc-safepoint-page-addr #x21000000)
+ 
+   (def!constant read-only-space-start #x22000000)
+   (def!constant read-only-space-end   #x220ff000)
+@@ -385,3 +387,5 @@
+ ;;; FIXME: Is this used? Delete it or document it.
+ ;;; cf the sparc PARMS.LISP
+ (defparameter *assembly-unit-length* 8)
++
++(defconstant +win32-tib-arbitrary-field-offset+ #.(+ #xE10 (* 4 63)))
+diff --git a/src/compiler/x86/system.lisp b/src/compiler/x86/system.lisp
+index fd14fbf..d6c0503 100644
+--- a/src/compiler/x86/system.lisp
++++ b/src/compiler/x86/system.lisp
+@@ -254,6 +254,11 @@
+   (:generator 1
+     (inst break pending-interrupt-trap)))
+ 
++#!+(and sb-thread win32)
++(define-vop (insert-gc-safepoint)
++  (:generator 0
++    (inst test eax-tn (make-ea :dword :disp sb!vm::gc-safepoint-page-addr))))
++
+ #!+sb-thread
+ (defknown current-thread-offset-sap ((unsigned-byte 32))
+   system-area-pointer (flushable))
+@@ -264,9 +269,16 @@
+   (:result-types system-area-pointer)
+   (:translate current-thread-offset-sap)
+   (:args (n :scs (unsigned-reg) :target sap))
++  #!+win32
++  (:temporary (:sc unsigned-reg) tmp)
+   (:arg-types unsigned-num)
+   (:policy :fast-safe)
+   (:generator 2
++    #!+win32
++    (progn
++      (inst mov tmp (make-ea :dword :disp +win32-tib-arbitrary-field-offset+) :fs)
++      (inst mov sap (make-ea :dword :base tmp :disp 0 :index n :scale 4)))
++    #!-win32
+     (inst mov sap (make-ea :dword :disp 0 :index n :scale 4) :fs)))
+ 
+ (define-vop (halt)
+diff --git a/src/runtime/Config.x86-win32 b/src/runtime/Config.x86-win32
+index b341808..2d2aef9 100644
+--- a/src/runtime/Config.x86-win32
++++ b/src/runtime/Config.x86-win32
+@@ -12,7 +12,7 @@ TARGET=sbcl.exe
+ ASSEM_SRC = x86-assem.S
+ ARCH_SRC = x86-arch.c
+ 
+-OS_SRC = win32-os.c x86-win32-os.c os-common.c
++OS_SRC = win32-os.c x86-win32-os.c os-common.c pthreads_win32.c
+ # The "--Wl,--export-dynamic" flags are here to help people
+ # experimenting with callbacks from C to SBCL, by allowing linkage to
+ # SBCL src/runtime/*.c symbols from C. Work on this is good, but it's
+diff --git a/src/runtime/arch.h b/src/runtime/arch.h
+index f50e0d4..9678491 100644
+--- a/src/runtime/arch.h
++++ b/src/runtime/arch.h
+@@ -13,7 +13,6 @@
+ #define __ARCH_H__
+ 
+ #include "os.h"
+-#include "signal.h"
+ #include "thread.h"
+ 
+ /* Do anything we need to do when starting up the runtime environment
+diff --git a/src/runtime/backtrace.c b/src/runtime/backtrace.c
+index 1d9b506..e8ddb43 100644
+--- a/src/runtime/backtrace.c
++++ b/src/runtime/backtrace.c
+@@ -14,7 +14,6 @@
+  */
+ 
+ #include <stdio.h>
+-#include <signal.h>
+ #include "sbcl.h"
+ #include "runtime.h"
+ #include "globals.h"
+@@ -500,12 +499,14 @@ describe_thread_state(void)
+     sigset_t mask;
+     struct thread *thread = arch_os_get_current_thread();
+     struct interrupt_data *data = thread->interrupt_data;
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     get_current_sigmask(&mask);
+     printf("Signal mask:\n");
++#ifndef LISP_FEATURE_WIN32
+     printf(" SIGALRM = %d\n", sigismember(&mask, SIGALRM));
+     printf(" SIGINT = %d\n", sigismember(&mask, SIGINT));
+     printf(" SIGPROF = %d\n", sigismember(&mask, SIGPROF));
++#endif
+ #ifdef SIG_STOP_FOR_GC
+     printf(" SIG_STOP_FOR_GC = %d\n", sigismember(&mask, SIG_STOP_FOR_GC));
+ #endif
+diff --git a/src/runtime/breakpoint.c b/src/runtime/breakpoint.c
+index a325693..a1dd10d 100644
+--- a/src/runtime/breakpoint.c
++++ b/src/runtime/breakpoint.c
+@@ -10,7 +10,6 @@
+  */
+ 
+ #include <stdio.h>
+-#include <signal.h>
+ 
+ #include "sbcl.h"
+ #include "runtime.h"
+@@ -134,7 +133,7 @@ void handle_breakpoint(os_context_t *context)
+     context_sap = alloc_sap(context);
+     code = find_code(context);
+ 
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     /* Don't disallow recursive breakpoint traps. Otherwise, we can't
+      * use debugger breakpoints anywhere in here. */
+     thread_sigmask(SIG_SETMASK, os_context_sigmask_addr(context), 0);
+@@ -160,7 +159,7 @@ void *handle_fun_end_breakpoint(os_context_t *context)
+     code = find_code(context);
+     codeptr = (struct code *)native_pointer(code);
+ 
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     /* Don't disallow recursive breakpoint traps. Otherwise, we can't
+      * use debugger breakpoints anywhere in here. */
+     thread_sigmask(SIG_SETMASK, os_context_sigmask_addr(context), 0);
+@@ -199,7 +198,7 @@ handle_single_step_trap (os_context_t *context, int kind, int register_offset)
+ {
+     fake_foreign_function_call(context);
+ 
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     thread_sigmask(SIG_SETMASK, os_context_sigmask_addr(context), 0);
+ #endif
+ 
+diff --git a/src/runtime/cheneygc.c b/src/runtime/cheneygc.c
+index 10b4d4a..a28cf73 100644
+--- a/src/runtime/cheneygc.c
++++ b/src/runtime/cheneygc.c
+@@ -16,7 +16,6 @@
+ #include <stdio.h>
+ #include <sys/time.h>
+ #include <sys/resource.h>
+-#include <signal.h>
+ #include "sbcl.h"
+ #include "runtime.h"
+ #include "os.h"
+diff --git a/src/runtime/dynbind.c b/src/runtime/dynbind.c
+index 1d62ee0..124152f 100644
+--- a/src/runtime/dynbind.c
++++ b/src/runtime/dynbind.c
+@@ -83,6 +83,28 @@ unbind(void *th)
+ }
+ 
+ void
++unbind_variable(lispobj name, void *th)
++{
++    struct thread *thread=(struct thread *)th;
++    struct binding *binding;
++    lispobj symbol;
++
++    binding = ((struct binding *)get_binding_stack_pointer(thread)) - 1;
++
++    symbol = binding->symbol;
++    
++    if (symbol != name)
++      lose("unbind_variable, 0x%p != 0x%p", symbol, name);
++
++    SetTlSymbolValue(symbol, binding->value,thread);
++
++    binding->symbol = 0;
++    binding->value = 0;
++
++    set_binding_stack_pointer(thread,binding);
++}
++
++void
+ unbind_to_here(lispobj *bsp,void *th)
+ {
+     struct thread *thread=(struct thread *)th;
+diff --git a/src/runtime/dynbind.h b/src/runtime/dynbind.h
+index 41aa9eb..526b02d 100644
+--- a/src/runtime/dynbind.h
++++ b/src/runtime/dynbind.h
+@@ -14,6 +14,7 @@
+ 
+ extern void bind_variable(lispobj symbol, lispobj value,void *thread);
+ extern void unbind(void *thread);
++extern void unbind_variable(lispobj name, void *thread);
+ extern void unbind_to_here(lispobj *bsp,void *thread);
+ 
+ #endif
+diff --git a/src/runtime/gc-common.c b/src/runtime/gc-common.c
+old mode 100644
+new mode 100755
+index 95b5c3b..66be64f
+--- a/src/runtime/gc-common.c
++++ b/src/runtime/gc-common.c
+@@ -26,7 +26,6 @@
+  */
+ 
+ #include <stdio.h>
+-#include <signal.h>
+ #include <string.h>
+ #include "sbcl.h"
+ #include "runtime.h"
+@@ -2403,6 +2402,8 @@ gc_search_space(lispobj *start, size_t words, lispobj *pointer)
+     return (NULL);
+ }
+ 
++#include "dynbind.h"
++
+ boolean
+ maybe_gc(os_context_t *context)
+ {
+@@ -2432,7 +2433,7 @@ maybe_gc(os_context_t *context)
+      * A kludgy alternative is to propagate the sigmask change to the
+      * outer context.
+      */
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     check_gc_signals_unblocked_or_lose(os_context_sigmask_addr(context));
+     unblock_gc_signals(0, 0);
+ #endif
+@@ -2453,7 +2454,7 @@ maybe_gc(os_context_t *context)
+          * here. */
+         ((SymbolValue(INTERRUPTS_ENABLED,thread) != NIL) ||
+          (SymbolValue(ALLOW_WITH_INTERRUPTS,thread) != NIL))) {
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+         sigset_t *context_sigmask = os_context_sigmask_addr(context);
+         if (!deferrables_blocked_p(context_sigmask)) {
+             thread_sigmask(SIG_SETMASK, context_sigmask, 0);
+@@ -2461,7 +2462,7 @@ maybe_gc(os_context_t *context)
+ #endif
+             FSHOW((stderr, "/maybe_gc: calling POST_GC\n"));
+             funcall0(StaticSymbolFunction(POST_GC));
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+         } else {
+             FSHOW((stderr, "/maybe_gc: punting on POST_GC due to blockage\n"));
+         }
+diff --git a/src/runtime/gencgc.c b/src/runtime/gencgc.c
+old mode 100644
+new mode 100755
+index f3c3aab..483544f
+--- a/src/runtime/gencgc.c
++++ b/src/runtime/gencgc.c
+@@ -26,7 +26,6 @@
+ 
+ #include <stdlib.h>
+ #include <stdio.h>
+-#include <signal.h>
+ #include <errno.h>
+ #include <string.h>
+ #include "sbcl.h"
+@@ -3973,7 +3972,40 @@ garbage_collect_generation(generation_index_t generation, int raise)
+                 /* Somebody is going to burn in hell for this, but casting
+                  * it in two steps shuts gcc up about strict aliasing. */
+                 esp = (void **)((void *)&raise);
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++                {
++                  CONTEXT context;
++                  os_context_t ctx;
++                  if (!pthread_np_get_thread_context(th->os_thread, &context))
++                    lose("Unable to get thread context for thread 0x%x\n", (int)th->os_thread);
++                  ctx.win32_context = &context;
++                  preserve_context_registers(&ctx);
++
++                  pthread_mutex_lock(&th->interrupt_data->win32_data.lock);
++                  for (i = 0; i < th->interrupt_data->win32_data.interrupts_count; ++i) {
++                    preserve_pointer((void*)th->interrupt_data->win32_data.interrupts[i]);
++                  }
++                  pthread_mutex_unlock(&th->interrupt_data->win32_data.lock);
++                }
++#endif
+             } else {
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++                CONTEXT context;
++                os_context_t ctx;
++                pthread_np_suspend(th->os_thread);
++                if (!pthread_np_get_thread_context(th->os_thread, &context))
++                  lose("Unable to get thread context for thread 0x%x\n", (int)th->os_thread);
++                ctx.win32_context = &context;
++                preserve_context_registers(&ctx);
++                pthread_np_resume(th->os_thread);
++                esp = (void**)context.Esp;
++                
++                pthread_mutex_lock(&th->interrupt_data->win32_data.lock);
++                for (i = 0; i < th->interrupt_data->win32_data.interrupts_count; ++i) {
++                  preserve_pointer((void*)th->interrupt_data->win32_data.interrupts[i]);
++                }
++                pthread_mutex_unlock(&th->interrupt_data->win32_data.lock);
++#else
+                 void **esp1;
+                 free=fixnum_value(SymbolValue(FREE_INTERRUPT_CONTEXT_INDEX,th));
+                 for(i=free-1;i>=0;i--) {
+@@ -3985,6 +4017,7 @@ garbage_collect_generation(generation_index_t generation, int raise)
+                         preserve_context_registers(c);
+                     }
+                 }
++#endif
+             }
+ #else
+             esp = (void **)((void *)&raise);
+@@ -4664,8 +4697,10 @@ general_alloc_internal(long nbytes, int page_type_flag, struct alloc_region *reg
+                         (context ? os_context_sigmask_addr(context) : NULL);
+                 }
+ #else
++#ifndef LISP_FEATURE_WIN32
+                 maybe_save_gc_mask_and_block_deferrables(NULL);
+ #endif
++#endif
+             }
+         }
+     }
+diff --git a/src/runtime/interr.c b/src/runtime/interr.c
+index 2187fd8..f2625db 100644
+--- a/src/runtime/interr.c
++++ b/src/runtime/interr.c
+@@ -19,7 +19,6 @@
+ 
+ #include "sbcl.h"
+ #include "arch.h"
+-#include "signal.h"
+ 
+ #include "runtime.h"
+ #include "interr.h"
+@@ -68,6 +67,10 @@ call_lossage_handler() never_returns;
+ static inline void
+ call_lossage_handler()
+ {
++#if defined(LISP_FEATURE_WIN32)
++    void lisp_backtrace(int frames);
++    lisp_backtrace(100);
++#endif
+     lossage_handler();
+     fprintf(stderr, "Argh! lossage_handler() returned, total confusion..\n");
+     exit(1);
+@@ -77,6 +80,9 @@ void
+ lose(char *fmt, ...)
+ {
+     va_list ap;
++#if defined(LISP_FEATURE_WIN32)
++    odprintf("lose %s", fmt);
++#endif
+     /* Block signals to prevent other threads, timers and such from
+      * interfering. If only all threads could be stopped somehow. */
+     block_blockable_signals(0, 0);
+@@ -95,7 +101,7 @@ void
+ corruption_warning_and_maybe_lose(char *fmt, ...)
+ {
+     va_list ap;
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     sigset_t oldset;
+     block_blockable_signals(0, &oldset);
+ #endif
+@@ -111,7 +117,7 @@ corruption_warning_and_maybe_lose(char *fmt, ...)
+     fflush(stderr);
+     if (lose_on_corruption_p)
+         call_lossage_handler();
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     else
+         thread_sigmask(SIG_SETMASK,&oldset,0);
+ #endif
+diff --git a/src/runtime/interrupt.c b/src/runtime/interrupt.c
+index ea0880f..bb9563b 100644
+--- a/src/runtime/interrupt.c
++++ b/src/runtime/interrupt.c
+@@ -45,7 +45,7 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+-#include <signal.h>
++#include "runtime.h"
+ #include <sys/types.h>
+ #ifndef LISP_FEATURE_WIN32
+ #include <sys/wait.h>
+@@ -102,7 +102,7 @@ union interrupt_handler interrupt_handlers[NSIG];
+  * work for SIGSEGV and similar. It is good enough for timers, and
+  * maybe all deferrables. */
+ 
+-#ifdef LISP_FEATURE_SB_THREAD
++#if defined(LISP_FEATURE_SB_THREAD) && !defined(LISP_FEATURE_WIN32)
+ static void
+ add_handled_signals(sigset_t *sigset)
+ {
+@@ -121,7 +121,7 @@ void block_signals(sigset_t *what, sigset_t *where, sigset_t *old);
+ static boolean
+ maybe_resignal_to_lisp_thread(int signal, os_context_t *context)
+ {
+-#ifdef LISP_FEATURE_SB_THREAD
++#if defined(LISP_FEATURE_SB_THREAD) && !defined(LISP_FEATURE_WIN32)
+     if (!pthread_getspecific(lisp_thread)) {
+         if (!(sigismember(&deferrable_sigset,signal))) {
+             corruption_warning_and_maybe_lose
+@@ -175,7 +175,7 @@ maybe_resignal_to_lisp_thread(int signal, os_context_t *context)
+ 
+ static void run_deferred_handler(struct interrupt_data *data,
+                                  os_context_t *context);
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+ static void store_signal_data_for_later (struct interrupt_data *data,
+                                          void *handler, int signal,
+                                          siginfo_t *info,
+@@ -240,7 +240,7 @@ boolean
+ all_signals_blocked_p(sigset_t *sigset, sigset_t *sigset2,
+                                 const char *name)
+ {
+-#if !defined(LISP_FEATURE_WIN32)
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     int i;
+     boolean has_blocked = 0, has_unblocked = 0;
+     sigset_t current;
+@@ -314,7 +314,7 @@ sigset_t gc_sigset;
+ 
+ #endif
+ 
+-#if !defined(LISP_FEATURE_WIN32)
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+ boolean
+ deferrables_blocked_p(sigset_t *sigset)
+ {
+@@ -325,7 +325,7 @@ deferrables_blocked_p(sigset_t *sigset)
+ void
+ check_deferrables_unblocked_or_lose(sigset_t *sigset)
+ {
+-#if !defined(LISP_FEATURE_WIN32)
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     if (deferrables_blocked_p(sigset))
+         lose("deferrables blocked\n");
+ #endif
+@@ -334,13 +334,13 @@ check_deferrables_unblocked_or_lose(sigset_t *sigset)
+ void
+ check_deferrables_blocked_or_lose(sigset_t *sigset)
+ {
+-#if !defined(LISP_FEATURE_WIN32)
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     if (!deferrables_blocked_p(sigset))
+         lose("deferrables unblocked\n");
+ #endif
+ }
+ 
+-#if !defined(LISP_FEATURE_WIN32)
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+ boolean
+ blockables_blocked_p(sigset_t *sigset)
+ {
+@@ -351,7 +351,7 @@ blockables_blocked_p(sigset_t *sigset)
+ void
+ check_blockables_unblocked_or_lose(sigset_t *sigset)
+ {
+-#if !defined(LISP_FEATURE_WIN32)
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     if (blockables_blocked_p(sigset))
+         lose("blockables blocked\n");
+ #endif
+@@ -360,13 +360,13 @@ check_blockables_unblocked_or_lose(sigset_t *sigset)
+ void
+ check_blockables_blocked_or_lose(sigset_t *sigset)
+ {
+-#if !defined(LISP_FEATURE_WIN32)
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     if (!blockables_blocked_p(sigset))
+         lose("blockables unblocked\n");
+ #endif
+ }
+ 
+-#if !defined(LISP_FEATURE_WIN32)
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+ boolean
+ gc_signals_blocked_p(sigset_t *sigset)
+ {
+@@ -377,7 +377,7 @@ gc_signals_blocked_p(sigset_t *sigset)
+ void
+ check_gc_signals_unblocked_or_lose(sigset_t *sigset)
+ {
+-#if !defined(LISP_FEATURE_WIN32)
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     if (gc_signals_blocked_p(sigset))
+         lose("gc signals blocked\n");
+ #endif
+@@ -386,7 +386,7 @@ check_gc_signals_unblocked_or_lose(sigset_t *sigset)
+ void
+ check_gc_signals_blocked_or_lose(sigset_t *sigset)
+ {
+-#if !defined(LISP_FEATURE_WIN32)
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     if (!gc_signals_blocked_p(sigset))
+         lose("gc signals unblocked\n");
+ #endif
+@@ -395,7 +395,10 @@ check_gc_signals_blocked_or_lose(sigset_t *sigset)
+ void
+ block_deferrable_signals(sigset_t *where, sigset_t *old)
+ {
+-#ifndef LISP_FEATURE_WIN32
++#if defined(LISP_FEATURE_WIN32)
++    odprintf("block deferrable");
++#endif
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     block_signals(&deferrable_sigset, where, old);
+ #endif
+ }
+@@ -403,7 +406,10 @@ block_deferrable_signals(sigset_t *where, sigset_t *old)
+ void
+ block_blockable_signals(sigset_t *where, sigset_t *old)
+ {
+-#ifndef LISP_FEATURE_WIN32
++#if defined(LISP_FEATURE_WIN32)
++    odprintf("block blockable");
++#endif
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     block_signals(&blockable_sigset, where, old);
+ #endif
+ }
+@@ -411,7 +417,10 @@ block_blockable_signals(sigset_t *where, sigset_t *old)
+ void
+ block_gc_signals(sigset_t *where, sigset_t *old)
+ {
+-#ifndef LISP_FEATURE_WIN32
++#if defined(LISP_FEATURE_WIN32)
++    odprintf("block gc");
++#endif
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     block_signals(&gc_sigset, where, old);
+ #endif
+ }
+@@ -419,7 +428,10 @@ block_gc_signals(sigset_t *where, sigset_t *old)
+ void
+ unblock_deferrable_signals(sigset_t *where, sigset_t *old)
+ {
+-#ifndef LISP_FEATURE_WIN32
++#if defined(LISP_FEATURE_WIN32)
++    odprintf("unblock deferrable");
++#endif
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     if (interrupt_handler_pending_p())
+         lose("unblock_deferrable_signals: losing proposition\n");
+     check_gc_signals_unblocked_or_lose(where);
+@@ -430,7 +442,10 @@ unblock_deferrable_signals(sigset_t *where, sigset_t *old)
+ void
+ unblock_blockable_signals(sigset_t *where, sigset_t *old)
+ {
+-#ifndef LISP_FEATURE_WIN32
++#if defined(LISP_FEATURE_WIN32)
++    odprintf("unblock blockable");
++#endif
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     unblock_signals(&blockable_sigset, where, old);
+ #endif
+ }
+@@ -438,7 +453,10 @@ unblock_blockable_signals(sigset_t *where, sigset_t *old)
+ void
+ unblock_gc_signals(sigset_t *where, sigset_t *old)
+ {
+-#ifndef LISP_FEATURE_WIN32
++#if defined(LISP_FEATURE_WIN32)
++    odprintf("unblock gc");
++#endif
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     unblock_signals(&gc_sigset, where, old);
+ #endif
+ }
+@@ -446,7 +464,7 @@ unblock_gc_signals(sigset_t *where, sigset_t *old)
+ void
+ unblock_signals_in_context_and_maybe_warn(os_context_t *context)
+ {
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     sigset_t *sigset = os_context_sigmask_addr(context);
+     if (all_signals_blocked_p(sigset, &gc_sigset, "gc")) {
+         corruption_warning_and_maybe_lose(
+@@ -480,7 +498,7 @@ check_interrupts_enabled_or_lose(os_context_t *context)
+ void
+ maybe_save_gc_mask_and_block_deferrables(sigset_t *sigset)
+ {
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     struct thread *thread = arch_os_get_current_thread();
+     struct interrupt_data *data = thread->interrupt_data;
+     sigset_t oldset;
+@@ -536,7 +554,7 @@ in_leaving_without_gcing_race_p(struct thread *thread)
+ void
+ check_interrupt_context_or_lose(os_context_t *context)
+ {
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     struct thread *thread = arch_os_get_current_thread();
+     struct interrupt_data *data = thread->interrupt_data;
+     int interrupt_deferred_p = (data->pending_handler != 0);
+@@ -777,7 +795,7 @@ interrupt_internal_error(os_context_t *context, boolean continuable)
+     unblock_gc_signals(0, 0);
+     context_sap = alloc_sap(context);
+ 
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     thread_sigmask(SIG_SETMASK, os_context_sigmask_addr(context), 0);
+ #endif
+ 
+@@ -849,6 +867,10 @@ interrupt_handle_pending(os_context_t *context)
+      * Note, that if gc_blocked_deferrables is false we may still have
+      * to GC. In this case, we are coming out of a WITHOUT-GCING or a
+      * pseudo atomic was interrupt be a deferrable first. */
++    #if defined(LISP_FEATURE_WIN32)
++    /* Handle_trap may be called from safepoint */
++    if (context)
++    #endif
+     if (data->gc_blocked_deferrables) {
+         if (data->pending_handler)
+             lose("GC blocked deferrables but still got a pending handler.");
+@@ -859,7 +881,7 @@ interrupt_handle_pending(os_context_t *context)
+          * the os_context for the signal we're currently in the
+          * handler for. This should ensure that when we return from
+          * the handler the blocked signals are unblocked. */
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+         sigcopyset(os_context_sigmask_addr(context), &data->pending_mask);
+ #endif
+         data->gc_blocked_deferrables = 0;
+@@ -939,7 +961,16 @@ interrupt_handle_pending(os_context_t *context)
+                  original_pending_handler, data->pending_handler);
+     }
+ 
+-#ifndef LISP_FEATURE_WIN32
++#if defined(LISP_FEATURE_WIN32)
++  #if defined(LISP_FEATURE_SB_THREAD)
++  if (SymbolValue(INTERRUPTS_ENABLED, thread) != NIL
++      && SymbolValue(INTERRUPT_PENDING, thread) != NIL) {
++    void check_pending_interrupts();
++    
++    check_pending_interrupts();
++  }
++  #endif
++#else
+     /* There may be no pending handler, because it was only a gc that
+      * had to be executed or because Lisp is a bit too eager to call
+      * DO-PENDING-INTERRUPT. */
+@@ -974,7 +1005,7 @@ interrupt_handle_now(int signal, siginfo_t *info, os_context_t *context)
+ 
+     check_blockables_blocked_or_lose(0);
+ 
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     if (sigismember(&deferrable_sigset,signal))
+         check_interrupts_enabled_or_lose(context);
+ #endif
+@@ -1036,11 +1067,11 @@ interrupt_handle_now(int signal, siginfo_t *info, os_context_t *context)
+ 
+         FSHOW_SIGNAL((stderr,"/calling C-level handler\n"));
+ 
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+         /* Allow signals again. */
+         thread_sigmask(SIG_SETMASK, os_context_sigmask_addr(context), 0);
+-#endif
+         (*handler.c)(signal, info, context);
++#endif
+     }
+ 
+     if (were_in_lisp)
+@@ -1308,7 +1339,7 @@ extern void call_into_lisp_tramp(void);
+ void
+ arrange_return_to_lisp_function(os_context_t *context, lispobj function)
+ {
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     check_gc_signals_unblocked_or_lose
+         (os_context_sigmask_addr(context));
+ #endif
+@@ -1822,17 +1853,21 @@ sigabrt_handler(int signal, siginfo_t *info, os_context_t *context)
+ void
+ interrupt_init(void)
+ {
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     int i;
+     SHOW("entering interrupt_init()");
++#ifndef LISP_FEATURE_WIN32
+     see_if_sigaction_nodefer_works();
++#endif
+     sigemptyset(&deferrable_sigset);
+     sigemptyset(&blockable_sigset);
+     sigemptyset(&gc_sigset);
+     sigaddset_deferrable(&deferrable_sigset);
+     sigaddset_blockable(&blockable_sigset);
+     sigaddset_gc(&gc_sigset);
++#endif
+ 
++#ifndef LISP_FEATURE_WIN32
+     /* Set up high level handler information. */
+     for (i = 0; i < NSIG; i++) {
+         interrupt_handlers[i].c =
+@@ -1844,8 +1879,8 @@ interrupt_init(void)
+             (void (*)(int, siginfo_t*, os_context_t*))SIG_DFL;
+     }
+     undoably_install_low_level_interrupt_handler(SIGABRT, sigabrt_handler);
+-    SHOW("returning from interrupt_init()");
+ #endif
++    SHOW("returning from interrupt_init()");
+ }
+ 
+ #ifndef LISP_FEATURE_WIN32
+@@ -1892,7 +1927,7 @@ unhandled_trap_error(os_context_t *context)
+     fake_foreign_function_call(context);
+     unblock_gc_signals(0, 0);
+     context_sap = alloc_sap(context);
+-#ifndef LISP_FEATURE_WIN32
++#if !defined(LISP_FEATURE_WIN32) || defined(LISP_FEATURE_SB_THREAD)
+     thread_sigmask(SIG_SETMASK, os_context_sigmask_addr(context), 0);
+ #endif
+     funcall1(StaticSymbolFunction(UNHANDLED_TRAP_ERROR), context_sap);
+@@ -1909,7 +1944,11 @@ handle_trap(os_context_t *context, int trap)
+     case trap_PendingInterrupt:
+         FSHOW((stderr, "/<trap pending interrupt>\n"));
+         arch_skip_instruction(context);
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++        gc_safepoint();
++#else
+         interrupt_handle_pending(context);
++#endif
+         break;
+     case trap_Error:
+     case trap_Cerror:
+diff --git a/src/runtime/interrupt.h b/src/runtime/interrupt.h
+index 05c6638..21997f3 100644
+--- a/src/runtime/interrupt.h
++++ b/src/runtime/interrupt.h
+@@ -12,8 +12,12 @@
+ #if !defined(_INCLUDE_INTERRUPT_H_)
+ #define _INCLUDE_INTERRUPT_H_
+ 
++#include "sbcl.h"
++#include "runtime.h"
+ #include <signal.h>
++#include <sys/types.h>
+ #include <string.h>
++#include "os.h"
+ 
+ /*
+  * This is a workaround for some slightly silly Linux/GNU Libc
+@@ -101,7 +105,18 @@ union interrupt_handler {
+ 
+ extern union interrupt_handler interrupt_handlers[NSIG];
+ 
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++struct win32_interrupt_data {
++    int interrupts_count;
++    lispobj interrupts[MAX_INTERRUPTS];
++    pthread_mutex_t lock;
++};
++#endif
++
+ struct interrupt_data {
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++    struct win32_interrupt_data win32_data;
++#endif
+     /* signal information for pending signal.  pending_signal=0 when there
+      * is no pending signal. */
+     void (*pending_handler) (int, siginfo_t*, os_context_t*) ;
+diff --git a/src/runtime/monitor.c b/src/runtime/monitor.c
+index 45a9b00..94ac1f8 100644
+--- a/src/runtime/monitor.c
++++ b/src/runtime/monitor.c
+@@ -19,7 +19,7 @@
+ #ifndef LISP_FEATURE_WIN32
+ #include <sys/resource.h>
+ #endif
+-#include <signal.h>
++#include "runtime.h"
+ #include <unistd.h>
+ 
+ #include "runtime.h"
+diff --git a/src/runtime/parse.c b/src/runtime/parse.c
+index beedc29..a1aaa2e 100644
+--- a/src/runtime/parse.c
++++ b/src/runtime/parse.c
+@@ -14,7 +14,6 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <ctype.h>
+-#include <signal.h>
+ 
+ #include "sbcl.h"
+ #include "runtime.h"
+diff --git a/src/runtime/pthread-futex.c b/src/runtime/pthread-futex.c
+index cddcda9..167641a 100644
+--- a/src/runtime/pthread-futex.c
++++ b/src/runtime/pthread-futex.c
+@@ -16,7 +16,7 @@
+ #if defined(LISP_FEATURE_SB_THREAD) && defined(LISP_FEATURE_SB_PTHREAD_FUTEX)
+ 
+ #include <errno.h>
+-#include <pthread.h>
++#include "runtime.h"
+ #include <stdlib.h>
+ 
+ #include "runtime.h"
+@@ -26,6 +26,10 @@
+ 
+ #define FUTEX_WAIT_NSEC (10000000) /* 10 msec */
+ 
++#if defined(LISP_FEATURE_WIN32)
++#define EWOULDBLOCK 3
++#endif
++
+ #if 1
+ # define futex_assert(ex)                                              \
+ do {                                                                   \
+@@ -230,6 +234,10 @@ futex_wait(int *lock_word, int oldval, long sec, unsigned long usec)
+     sigset_t oldset;
+     struct timeval tv, *timeout;
+ 
++#if defined(LISP_FEATURE_WIN32)
++    gc_enter_safe_region();
++#endif
++
+ again:
+     if (sec < 0)
+         timeout = NULL;
+@@ -260,8 +268,10 @@ again:
+ 
+     /* It's not possible to unwind frames across pthread_cond_wait(3). */
+     for (;;) {
++#if !defined(LISP_FEATURE_WIN32)
+         int i;
+         sigset_t pendset;
++#endif
+         struct timespec abstime;
+ 
+         ret = futex_relative_to_abs(&abstime, FUTEX_WAIT_NSEC);
+@@ -274,9 +284,17 @@ again:
+         if (result != ETIMEDOUT || futex_istimeout(timeout))
+             break;
+ 
++#if defined(LISP_FEATURE_WIN32)
++        if (*(volatile int *)lock_word != oldval) {
++            result = EINTR;
++            goto done;
++        }
++#endif
++
+         /* futex system call of Linux returns with EINTR errno when
+          * it's interrupted by signals.  Check pending signals here to
+          * emulate this behaviour. */
++#if !defined(LISP_FEATURE_WIN32)
+         sigpending(&pendset);
+         for (i = 1; i < NSIG; i++) {
+             if (sigismember(&pendset, i) && sigismember(&newset, i)) {
+@@ -284,6 +302,7 @@ again:
+                 goto done;
+             }
+         }
++#endif
+     }
+ done:
+     ; /* Null statement is required between label and pthread_cleanup_pop. */
+@@ -296,6 +315,10 @@ done:
+         sched_yield();
+         goto again;
+     }
++	
++#if defined(LISP_FEATURE_WIN32)
++	gc_leave_region();
++#endif
+ 
+     if (result == ETIMEDOUT)
+         return 1;
+diff --git a/src/runtime/pthreads_win32.c b/src/runtime/pthreads_win32.c
+new file mode 100755
+index 0000000..7ade34f
+--- /dev/null
++++ b/src/runtime/pthreads_win32.c
+@@ -0,0 +1,538 @@
++#include "sbcl.h"
++
++#if defined(LISP_FEATURE_SB_THREAD)
++#include "pthreads_win32.h"
++#include <stdlib.h>
++#include <stdio.h>
++#include <time.h>
++#include <sys/time.h>
++
++int pthread_attr_init(pthread_attr_t *attr)
++{
++  attr->stack_size = 0;
++  return 0;
++}
++
++int pthread_attr_destroy(pthread_attr_t *attr)
++{
++  return 0;
++}
++
++int pthread_attr_setstack(pthread_attr_t *attr, void *stackaddr, size_t stacksize)
++{
++  fprintf(stderr, "pthread_attr_setstack called\n");
++  ExitProcess(1);
++  return 0;
++}
++
++int pthread_attr_setstacksize(pthread_attr_t *attr, size_t stacksize)
++{
++  attr->stack_size = stacksize;
++  return 0;
++}
++
++DWORD thread_self_tls_index;
++
++typedef unsigned char boolean;
++
++void pthread_np_suspend(pthread_t thread)
++{
++  CONTEXT context;
++  SuspendThread(thread->handle);
++  context.ContextFlags = CONTEXT_FULL;
++  GetThreadContext(thread->handle, &context);
++}
++
++int pthread_np_get_thread_context(pthread_t thread, CONTEXT* context)
++{
++  context->ContextFlags = CONTEXT_FULL;
++  return GetThreadContext(thread->handle, context) != 0;
++}
++
++void pthread_np_resume(pthread_t thread)
++{
++  ResumeThread(thread->handle);
++}
++
++void pthread_np_request_interruption(pthread_t thread)
++{
++  if (thread->waiting_cond) {
++    pthread_cond_broadcast(thread->waiting_cond);
++  }
++}
++
++pthread_t pthread_self()
++{
++  return (pthread_t)TlsGetValue(thread_self_tls_index);
++}
++
++const char * state_to_str(pthread_thread_state state)
++{
++  switch (state) {
++    case pthread_state_running: return "running";
++    case pthread_state_finished: return "finished";
++    case pthread_state_joined: return "joined";
++  }
++}
++
++DWORD WINAPI Thread_Function(LPVOID param)
++{
++  pthread_t self = (pthread_t)param;
++  void* arg = self->arg;
++  void* retval = NULL;
++  pthread_fn fn = self->start_routine;
++
++  TlsSetValue(thread_self_tls_index, self);
++  self->retval = fn(arg);
++  pthread_mutex_lock(&self->lock);
++  self->state = pthread_state_finished;
++  pthread_cond_broadcast(&self->cond);
++  while (!self->detached && self->state != pthread_state_joined) {
++    pthread_cond_wait(&self->cond, &self->lock);
++  }
++  pthread_mutex_unlock(&self->lock);
++
++  pthread_mutex_destroy(&self->lock);
++  pthread_cond_destroy(&self->cond);
++  CloseHandle(self->handle);
++
++  free(self);
++  return 0;
++}
++
++int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine) (void *), void *arg)
++{
++  pthread_t pth = (pthread_t)malloc(sizeof(pthread_thread));
++  pthread_t self = pthread_self();
++  int i;
++  HANDLE createdThread = CreateThread(NULL, attr ? attr->stack_size : 0,
++                                      Thread_Function, pth, CREATE_SUSPENDED, NULL);
++  if (!createdThread)
++    return 1;
++  pth->start_routine = start_routine;
++  pth->arg = arg;
++  pth->handle = createdThread;
++  pth->waiting_cond = NULL;
++
++  if (self) {
++    pth->blocked_signal_set = self->blocked_signal_set;
++  } else {
++    sigemptyset(&pth->blocked_signal_set);
++  }
++  for (i = 1; i < NSIG; ++i)
++    pth->signal_is_pending[i] = 0;
++  pth->state = pthread_state_running;
++  pthread_mutex_init(&pth->lock, NULL);
++  pthread_cond_init(&pth->cond, NULL);
++  pth->detached = 0;
++  ResumeThread(createdThread);
++  if (thread)
++    *thread = createdThread;
++  return 0;
++}
++
++int pthread_equal(pthread_t thread1, pthread_t thread2)
++{
++  return thread1 == thread2;
++}
++
++int pthread_detach(pthread_t thread)
++{
++  int retval = 0;
++  pthread_mutex_lock(&thread->lock);
++  thread->detached = 1;
++  pthread_cond_broadcast(&thread->cond);
++  pthread_mutex_unlock(&thread->lock);
++  return retval;
++}
++
++int pthread_join(pthread_t thread, void **retval)
++{
++  pthread_mutex_lock(&thread->lock);
++  while (thread->state != pthread_state_finished) {
++    pthread_cond_wait(&thread->cond, &thread->lock);
++  }
++  thread->state = pthread_state_joined;
++  pthread_cond_broadcast(&thread->cond);
++  if (retval)
++    *retval = thread->retval;
++  pthread_mutex_unlock(&thread->lock);
++  return 0;
++}
++
++int pthread_key_create(pthread_key_t *key, void (*destructor)(void*))
++{
++  DWORD index;
++  if (destructor) {
++    fprintf(stderr, "destructor is specified for pthread_key_create\n");
++    ExitProcess(1);
++  }
++  index = TlsAlloc();
++  if (index == TLS_OUT_OF_INDEXES)
++    return 1;
++  *key = index;
++  return 0;
++}
++
++void *pthread_getspecific(pthread_key_t key)
++{
++  return TlsGetValue(key);
++}
++
++int pthread_setspecific(pthread_key_t key, const void *value)
++{
++  return TlsSetValue(key, (LPVOID)value) != FALSE;
++}
++
++int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset)
++{
++  pthread_t self = pthread_self();
++  if (oldset)
++    *oldset = self->blocked_signal_set;
++  if (set) {
++    const char * action;
++
++    switch (how) {
++      case SIG_BLOCK:
++        action = "blocking";
++        self->blocked_signal_set |= *set;
++        break;
++      case SIG_UNBLOCK:
++        action = "unblocking";
++        self->blocked_signal_set &= ~(*set);
++        break;
++      case SIG_SETMASK:
++        action = "setting";
++        self->blocked_signal_set = *set;
++        break;
++    }
++    if (0)
++    {
++      char buf[100];
++      sprintf(buf, "[0x%p] set signals mask to 0x%x by %s of 0x%x", self, self->blocked_signal_set, action, *set);
++      OutputDebugString(buf);
++    }
++  }
++  if (set)
++  {
++    int i;
++    for (i = 1; i < NSIG; ++i) {
++      if (!sigismember(&self->blocked_signal_set, i)) {
++        unsigned int is_pending = InterlockedExchange(&self->signal_is_pending[i], 0);
++        if (is_pending) {
++          pthread_np_pending_signal_handler(i);
++        }
++      }
++    }
++  }
++  return 0;
++}
++
++pthread_mutex_t mutex_init_lock;
++
++int pthread_mutex_init(pthread_mutex_t * mutex, const pthread_mutexattr_t * attr)
++{
++  *mutex = (CRITICAL_SECTION*)malloc(sizeof(CRITICAL_SECTION));
++  InitializeCriticalSection(*mutex);
++  return 0;
++}
++
++int pthread_mutexattr_init(pthread_mutexattr_t* attr)
++{
++  return 0;
++}
++int pthread_mutexattr_destroy(pthread_mutexattr_t* attr)
++{
++  return 0;
++}
++
++int pthread_mutexattr_settype(pthread_mutexattr_t* attr,int mutex_type)
++{
++  return 0;
++}
++
++int pthread_mutex_destroy(pthread_mutex_t *mutex)
++{
++  if (*mutex != PTHREAD_MUTEX_INITIALIZER)
++    DeleteCriticalSection(*mutex);
++  return 0;
++}
++
++void pthread_np_add_pending_signal(pthread_t thread, int signum)
++{
++  const char * s = thread->signal_is_pending[signum] ? "pending" : "not pending";
++  thread->signal_is_pending[signum] = 1;
++}
++
++void pthread_np_remove_pending_signal(pthread_t thread, int signum)
++{
++  const char * s = thread->signal_is_pending[signum] ? "pending" : "not pending";
++  thread->signal_is_pending[signum] = 0;
++}
++
++int pthread_mutex_lock(pthread_mutex_t *mutex)
++{
++  if (*mutex == PTHREAD_MUTEX_INITIALIZER) {
++    pthread_mutex_lock(&mutex_init_lock);
++    if (*mutex == PTHREAD_MUTEX_INITIALIZER) {
++      *mutex = (CRITICAL_SECTION*)malloc(sizeof(CRITICAL_SECTION));
++      pthread_mutex_init(mutex, NULL);
++    }
++    pthread_mutex_unlock(&mutex_init_lock);
++  }
++  EnterCriticalSection(*mutex);
++  return 0;
++}
++
++int pthread_mutex_trylock(pthread_mutex_t *mutex)
++{
++  if (*mutex == PTHREAD_MUTEX_INITIALIZER) {
++    pthread_mutex_lock(&mutex_init_lock);
++    if (*mutex == PTHREAD_MUTEX_INITIALIZER) {
++      *mutex = (CRITICAL_SECTION*)malloc(sizeof(CRITICAL_SECTION));
++      pthread_mutex_init(mutex, NULL);
++    }
++    pthread_mutex_unlock(&mutex_init_lock);
++  }
++  if (TryEnterCriticalSection(*mutex))
++    return 0;
++  else
++    return EBUSY;
++}
++
++int pthread_mutex_unlock(pthread_mutex_t *mutex)
++{
++  LeaveCriticalSection(*mutex);
++  return 0;
++}
++
++static HANDLE cv_default_event_get_fn()
++{
++  return CreateEvent(NULL, FALSE, FALSE, NULL);
++}
++
++static void cv_default_event_return_fn(HANDLE event)
++{
++  CloseHandle(event);
++}
++
++int pthread_cond_init(pthread_cond_t * cv, const pthread_condattr_t * attr)
++{
++  pthread_mutex_init(&cv->wakeup_lock, NULL);
++  cv->first_wakeup = NULL;
++  cv->last_wakeup = NULL;
++  cv->alertable = 0;
++  cv->get_fn = cv_default_event_get_fn;
++  cv->return_fn = cv_default_event_return_fn;
++  return 0;
++}
++
++int pthread_cond_destroy(pthread_cond_t *cv)
++{
++  pthread_mutex_destroy(&cv->wakeup_lock);
++  return 0;
++}
++
++int pthread_cond_broadcast(pthread_cond_t *cv)
++{
++  int count = 0;
++  pthread_mutex_lock(&cv->wakeup_lock);
++  while (cv->first_wakeup)
++  {
++    struct thread_wakeup * w = cv->first_wakeup;
++    HANDLE waitevent = w->event;
++    cv->first_wakeup = w->next;
++    SetEvent(waitevent);
++    ++count;
++  }
++  cv->last_wakeup = NULL;
++  pthread_mutex_unlock(&cv->wakeup_lock);
++  return 0;
++}
++
++int pthread_cond_signal(pthread_cond_t *cv)
++{
++  struct thread_wakeup * w;
++  pthread_mutex_lock(&cv->wakeup_lock);
++  w = cv->first_wakeup;
++  if (w) {
++    HANDLE waitevent = w->event;
++    cv->first_wakeup = w->next;
++    if (!cv->first_wakeup)
++      cv->last_wakeup = NULL;
++    SetEvent(waitevent);
++  }
++  pthread_mutex_unlock(&cv->wakeup_lock);
++  return 0;
++}
++
++void cv_wakeup_add(struct pthread_cond_t* cv, struct thread_wakeup* w)
++{
++  w->event = cv->get_fn();
++  w->next = NULL;
++  pthread_mutex_lock(&cv->wakeup_lock);
++  if (cv->last_wakeup == w) {
++    fprintf(stderr, "cv->last_wakeup == w\n");
++    ExitProcess(0);
++  }
++  if (cv->last_wakeup != NULL)
++  {
++    cv->last_wakeup->next = w;
++    cv->last_wakeup = w;
++  }
++  else
++  {
++    cv->first_wakeup = w;
++    cv->last_wakeup = w;
++  }
++  pthread_mutex_unlock(&cv->wakeup_lock);
++}
++
++void cv_wakeup_remove(struct pthread_cond_t* cv, struct thread_wakeup* w)
++{
++  pthread_mutex_lock(&cv->wakeup_lock);
++  {
++    if (cv->first_wakeup == w) {
++      cv->first_wakeup = w->next;
++      if (cv->last_wakeup == w)
++        cv->last_wakeup = NULL;
++    } else {
++      struct thread_wakeup * prev = cv->first_wakeup;
++      while (prev && prev->next != w)
++        prev = prev->next;
++      if (!prev) {
++        pthread_mutex_unlock(&cv->wakeup_lock);
++        return;
++      }
++      prev->next = w->next;
++      if (cv->last_wakeup == w)
++        cv->last_wakeup = prev;
++    }
++  }
++  pthread_mutex_unlock(&cv->wakeup_lock);
++}
++
++int pthread_cond_wait(pthread_cond_t * cv, pthread_mutex_t * cs)
++{
++  struct thread_wakeup w;
++  cv_wakeup_add(cv, &w);
++  if (cv->last_wakeup->next == cv->last_wakeup) {
++    fprintf(stderr, "cv->last_wakeup->next == cv->last_wakeup\n");
++    ExitProcess(0);
++  }
++  if (cv->last_wakeup->next != NULL) {
++    fprintf(stderr, "cv->last_wakeup->next != NULL\n");
++    ExitProcess(0);
++  }
++  pthread_self()->waiting_cond = cv;
++  pthread_mutex_unlock(cs);
++  if (cv->alertable) {
++    while (WaitForSingleObjectEx(w.event, INFINITE, TRUE) == WAIT_IO_COMPLETION);
++  } else {
++    WaitForSingleObject(w.event, INFINITE);
++  }
++  pthread_self()->waiting_cond = NULL;
++  cv->return_fn(w.event);
++  pthread_mutex_lock(cs);
++  return 0;
++}
++
++int pthread_cond_timedwait(pthread_cond_t * cv, pthread_mutex_t * cs, const struct timespec * abstime)
++{
++  DWORD rv;
++  struct thread_wakeup w;
++  cv_wakeup_add(cv, &w);
++  if (cv->last_wakeup->next == cv->last_wakeup) {
++    fprintf(stderr, "cv->last_wakeup->next == cv->last_wakeup\n");
++    ExitProcess(0);
++  }
++  pthread_self()->waiting_cond = cv;
++  pthread_mutex_unlock(cs);
++  {
++    struct timeval cur_tm;
++    long sec, msec;
++    gettimeofday(&cur_tm, NULL);
++    sec = abstime->tv_sec - cur_tm.tv_sec;
++    msec = sec * 1000 + abstime->tv_nsec / 1000000 - cur_tm.tv_usec / 1000;
++    if (msec < 0)
++      msec = 0;
++    if (cv->alertable) {
++      while ((rv = WaitForSingleObjectEx(w.event, msec, TRUE)) == WAIT_IO_COMPLETION);
++    } else {
++      rv = WaitForSingleObject(w.event, msec);
++    }
++  }
++  pthread_self()->waiting_cond = NULL;
++  if (rv == WAIT_TIMEOUT)
++    cv_wakeup_remove(cv, &w);
++  cv->return_fn(w.event);
++  pthread_mutex_lock(cs);
++  if (rv == WAIT_TIMEOUT)
++    return ETIMEDOUT;
++  else
++    return 0;
++}
++
++int sched_yield()
++{
++  SwitchToThread();
++  return 0;
++}
++
++void pthread_lock_structures()
++{
++  pthread_mutex_lock(&mutex_init_lock);
++}
++
++void pthread_unlock_structures()
++{
++  pthread_mutex_unlock(&mutex_init_lock);
++}
++
++void pthreads_win32_init()
++{
++  pthread_t pth = (pthread_t)malloc(sizeof(pthread_thread));
++  thread_self_tls_index = TlsAlloc();
++  pth->start_routine = NULL;
++  pth->arg = NULL;
++  pth->waiting_cond = NULL;
++  sigemptyset(&pth->blocked_signal_set);
++  {
++    int i;
++    for (i = 1; i < NSIG; ++i)
++      pth->signal_is_pending[i] = 0;
++  }
++  pthread_mutex_init(&mutex_init_lock, NULL);
++  DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &pth->handle, 0, TRUE, DUPLICATE_SAME_ACCESS);
++  TlsSetValue(thread_self_tls_index, pth);
++}
++
++int sigemptyset(sigset_t *set)
++{
++  *set = 0;
++  return 0;
++}
++
++int sigfillset(sigset_t *set)
++{
++  *set = 0xfffffffful;
++  return 0;
++}
++
++int sigaddset(sigset_t *set, int signum)
++{
++  *set |= 1 << signum;
++  return 0;
++}
++
++int sigdelset(sigset_t *set, int signum)
++{
++  *set &= ~(1 << signum);
++  return 0;
++}
++
++int sigismember(const sigset_t *set, int signum)
++{
++  return (*set & (1 << signum)) != 0;
++}
++#endif
+diff --git a/src/runtime/pthreads_win32.h b/src/runtime/pthreads_win32.h
+new file mode 100755
+index 0000000..52d64a8
+--- /dev/null
++++ b/src/runtime/pthreads_win32.h
+@@ -0,0 +1,187 @@
++#ifndef WIN32_PTHREAD_INCLUDED
++#define WIN32_PTHREAD_INCLUDED
++
++#include <time.h>
++#include <errno.h>
++#include <sys/types.h>
++
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++
++/* 0 - Misc */
++
++
++#define SIG_IGN ((void (*)(int, siginfo_t, void*))-1)
++#define SIG_DFL ((void (*)(int, siginfo_t, void*))-2)
++
++#define SIGHUP    1
++#define SIGINT    2 /* Interactive attention */
++#define SIGQUIT   3
++#define SIGILL    4 /* Illegal instruction */
++#define SIGPIPE   5
++#define SIGALRM   6
++#define SIGURG    7
++#define SIGFPE    8 /* Floating point error */
++#define SIGTSTP   9
++#define SIGCHLD   10
++#define SIGSEGV   11 /* Segmentation violation */
++#define SIGIO     12
++#define SIGXCPU   13
++#define SIGXFSZ   14
++#define SIGTERM   15 /* Termination request */
++#define SIGVTALRM 16
++#define SIGPROF   17
++#define SIGWINCH  18
++#define SIGBREAK  21 /* Control-break */
++#define SIGABRT   22 /* Abnormal termination (abort) */
++
++#define SIGRTMIN  23
++
++#define SIG_DEFER SIGHUP
++
++#define NSIG 31     /* maximum signal number + 1 */
++
++void pthreads_win32_init();
++
++/* 1 - Thread */
++
++typedef struct pthread_thread* pthread_t;
++
++typedef struct pthread_attr_t {
++  unsigned int stack_size;
++} pthread_attr_t;
++
++int pthread_attr_init(pthread_attr_t *attr);
++int pthread_attr_destroy(pthread_attr_t *attr);
++int pthread_attr_setstack(pthread_attr_t *attr, void *stackaddr, size_t stacksize);
++int pthread_attr_setstacksize(pthread_attr_t *attr, size_t stacksize);
++
++typedef void (*pthread_cleanup_fn)(void* arg);
++
++#define pthread_cleanup_push(fn, arg) { pthread_cleanup_fn __pthread_fn = fn; void *__pthread_arg = arg;
++#define pthread_cleanup_pop(execute) if (execute) __pthread_fn(__pthread_arg); }
++
++int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start_routine) (void *), void *arg);
++int pthread_equal(pthread_t thread1, pthread_t thread2);
++int pthread_detach(pthread_t thread);
++int pthread_join(pthread_t thread, void **retval);
++pthread_t pthread_self(void);
++
++typedef DWORD pthread_key_t;
++int pthread_key_create(pthread_key_t *key, void (*destructor)(void*));
++void *pthread_getspecific(pthread_key_t key);
++int pthread_setspecific(pthread_key_t key, const void *value);
++
++#define SIG_BLOCK 1
++#define SIG_UNBLOCK 2
++#define SIG_SETMASK 3
++int pthread_sigmask(int how, const sigset_t *set, sigset_t *oldset);
++
++/* 1a - Thread non-portable */
++
++void pthread_np_suspend(pthread_t thread);
++void pthread_np_suspend_with_signal(pthread_t thread, int signum);
++void pthread_np_resume(pthread_t thread);
++void pthread_np_request_interruption(pthread_t thread);
++
++/* 2 - Mutex */
++
++typedef CRITICAL_SECTION* pthread_mutex_t;
++typedef int pthread_mutexattr_t;
++#define PTHREAD_MUTEX_INITIALIZER ((pthread_mutex_t)-1)
++int pthread_mutex_init(pthread_mutex_t * mutex, const pthread_mutexattr_t * attr);
++int pthread_mutexattr_init(pthread_mutexattr_t*);
++int pthread_mutexattr_destroy(pthread_mutexattr_t*);
++int pthread_mutexattr_settype(pthread_mutexattr_t*, int);
++#define PTHREAD_MUTEX_ERRORCHECK 0
++int pthread_mutex_destroy(pthread_mutex_t *mutex);
++int pthread_mutex_lock(pthread_mutex_t *mutex);
++int pthread_mutex_trylock(pthread_mutex_t *mutex);
++int pthread_mutex_unlock(pthread_mutex_t *mutex);
++
++/* 3 - Condition variable */
++
++typedef struct thread_wakeup {
++  HANDLE event;
++  struct thread_wakeup *next;
++} thread_wakeup;
++
++typedef HANDLE (*cv_event_get_fn)();
++typedef void (*cv_event_return_fn)(HANDLE event);
++
++typedef struct pthread_cond_t {
++  pthread_mutex_t wakeup_lock;
++  struct thread_wakeup *first_wakeup;
++  struct thread_wakeup *last_wakeup;
++  unsigned char alertable;
++  cv_event_get_fn get_fn;
++  cv_event_return_fn return_fn;
++} pthread_cond_t;
++
++typedef struct pthread_condattr_t {
++  unsigned char alertable;
++  cv_event_get_fn get_fn;
++  cv_event_return_fn return_fn;
++} pthread_condattr_t;
++
++#ifndef _TIMESPEC_DEFINED
++typedef struct timespec {
++  time_t tv_sec;
++  long tv_nsec;
++} timespec;
++#endif
++
++// not implemented: PTHREAD_COND_INITIALIZER
++int pthread_cond_destroy(pthread_cond_t *cond);
++int pthread_cond_init(pthread_cond_t * cond, const pthread_condattr_t * attr);
++int pthread_cond_broadcast(pthread_cond_t *cond);
++int pthread_cond_signal(pthread_cond_t *cond);
++int pthread_cond_timedwait(pthread_cond_t * cond, pthread_mutex_t * mutex, const struct timespec * abstime);
++int pthread_cond_wait(pthread_cond_t * cond, pthread_mutex_t * mutex);
++
++#define ETIMEDOUT 123 //Something
++
++int sched_yield();
++
++void pthread_lock_structures();
++void pthread_unlock_structures();
++
++typedef void *(*pthread_fn)(void*);
++
++typedef enum {
++  pthread_state_running,
++  pthread_state_finished,
++  pthread_state_joined
++} pthread_thread_state;
++
++typedef struct pthread_thread {
++  pthread_fn start_routine;
++  void* arg;
++  HANDLE handle;
++  pthread_cond_t *waiting_cond;
++  sigset_t blocked_signal_set;
++  unsigned int signal_is_pending[NSIG];
++  void * retval;
++  
++  pthread_mutex_t lock;
++  pthread_cond_t cond;
++  int detached;
++  pthread_thread_state state;
++} pthread_thread;
++
++void pthread_np_pending_signal_handler(int signum);
++
++void pthread_np_add_pending_signal(pthread_t thread, int signum);
++void pthread_np_remove_pending_signal(pthread_t thread, int signum);
++
++int pthread_np_get_thread_context(pthread_t thread, CONTEXT* context);
++
++int sigemptyset(sigset_t *set);
++int sigfillset(sigset_t *set);
++int sigaddset(sigset_t *set, int signum);
++int sigdelset(sigset_t *set, int signum);
++int sigismember(const sigset_t *set, int signum);
++
++typedef int sig_atomic_t;
++
++#endif
+diff --git a/src/runtime/run-program.c b/src/runtime/run-program.c
+index d1d98e6..199bde8 100644
+--- a/src/runtime/run-program.c
++++ b/src/runtime/run-program.c
+@@ -20,7 +20,7 @@
+ #include <stdlib.h>
+ #include <sys/file.h>
+ #include <sys/types.h>
+-#include <signal.h>
++#include "runtime.h"
+ #include <sys/stat.h>
+ #include <fcntl.h>
+ #include <sys/ioctl.h>
+diff --git a/src/runtime/runtime.c b/src/runtime/runtime.c
+index 0f1f0ff..7302cb1 100644
+--- a/src/runtime/runtime.c
++++ b/src/runtime/runtime.c
+@@ -29,7 +29,7 @@
+ #include <sys/file.h>
+ #include <sys/param.h>
+ #include <sys/stat.h>
+-#include <signal.h>
++#include "runtime.h"
+ #ifndef LISP_FEATURE_WIN32
+ #include <sched.h>
+ #endif
+@@ -41,7 +41,9 @@
+ #include <time.h>
+ #endif
+ 
++#if !(defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD))
+ #include "signal.h"
++#endif
+ 
+ #include "runtime.h"
+ #include "vars.h"
+@@ -289,6 +291,10 @@ char *core_string;
+ struct runtime_options *runtime_options;
+ 
+ char *saved_runtime_path = NULL;
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++void pthreads_win32_init();
++#endif
++
+ 
+ int
+ main(int argc, char *argv[], char *envp[])
+@@ -313,6 +319,11 @@ main(int argc, char *argv[], char *envp[])
+     lispobj initial_function;
+     const char *sbcl_home = getenv("SBCL_HOME");
+ 
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++    os_preinit();
++    pthreads_win32_init();
++#endif
++
+     interrupt_init();
+     block_blockable_signals(0, 0);
+ 
+diff --git a/src/runtime/runtime.h b/src/runtime/runtime.h
+index de83bc8..d1ee399 100644
+--- a/src/runtime/runtime.h
++++ b/src/runtime/runtime.h
+@@ -15,6 +15,13 @@
+ #ifndef _SBCL_RUNTIME_H_
+ #define _SBCL_RUNTIME_H_
+ 
++#if defined(LISP_FEATURE_WIN32)
++#include "pthreads_win32.h"
++#else
++#include <signal.h>
++#include <pthread.h>
++#endif
++
+ #if defined(LISP_FEATURE_SB_THREAD)
+ #define thread_self() pthread_self()
+ #define thread_kill pthread_kill
+@@ -29,6 +36,12 @@
+ #define thread_mutex_unlock(l) 0
+ #endif
+ 
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++void os_preinit();
++void map_gc_page();
++void unmap_gc_page();
++#endif
++
+ /* Block blockable interrupts for each SHOW, if not 0. */
+ #define QSHOW_SIGNAL_SAFE 1
+ /* Enable extra-verbose low-level debugging output for signals? (You
+@@ -51,7 +64,6 @@
+ 
+ #if QSHOW_SIGNAL_SAFE == 1 && !defined(LISP_FEATURE_WIN32)
+ 
+-#include <signal.h>
+ extern sigset_t blockable_sigset;
+ 
+ #define QSHOW_BLOCK                                             \
+@@ -109,8 +121,25 @@ typedef unsigned long pointer_sized_uint_t ;
+ 
+ #include <sys/types.h>
+ 
++
++#if defined(LISP_FEATURE_WIN32)
++
++void odprintf_(const char * fmt, ...);
++#if defined(LISP_FEATURE_DEBUG_WIN32)
++#define odprintf odprintf_
++#else
++#define odprintf(...)
++#endif
++
++#endif
++
+ #if defined(LISP_FEATURE_SB_THREAD)
+-#include <pthread.h>
++#if defined(LISP_FEATURE_WIN32)
++void gc_safepoint();
++void gc_enter_safe_region();
++void gc_enter_unsafe_region();
++void gc_leave_region();
++#endif
+ typedef pthread_t os_thread_t;
+ #else
+ typedef pid_t os_thread_t;
+diff --git a/src/runtime/save.c b/src/runtime/save.c
+index b3addc9..226b7c0 100644
+--- a/src/runtime/save.c
++++ b/src/runtime/save.c
+@@ -16,7 +16,6 @@
+ #include <stdlib.h>
+ #include <stdio.h>
+ #include <string.h>
+-#include <signal.h>
+ #include <sys/file.h>
+ 
+ #include "sbcl.h"
+diff --git a/src/runtime/thread.c b/src/runtime/thread.c
+index 535263a..ae9f0ab 100644
+--- a/src/runtime/thread.c
++++ b/src/runtime/thread.c
+@@ -17,7 +17,8 @@
+ #ifndef LISP_FEATURE_WIN32
+ #include <sched.h>
+ #endif
+-#include <signal.h>
++#include "runtime.h"
++#include "interrupt.h"
+ #include <stddef.h>
+ #include <errno.h>
+ #include <sys/types.h>
+@@ -44,6 +45,9 @@
+ #include "interr.h"             /* for lose() */
+ #include "alloc.h"
+ #include "gc-internal.h"
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++#include "pseudo-atomic.h"
++#endif
+ 
+ #ifdef LISP_FEATURE_WIN32
+ /*
+@@ -209,7 +213,11 @@ perform_thread_post_mortem(struct thread_post_mortem *post_mortem)
+         gc_assert(!pthread_join(post_mortem->os_thread, NULL));
+         gc_assert(!pthread_attr_destroy(post_mortem->os_attr));
+         free(post_mortem->os_attr);
++#if defined(LISP_FEATURE_WIN32)
++        os_invalidate_free(post_mortem->os_address, THREAD_STRUCT_SIZE);
++#else
+         os_invalidate(post_mortem->os_address, THREAD_STRUCT_SIZE);
++#endif
+         free(post_mortem);
+     }
+ }
+@@ -267,6 +275,9 @@ new_thread_trampoline(struct thread *th)
+ {
+     lispobj function;
+     int result, lock_ret;
++#if defined(LISP_FEATURE_WIN32)
++    int i;
++#endif
+ 
+     FSHOW((stderr,"/creating thread %lu\n", thread_self()));
+     check_deferrables_blocked_or_lose(0);
+@@ -313,8 +324,16 @@ new_thread_trampoline(struct thread *th)
+     pthread_mutex_destroy(th->state_lock);
+     pthread_cond_destroy(th->state_cond);
+ 
++#if defined(LISP_FEATURE_WIN32)
++  #if defined(LISP_FEATURE_SB_THREAD)
++    pthread_mutex_destroy(&th->interrupt_data->win32_data.lock);
++  #endif
++    os_invalidate_free((os_vm_address_t)th->interrupt_data,
++                  (sizeof (struct interrupt_data)));
++#else
+     os_invalidate((os_vm_address_t)th->interrupt_data,
+                   (sizeof (struct interrupt_data)));
++#endif
+ 
+ #ifdef LISP_FEATURE_MACH_EXCEPTION_HANDLER
+     FSHOW((stderr, "Deallocating mach port %x\n", THREAD_STRUCT_TO_EXCEPTION_PORT(th)));
+@@ -337,11 +356,23 @@ new_thread_trampoline(struct thread *th)
+ static void
+ free_thread_struct(struct thread *th)
+ {
++#if defined(LISP_FEATURE_WIN32)
++    if (th->interrupt_data) {
++        #if defined(LISP_FEATURE_SB_THREAD)
++        pthread_mutex_destroy(&th->interrupt_data->win32_data.lock);
++        #endif
++        os_invalidate_free((os_vm_address_t) th->interrupt_data,
++                      (sizeof (struct interrupt_data)));
++    }
++    os_invalidate_free((os_vm_address_t) th->os_address,
++                  THREAD_STRUCT_SIZE);
++#else
+     if (th->interrupt_data)
+         os_invalidate((os_vm_address_t) th->interrupt_data,
+                       (sizeof (struct interrupt_data)));
+     os_invalidate((os_vm_address_t) th->os_address,
+                   THREAD_STRUCT_SIZE);
++#endif
+ }
+ 
+ /* this is called from any other thread to create the new one, and
+@@ -355,7 +386,7 @@ create_thread_struct(lispobj initial_function) {
+     struct thread *th=0;        /*  subdue gcc */
+     void *spaces=0;
+     void *aligned_spaces=0;
+-#ifdef LISP_FEATURE_SB_THREAD
++#if defined(LISP_FEATURE_SB_THREAD) || defined(LISP_FEATURE_WIN32)
+     unsigned int i;
+ #endif
+ 
+@@ -489,6 +520,11 @@ create_thread_struct(lispobj initial_function) {
+ #ifdef LISP_FEATURE_SB_THREAD
+     bind_variable(STOP_FOR_GC_PENDING,NIL,th);
+ #endif
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++    bind_variable(GC_SAFE,NIL,th);
++    bind_variable(IN_SAFEPOINT,NIL,th);
++    bind_variable(DISABLE_SAFEPOINTS,NIL,th);
++#endif
+ #ifndef LISP_FEATURE_C_STACK_IS_CONTROL_STACK
+     access_control_stack_pointer(th)=th->control_stack_start;
+ #endif
+@@ -505,6 +541,11 @@ create_thread_struct(lispobj initial_function) {
+     th->interrupt_data->allocation_trap_context = 0;
+ #endif
+     th->no_tls_value_marker=initial_function;
++    
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++    th->interrupt_data->win32_data.interrupts_count = 0;
++    pthread_mutex_init(&th->interrupt_data->win32_data.lock, NULL);
++#endif
+ 
+     th->stepping = NIL;
+     return th;
+@@ -560,8 +601,12 @@ boolean create_os_thread(struct thread *th,os_thread_t *kid_tid)
+     if((initcode = pthread_attr_init(th->os_attr)) ||
+        /* call_into_lisp_first_time switches the stack for the initial
+         * thread. For the others, we use this. */
++#if defined(LISP_FEATURE_WIN32)
++       (pthread_attr_setstacksize(th->os_attr, thread_control_stack_size)) ||
++#else
+        (pthread_attr_setstack(th->os_attr,th->control_stack_start,
+                               thread_control_stack_size)) ||
++#endif
+        (retcode = pthread_create
+         (kid_tid,th->os_attr,(void *(*)(void *))new_thread_trampoline,th))) {
+         FSHOW_SIGNAL((stderr, "init = %d\n", initcode));
+@@ -608,6 +653,612 @@ os_thread_t create_thread(lispobj initial_function) {
+  * it's in the middle of allocation) then waits for another SIG_STOP_FOR_GC.
+  */
+ 
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++
++struct threads_suspend_info suspend_info = {
++  0, PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
++  SUSPEND_REASON_NONE, 0, NULL, NULL
++};
++
++// returns: 0 if all is ok
++// -1 if max interrupts reached
++int schedule_thread_interrupt(struct thread * th, lispobj interrupt_fn)
++{
++  odprintf("schedule_thread_interrupt(0x%p, 0x%p) begin", th->os_thread, interrupt_fn);
++  pthread_mutex_lock(&th->interrupt_data->win32_data.lock);
++  if (th->interrupt_data->win32_data.interrupts_count == MAX_INTERRUPTS) {
++    pthread_mutex_unlock(&th->interrupt_data->win32_data.lock);
++    return -1;
++  } else {
++    ++th->interrupt_data->win32_data.interrupts_count;
++    th->interrupt_data->win32_data.interrupts[th->interrupt_data->win32_data.interrupts_count - 1] = interrupt_fn;
++    pthread_mutex_unlock(&th->interrupt_data->win32_data.lock);
++    SetSymbolValue(INTERRUPT_PENDING, T, th);
++    return 0;
++  }
++  odprintf("schedule_thread_interrupt(0x%p, 0x%p) end", th->os_thread, interrupt_fn);
++}
++
++const char * t_nil_str(lispobj value)
++{
++	if (value == T) return "T";
++	if (value == NIL) return "NIL";
++	return "?";
++}
++
++void lock_suspend_info(const char * file, int line)
++{
++  odprintf("locking suspend_info.lock (%s:%d)", file, line);
++  pthread_mutex_lock(&suspend_info.lock);
++  odprintf("locked suspend_info.lock (%s:%d)", file, line);
++}
++
++void unlock_suspend_info(const char * file, int line)
++{
++  odprintf("unlocking suspend_info.lock (%s:%d)", file, line);
++  pthread_mutex_unlock(&suspend_info.lock);
++}
++
++void roll_thread_to_safepoint(struct thread * thread)
++{
++  struct thread * p;
++  odprintf("roll_thread_to_safepoint(0x%p) begin", thread->os_thread);
++  pthread_mutex_lock(&all_threads_lock);
++  odprintf("all_threads_lock taken");
++  pthread_mutex_lock(&suspend_info.world_lock);
++  odprintf("world_lock taken");
++  
++  lock_suspend_info(__FILE__, __LINE__);
++  suspend_info.reason = SUSPEND_REASON_INTERRUPT;
++  suspend_info.interrupted_thread = thread;
++  suspend_info.phase = 1;
++  suspend_info.suspend = 1;
++  unlock_suspend_info(__FILE__, __LINE__);
++  
++  odprintf("unmapping gc page");
++  
++  unmap_gc_page();
++  
++  odprintf("unmapped gc page, doing interrupt phase 1");
++  
++  // Phase 1: Make sure that th is in gc-safe code or noted the need to interrupt
++  if (SymbolValue(GC_SAFE, thread) == NIL) {
++    wait_for_thread_state_change(thread, STATE_RUNNING);
++  } 
++  
++  odprintf("mapping gc page");
++  
++  map_gc_page();
++  
++  odprintf("mapped gc page");
++  
++  lock_suspend_info(__FILE__, __LINE__);
++  suspend_info.suspend = 0;
++  unlock_suspend_info(__FILE__, __LINE__);
++  odprintf("mapped gc page, iterating over threads and waking them");
++  
++  for (p = all_threads; p; p = p->next) {
++    if (thread_state(p) != STATE_DEAD)
++      set_thread_state(p, STATE_RUNNING);
++  }
++
++  pthread_mutex_unlock(&suspend_info.world_lock);
++  pthread_mutex_unlock(&all_threads_lock);
++  
++  odprintf("roll_thread_to_safepoint(0x%p) end", thread->os_thread);
++}
++
++int check_pending_interrupts();
++
++// returns: 0 if interrupt is queued
++// -1 if max interrupts reached
++int interrupt_lisp_thread(struct thread * thread, lispobj interrupt_fn)
++{
++  struct thread * self = arch_os_get_current_thread();
++  if (schedule_thread_interrupt(thread, interrupt_fn) != 0) {
++    return -1;
++  }
++  
++  if (self == thread) {
++    check_pending_interrupts();
++  } else {
++    roll_thread_to_safepoint(thread);
++  }
++  
++  return 0;
++}
++int thread_may_gc();
++int thread_may_suspend_for_gc();
++
++// returns 0 if skipped, 1 otherwise
++int check_pending_gc()
++{
++  struct thread * self = arch_os_get_current_thread();
++  if (SymbolValue(GC_PENDING, self) == T) {
++    if (thread_may_gc()) {
++      SetSymbolValue(GC_PENDING, NIL, self);
++      sigset_t old_sigmask;
++      block_blockable_signals(0, &old_sigmask);
++      CONTEXT win32_ctx;
++      os_context_t ctx;
++      ctx.win32_context = &win32_ctx;
++      pthread_sigmask(SIG_BLOCK, NULL, &ctx.sigmask);
++      maybe_gc(&ctx);
++      pthread_sigmask(SIG_SETMASK, &old_sigmask, NULL);
++      return 1;
++    }
++  }
++  return 0;
++}
++
++// returns 0 if skipped, 1 otherwise
++int check_pending_interrupts()
++{
++  struct thread * p = arch_os_get_current_thread();
++  sigset_t sigset;
++  int done = 0;
++  done |= check_pending_gc();
++  if (p->interrupt_data->win32_data.interrupts_count == 0) {
++    return done;
++  }
++  odprintf("In check_pending_interrupts, have %d interrupts", p->interrupt_data->win32_data.interrupts_count);
++  get_current_sigmask(&sigset);
++  if (sigismember(&sigset, SIGHUP)) {
++    if (SymbolValue(INTERRUPT_PENDING, p) == NIL) {
++      odprintf("SIGHUP is blocked, setting INTERRUPT_PENDING");
++      SetSymbolValue(INTERRUPT_PENDING, T, p);
++      pthread_np_add_pending_signal(p->os_thread, SIGHUP);
++      done = 1;
++    }
++    return done;
++  }
++  
++  if (SymbolValue(INTERRUPTS_ENABLED, p) == NIL) {
++    odprintf("INTERRUPTS_ENABLED = NIL, setting INTERRUPT_PENDING");
++    if (p->interrupt_data->win32_data.interrupts_count > 0 && SymbolValue(INTERRUPT_PENDING, p) == NIL) {
++      SetSymbolValue(INTERRUPT_PENDING, T, p);
++      done = 1;
++    }
++    return done;
++  }
++  SetSymbolValue(INTERRUPT_PENDING, NIL, p);
++  
++  while (1) {
++    pthread_mutex_lock(&p->interrupt_data->win32_data.lock);
++    if (p->interrupt_data->win32_data.interrupts_count > 0) {
++      done = 1;
++      odprintf("Have %d interrupts", p->interrupt_data->win32_data.interrupts_count);
++			lispobj objs[MAX_INTERRUPTS];
++			int i, n;
++			n = p->interrupt_data->win32_data.interrupts_count;
++			for (i = 0; i < p->interrupt_data->win32_data.interrupts_count; ++i)
++				objs[i] = p->interrupt_data->win32_data.interrupts[i];
++
++			p->interrupt_data->win32_data.interrupts_count = 0;
++      pthread_mutex_unlock(&p->interrupt_data->win32_data.lock);
++      for (i = 0; i < n; ++i) {
++				lispobj fn = objs[i];
++				objs[i] = 0;
++        odprintf("calling interrupt function 0x%p", fn);
++				funcall0(fn);
++				fn = 0;
++			}
++    } else {
++      odprintf("No more interrupts", p->interrupt_data->win32_data.interrupts_count);
++      pthread_mutex_unlock(&p->interrupt_data->win32_data.lock);
++      break;
++    }
++  }
++  
++  return done;
++}
++
++
++void gc_enter_safe_region()
++{
++  struct thread * self = arch_os_get_current_thread();
++  int errorCode = GetLastError();
++  bind_variable(GC_SAFE, thread_may_suspend_for_gc() ? T : NIL, self);
++  gc_safepoint();
++  SetLastError(errorCode);
++}
++
++void gc_enter_unsafe_region()
++{
++  struct thread * self = arch_os_get_current_thread();
++  int errorCode = GetLastError();
++  bind_variable(GC_SAFE, NIL, self);
++  gc_safepoint();
++  SetLastError(errorCode);
++}
++
++void gc_leave_region()
++{
++  struct thread * self = arch_os_get_current_thread();
++  int errorCode = GetLastError();
++  unbind_variable(GC_SAFE, self);
++  gc_safepoint();
++  SetLastError(errorCode);
++}
++
++void safepoint_cycle_state(int state)
++{
++  struct thread * self = arch_os_get_current_thread();
++  set_thread_state(self, state);
++  unlock_suspend_info(__FILE__, __LINE__);
++  wait_for_thread_state_change(self, state);
++}
++
++void suspend()
++{
++  struct thread * self = arch_os_get_current_thread();
++  safepoint_cycle_state(STATE_SUSPENDED);
++  SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
++}
++
++void suspend_briefly()
++{
++  if (suspend_info.phase == 1 || suspend_info.reason == SUSPEND_REASON_INTERRUPT) {
++    safepoint_cycle_state(STATE_SUSPENDED_BRIEFLY);
++  } else {
++    unlock_suspend_info(__FILE__, __LINE__);
++  }
++}
++
++int thread_may_gc()
++{
++  // Thread may gc if all of these are true:
++  // 1) SIG_STOP_FOR_GC is unblocked
++  // 2) GC_INHIBIT is NIL
++  // 3) INTERRUPTS_ENABLED is not-NIL
++  // 4) !pseudo_atomic
++
++  struct thread * self = arch_os_get_current_thread();
++  
++  sigset_t ss;
++  
++  pthread_sigmask(SIG_BLOCK, NULL, &ss);
++  if (sigismember(&ss, SIG_STOP_FOR_GC)) {
++    return 0;
++  }
++    
++  if (SymbolValue(GC_INHIBIT, self) != NIL) {
++    return 0;
++  }
++    
++  if (SymbolValue(GC_PENDING, self) != T && SymbolValue(GC_PENDING, self) != NIL) {
++    return 0;
++  }
++    
++  if (get_pseudo_atomic_atomic(self)) {
++    return 0;
++  }
++    
++  return 1;
++}
++
++int thread_may_suspend_for_gc()
++{
++  // Thread may gc if all of these are true:
++  // 1) SIG_STOP_FOR_GC is unblocked
++  // 2) GC_INHIBIT is NIL
++  // 3) INTERRUPTS_ENABLED is not-NIL
++  // 4) !pseudo_atomic
++
++  struct thread * self = arch_os_get_current_thread();
++  
++  sigset_t ss;
++  
++  pthread_sigmask(SIG_BLOCK, NULL, &ss);
++  if (sigismember(&ss, SIG_STOP_FOR_GC)) {
++    return 0;
++  }
++    
++  if (SymbolValue(GC_INHIBIT, self) != NIL) {
++    return 0;
++  }
++  
++  if (get_pseudo_atomic_atomic(self)) {
++    return 0;
++  }
++    
++  return 1;
++}
++
++int thread_may_interrupt()
++{
++  // Thread may be interrupted if all of these are true:
++  // 1) SIGHUP is unblocked
++  // 2) INTERRUPTS_ENABLED is not-nil
++  // 3) !pseudo_atomic
++  struct thread * self = arch_os_get_current_thread();
++  
++  sigset_t ss;
++  pthread_sigmask(SIG_BLOCK, NULL, &ss);
++  if (sigismember(&ss, SIGHUP))
++    return 0;
++    
++  if (SymbolValue(INTERRUPTS_ENABLED, self) == NIL)
++    return 0;
++  
++  if (get_pseudo_atomic_atomic(self)) {
++    return 0;
++  }
++  
++  return 1;
++}
++
++// returns: 0 if skipped, 1 otherwise
++int maybe_ack_gc_poll()
++{
++  struct thread * self = arch_os_get_current_thread();
++  if (!suspend_info.suspend) return 0;
++  odprintf("maybe_ack_gc_poll, suspend_info.suspend was set, locking suspend_info");
++  lock_suspend_info(__FILE__, __LINE__);
++  odprintf("maybe_ack_gc_poll, suspend_info.suspend is %d, gc_thread = 0x%p", suspend_info.suspend, suspend_info.gc_thread == self ? "me" : "notme");
++  if (!suspend_info.suspend) {
++    unlock_suspend_info(__FILE__, __LINE__);
++    return 0;
++  }
++  if (suspend_info.reason == SUSPEND_REASON_GC
++      && self != suspend_info.gc_thread
++      && suspend_info.phase == 1
++     ) {
++    suspend_briefly();
++    SetSymbolValue(STOP_FOR_GC_PENDING, T, self);
++    SetSymbolValue(INTERRUPT_PENDING, T, self);
++  } else
++  if (suspend_info.reason == SUSPEND_REASON_INTERRUPT) {
++    if (suspend_info.interrupted_thread == self && thread_may_interrupt()) {
++      suspend();
++      check_pending_interrupts();
++    } else {
++      suspend_briefly();
++    }
++  } else {
++    unlock_suspend_info(__FILE__, __LINE__);
++    return 0;
++  }
++  return 1;
++}
++
++// returns 0 if skipped, 1 otherwise
++int maybe_suspend_for_gc()
++{
++  if (!suspend_info.suspend) return 0;
++  lock_suspend_info(__FILE__, __LINE__);
++  if (!suspend_info.suspend) {
++    unlock_suspend_info(__FILE__, __LINE__);
++    return 0;
++  }
++  struct thread * self = arch_os_get_current_thread();
++  if (suspend_info.reason == SUSPEND_REASON_GC && suspend_info.phase == 2) {
++    if (self == suspend_info.gc_thread) {
++      unlock_suspend_info(__FILE__, __LINE__);
++      return 0;
++		} else {
++			if (thread_may_suspend_for_gc()) {
++				suspend();
++				//check_pending_interrupts();
++			} else {
++        unlock_suspend_info(__FILE__, __LINE__);
++        return 0;
++      }
++		}
++  } else {
++    unlock_suspend_info(__FILE__, __LINE__);
++    return 0;
++  }
++  return 1;
++}
++
++// rreturns 0 if skipped, 1 otherwise
++int maybe_wait_until_gc_ends()
++{
++  if (!suspend_info.suspend) return 0;
++  lock_suspend_info(__FILE__, __LINE__);
++  if (!suspend_info.suspend) {
++    unlock_suspend_info(__FILE__, __LINE__);
++    return 0;
++  }
++  struct thread * self = arch_os_get_current_thread();
++  if (suspend_info.reason == SUSPEND_REASON_GCING
++      && suspend_info.gc_thread != self
++     ) {
++    if (thread_may_suspend_for_gc()) {
++      suspend();
++    } else {
++      unlock_suspend_info(__FILE__, __LINE__);
++      lose("suspend_info.reason = SUSPEND_REASON_GCING, !thread_may_suspend_for_gc()");
++    }
++  } else {
++    unlock_suspend_info(__FILE__, __LINE__);
++    return 0;
++  }
++  return 1;
++}
++
++void gc_safepoint()
++{
++  DWORD lasterror = GetLastError();
++  struct thread * self = arch_os_get_current_thread();
++  int done = 0;
++  
++  again:
++  
++  odprintf("safepoint begins");
++  
++  if (!get_pseudo_atomic_atomic(self) && get_pseudo_atomic_interrupted(self))
++    clear_pseudo_atomic_interrupted(self);
++  
++  done |= maybe_ack_gc_poll();
++  done |= maybe_suspend_for_gc();
++  done |= maybe_wait_until_gc_ends();
++
++  if (SymbolValue(IN_SAFEPOINT, self) != NIL) {
++    odprintf("IN_SAFEPOINT, safepoint ends");
++    goto maybe_again;
++  }
++  if (SymbolValue(DISABLE_SAFEPOINTS, self) != NIL) {
++    odprintf("DISABLE_SAFEPOINTS, safepoint ends");
++    goto maybe_again;
++  }
++    
++  bind_variable(IN_SAFEPOINT, T, self);
++  int bound = 1;
++  
++  if (!suspend_info.suspend) {
++    unbind_variable(IN_SAFEPOINT, self);
++    done |= check_pending_interrupts();
++    SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
++    odprintf("safepoint ends");
++    goto maybe_again;
++  }
++  lock_suspend_info(__FILE__, __LINE__);
++  if (!suspend_info.suspend) {
++    unlock_suspend_info(__FILE__, __LINE__);
++    unbind_variable(IN_SAFEPOINT, self);
++    done |= check_pending_interrupts();
++    SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
++    odprintf("safepoint ends");
++    goto maybe_again;
++  }
++  if (suspend_info.reason == SUSPEND_REASON_GCING) {
++    if (suspend_info.gc_thread == self) {
++      unlock_suspend_info(__FILE__, __LINE__);
++    } else
++    if (thread_may_suspend_for_gc()) {
++      suspend();
++      done = 1;
++    } else {
++      unlock_suspend_info(__FILE__, __LINE__);
++      lose("suspend_info.reason = SUSPEND_REASON_GCING, !thread_may_suspend_for_gc()");
++    }
++  } else
++  if (suspend_info.reason == SUSPEND_REASON_GC) {
++    if (self == suspend_info.gc_thread) {
++      unlock_suspend_info(__FILE__, __LINE__);
++    } else
++    if (suspend_info.phase == 1) {
++			if (thread_may_suspend_for_gc()) {
++				suspend();
++        bound = 0;
++        unbind_variable(IN_SAFEPOINT, self);
++				check_pending_interrupts();
++				SetSymbolValue(STOP_FOR_GC_PENDING, NIL, self);
++        done = 1;
++			} else {
++				suspend_briefly();
++				SetSymbolValue(STOP_FOR_GC_PENDING, T, self);
++				SetSymbolValue(INTERRUPT_PENDING, T, self);
++        done = 1;
++			}
++		} else {
++			if (thread_may_suspend_for_gc()) {
++				suspend();
++        bound = 0;
++        unbind_variable(IN_SAFEPOINT, self);
++				check_pending_interrupts();
++        done = 1;
++			} else {
++        unlock_suspend_info(__FILE__, __LINE__);
++      }
++		}
++  } else
++  if (suspend_info.reason == SUSPEND_REASON_INTERRUPT) {
++    if (suspend_info.interrupted_thread != self) {
++      suspend_briefly();
++      done = 1;
++    } else
++    if (thread_may_interrupt()) {
++      suspend();
++      bound = 0;
++      unbind_variable(IN_SAFEPOINT, self);
++      check_pending_interrupts();
++      done = 1;
++    } else {
++      suspend_briefly();
++      done = 1;
++    }
++  } else {
++    lose("in gc_safepoint, fell through");
++  }
++  if (bound)
++    unbind_variable(IN_SAFEPOINT, self);
++  odprintf("safepoint ends");
++  
++  maybe_again:
++  if (done) {
++    done = 0;
++    goto again;
++  }
++  SetLastError(lasterror);
++}
++
++void pthread_np_pending_signal_handler(int signum)
++{
++  if (signum == SIG_STOP_FOR_GC || signum == SIGHUP) {
++    gc_safepoint();
++  }
++}
++
++lispobj fn_by_pc(unsigned int pc)
++{
++  lispobj obj = (lispobj)search_read_only_space((void*)pc);
++  if (!obj)
++    obj = (lispobj)search_static_space((void*)pc);
++  if (!obj)
++    obj = (lispobj)search_dynamic_space((void*)pc);
++  return obj;
++}
++
++int pc_in_lisp_code(unsigned int pc)
++{
++  return
++    search_read_only_space((void*)pc) != NULL ||
++    search_static_space((void*)pc) != NULL ||
++    search_dynamic_space((void*)pc) != NULL;
++}
++
++int thread_get_pc(struct thread *th)
++{
++  CONTEXT ctx;
++  pthread_np_get_thread_context(th->os_thread, &ctx);
++  return ctx.Eip;
++}
++
++int thread_get_pc_susp(struct thread *th)
++{
++  CONTEXT ctx;
++  pthread_np_suspend(th->os_thread);
++  pthread_np_get_thread_context(th->os_thread, &ctx);
++  pthread_np_resume(th->os_thread);
++  return ctx.Eip;
++}
++
++int thread_in_lisp_code(struct thread *th)
++{
++  return pc_in_lisp_code(thread_get_pc(th));
++}
++
++const char * fn_name(lispobj fn)
++{
++  return "unknown";
++}
++
++const char * t_nil_s(lispobj symbol)
++{
++  struct tread * self = arch_os_get_current_thread();
++  return t_nil_str(SymbolValue(symbol, self));
++}
++
++void log_gc_state(const char * msg)
++{
++  odprintf(msg);
++}
++
++#endif
++
+ /* To avoid deadlocks when gc stops the world all clients of each
+  * mutex must enable or disable SIG_STOP_FOR_GC for the duration of
+  * holding the lock, but they must agree on which. */
+@@ -615,6 +1266,10 @@ void gc_stop_the_world()
+ {
+     struct thread *p,*th=arch_os_get_current_thread();
+     int status, lock_ret;
++#ifdef LISP_FEATURE_WIN32
++    odprintf("stopping the world");
++#endif
++    
+ #ifdef LOCK_CREATE_THREAD
+     /* KLUDGE: Stopping the thread during pthread_create() causes deadlock
+      * on FreeBSD. */
+@@ -623,18 +1278,47 @@ void gc_stop_the_world()
+     gc_assert(lock_ret == 0);
+     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:got create_thread_lock\n"));
+ #endif
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++    odprintf("taking world lock");
++    pthread_mutex_lock(&suspend_info.world_lock);
++    
++    odprintf("phase 1 begins");
++    odprintf("taking lock");
++    lock_suspend_info(__FILE__, __LINE__);
++    odprintf("took the lock");
++    suspend_info.reason = SUSPEND_REASON_GC;
++    suspend_info.gc_thread = arch_os_get_current_thread();
++    suspend_info.phase = 1;
++    suspend_info.suspend = 1;
++    unlock_suspend_info(__FILE__, __LINE__);
++    
++    unmap_gc_page();
++    odprintf("gc_page unmapped");
++
++    odprintf("taking all_threads_lock");
++#endif
++
+     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:waiting on lock\n"));
+     /* keep threads from starting while the world is stopped. */
+-    lock_ret = pthread_mutex_lock(&all_threads_lock);      \
++    lock_ret = pthread_mutex_lock(&all_threads_lock);
+     gc_assert(lock_ret == 0);
+ 
+     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:got lock\n"));
+     /* stop all other threads by sending them SIG_STOP_FOR_GC */
++    /* Phase 1, make sure that all threads are: 1) have noted the need to interrupt; or 2) in gc-safe code */
++    
+     for(p=all_threads; p; p=p->next) {
++#ifdef LISP_FEATURE_WIN32
++        odprintf("looking at 0x%p", p->os_thread);
++#endif
+         gc_assert(p->os_thread != 0);
+         FSHOW_SIGNAL((stderr,"/gc_stop_the_world: thread=%lu, state=%x\n",
+                       p->os_thread, thread_state(p)));
++#ifdef LISP_FEATURE_WIN32
++        odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
++#endif
+         if((p!=th) && ((thread_state(p)==STATE_RUNNING))) {
++#ifndef LISP_FEATURE_WIN32
+             FSHOW_SIGNAL((stderr,"/gc_stop_the_world: suspending thread %lu\n",
+                           p->os_thread));
+             /* We already hold all_thread_lock, P can become DEAD but
+@@ -647,11 +1331,30 @@ void gc_stop_the_world()
+                 lose("cannot send suspend thread=%lu: %d, %s\n",
+                      p->os_thread,status,strerror(status));
+             }
++#else
++          if (SymbolValue(GC_SAFE, p) == T) continue;
++          odprintf("waiting for 0x%p to change state from RUNNING");
++          wait_for_thread_state_change(p, STATE_RUNNING);
++          odprintf("0x%p has changed state to %s", p->os_thread, get_thread_state_as_string(p));
++#endif
+         }
+     }
++
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++    /* Phase 2, wait until all threads 1) suspend themselves; or 2) are in gc-safe code */
++    
++    odprintf("phase 2");
++    
++    lock_suspend_info(__FILE__, __LINE__);
++    map_gc_page();
++    suspend_info.phase = 2;
++    unlock_suspend_info(__FILE__, __LINE__);
++#endif
++    
+     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:signals sent\n"));
+     for(p=all_threads;p;p=p->next) {
+         if (p!=th) {
++#ifndef LISP_FEATURE_WIN32
+             FSHOW_SIGNAL
+                 ((stderr,
+                   "/gc_stop_the_world: waiting for thread=%lu: state=%x\n",
+@@ -659,9 +1362,26 @@ void gc_stop_the_world()
+             wait_for_thread_state_change(p, STATE_RUNNING);
+             if (p->state == STATE_RUNNING)
+                 lose("/gc_stop_the_world: unexpected state");
++#else
++            odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
++            if (SymbolValue(GC_SAFE, p) == NIL) {
++              if (thread_state(p) == STATE_SUSPENDED_BRIEFLY) {
++                set_thread_state(p, STATE_RUNNING);
++                odprintf("waiting for 0x%p to change state from RUNNING");
++                wait_for_thread_state_change(p, STATE_RUNNING);
++              }
++            }
++            odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
++#endif
+         }
+     }
+     FSHOW_SIGNAL((stderr,"/gc_stop_the_world:end\n"));
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++    lock_suspend_info(__FILE__, __LINE__);
++    suspend_info.reason = SUSPEND_REASON_GCING;
++    unlock_suspend_info(__FILE__, __LINE__);
++    odprintf("stopped the world");
++#endif
+ }
+ 
+ void gc_start_the_world()
+@@ -673,15 +1393,29 @@ void gc_start_the_world()
+      * all_threads, but it won't have been stopped so won't need
+      * restarting */
+     FSHOW_SIGNAL((stderr,"/gc_start_the_world:begin\n"));
++  
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++    odprintf("starting the world");
++
++    lock_suspend_info(__FILE__, __LINE__);
++    suspend_info.suspend = 0;
++    unlock_suspend_info(__FILE__, __LINE__);
++#endif
++    
+     for(p=all_threads;p;p=p->next) {
+         gc_assert(p->os_thread!=0);
+         if (p!=th) {
+             lispobj state = thread_state(p);
++#ifdef LISP_FEATURE_WIN32
++            odprintf("looking at 0x%p, state is %s, GC_SAFE is %s", p->os_thread, get_thread_state_as_string(p), t_nil_str(SymbolValue(GC_SAFE, p)));
++#endif
+             if (state != STATE_DEAD) {
++#ifndef LISP_FEATURE_WIN32
+                 if(state != STATE_SUSPENDED) {
+                     lose("gc_start_the_world: wrong thread state is %d\n",
+                          fixnum_value(state));
+                 }
++#endif
+                 FSHOW_SIGNAL((stderr, "/gc_start_the_world: resuming %lu\n",
+                               p->os_thread));
+                 set_thread_state(p, STATE_RUNNING);
+@@ -691,11 +1425,17 @@ void gc_start_the_world()
+ 
+     lock_ret = pthread_mutex_unlock(&all_threads_lock);
+     gc_assert(lock_ret == 0);
++#ifdef LISP_FEATURE_WIN32
++    pthread_mutex_unlock(&suspend_info.world_lock);
++#endif
+ #ifdef LOCK_CREATE_THREAD
+     lock_ret = pthread_mutex_unlock(&create_thread_lock);
+     gc_assert(lock_ret == 0);
+ #endif
+ 
++#ifdef LISP_FEATURE_WIN32
++    odprintf("started the world");
++#endif
+     FSHOW_SIGNAL((stderr,"/gc_start_the_world:end\n"));
+ }
+ #endif
+@@ -704,7 +1444,12 @@ int
+ thread_yield()
+ {
+ #ifdef LISP_FEATURE_SB_THREAD
++#if defined(LISP_FEATURE_WIN32)
++    SwitchToThread();
++    return 0;
++#else
+     return sched_yield();
++#endif
+ #else
+     return 0;
+ #endif
+@@ -730,6 +1475,9 @@ int
+ kill_safely(os_thread_t os_thread, int signal)
+ {
+     FSHOW_SIGNAL((stderr,"/kill_safely: %lu, %d\n", os_thread, signal));
++#if defined(LISP_FEATURE_WIN32)
++    return 0;
++#else
+     {
+ #ifdef LISP_FEATURE_SB_THREAD
+         sigset_t oldset;
+@@ -776,4 +1524,5 @@ kill_safely(os_thread_t os_thread, int signal)
+         }
+ #endif
+     }
++#endif
+ }
+diff --git a/src/runtime/thread.h b/src/runtime/thread.h
+index 3de5415..55d2e5a 100644
+--- a/src/runtime/thread.h
++++ b/src/runtime/thread.h
+@@ -22,9 +22,30 @@ struct alloc_region { };
+ #define STATE_RUNNING (make_fixnum(1))
+ #define STATE_SUSPENDED (make_fixnum(2))
+ #define STATE_DEAD (make_fixnum(3))
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++#define STATE_SUSPENDED_BRIEFLY (make_fixnum(4))
++#endif
+ 
+ #ifdef LISP_FEATURE_SB_THREAD
+ 
++#ifdef LISP_FEATURE_WIN32
++
++enum threads_suspend_reason { SUSPEND_REASON_NONE, SUSPEND_REASON_GC, SUSPEND_REASON_INTERRUPT, SUSPEND_REASON_GCING };
++
++struct threads_suspend_info {
++  int suspend;
++  pthread_mutex_t world_lock;
++  pthread_mutex_t lock;
++  enum threads_suspend_reason reason;
++  int phase;
++  struct thread * gc_thread;
++  struct thread * interrupted_thread;
++};
++
++extern struct threads_suspend_info suspend_info;
++
++#endif
++
+ /* Only access thread state with blockables blocked. */
+ static inline lispobj
+ thread_state(struct thread *thread)
+@@ -36,10 +57,33 @@ thread_state(struct thread *thread)
+     return state;
+ }
+ 
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++static const char * get_thread_state_string(lispobj state)
++{
++  if (state == STATE_RUNNING) return "RUNNING";
++  if (state == STATE_SUSPENDED) return "SUSPENDED";
++  if (state == STATE_DEAD) return "DEAD";
++  if (state == STATE_SUSPENDED_BRIEFLY) return "SUSPENDED_BRIEFLY";
++  return "unknown";
++}
++
++static const char * get_thread_state_as_string(struct thread * thread)
++{
++  return get_thread_state_string(thread_state(thread));
++}
++#endif
++
+ static inline void
+ set_thread_state(struct thread *thread, lispobj state)
+ {
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++    lispobj old_state;
++#endif
+     pthread_mutex_lock(thread->state_lock);
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++    old_state = thread->state;
++    odprintf("changing thread state of 0x%p from %s to %s", thread->os_thread, get_thread_state_string(old_state), get_thread_state_string(state));
++#endif
+     thread->state = state;
+     pthread_cond_broadcast(thread->state_cond);
+     pthread_mutex_unlock(thread->state_lock);
+@@ -215,6 +259,10 @@ static inline struct thread *arch_os_get_current_thread(void)
+ #if defined(LISP_FEATURE_SB_THREAD)
+ #if defined(LISP_FEATURE_X86)
+     register struct thread *me=0;
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++    __asm__ __volatile__ ("movl %%fs:0xE10+(4*63), %0" : "=r"(me) :);
++    return me;
++#endif
+     if(all_threads) {
+ #if defined(LISP_FEATURE_DARWIN) && defined(LISP_FEATURE_RESTORE_FS_SEGMENT_REGISTER_FROM_TLS)
+         sel_t sel;
+diff --git a/src/runtime/win32-os.c b/src/runtime/win32-os.c
+index c674ca6..6a8fe78 100644
+--- a/src/runtime/win32-os.c
++++ b/src/runtime/win32-os.c
+@@ -26,13 +26,14 @@
+  * yet.
+  */
+ 
++#define _WIN32_WINNT 0x0500
++#define RtlUnwind RtlUnwind_FromSystemHeaders
+ #include <malloc.h>
+ #include <stdio.h>
+ #include <sys/param.h>
+ #include <sys/file.h>
+ #include <io.h>
+ #include "sbcl.h"
+-#include "./signal.h"
+ #include "os.h"
+ #include "arch.h"
+ #include "globals.h"
+@@ -46,7 +47,6 @@
+ #include "dynbind.h"
+ 
+ #include <sys/types.h>
+-#include <signal.h>
+ #include <sys/time.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
+@@ -68,6 +68,73 @@ int linux_sparc_siginfo_bug = 0;
+ int linux_supports_futex=0;
+ #endif
+ 
++#include <stdarg.h>
++
++#undef  RtlUnwind
++/* missing definitions for modern mingws */
++#ifndef EH_UNWINDING
++#define EH_UNWINDING 0x02
++#endif
++#ifndef EH_EXIT_UNWIND
++#define EH_EXIT_UNWIND 0x04
++#endif
++
++void odprint(const char * msg)
++{
++  char buf[1024];
++  DWORD lastError = GetLastError();
++  #if defined(LISP_FEATURE_SB_THREAD)
++  sprintf(buf, "[0x%p] %s\n", pthread_self(), msg);
++  OutputDebugString(buf);
++  #else
++  OutputDebugString(msg);
++  #endif
++  SetLastError(lastError);
++}
++const char * t_nil_s(lispobj symbol);
++
++void odprintf_(const char * fmt, ...)
++{
++  char buf[1024];
++  va_list args;
++  int n;
++  DWORD lastError = GetLastError();
++  struct thread * self = arch_os_get_current_thread();
++  #if defined(LISP_FEATURE_SB_THREAD)
++  if (self) {
++    sprintf(buf, "[0x%p] %s, %s, %s, %s ", pthread_self(), t_nil_s(GC_SAFE), t_nil_s(GC_INHIBIT), t_nil_s(INTERRUPTS_ENABLED), t_nil_s(IN_SAFEPOINT));
++  } else {
++    sprintf(buf, "[0x%p] (arch_os_get_current_thread() is NULL) ", pthread_self());
++  }
++  #else
++  buf[0] = 0;
++  #endif
++  n = strlen(buf);
++  va_start(args, fmt);
++  vsprintf(buf + n, fmt, args);
++  va_end(args);
++  n = strlen(buf);
++  buf[n] = '\n';
++  buf[n + 1] = 0;
++  OutputDebugString(buf);
++  SetLastError(lastError);
++}
++
++unsigned long block_deferrables_and_return_mask()
++{
++  sigset_t sset;
++  block_deferrable_signals(0, &sset);
++  return (unsigned long)sset;
++}
++
++#if defined(LISP_FEATURE_SB_THREAD)
++void apply_sigmask(unsigned long sigmask)
++{
++  sigset_t sset = (sigset_t)sigmask;
++  pthread_sigmask(SIG_SETMASK, &sset, 0);
++}
++#endif
++
+ /* The exception handling function looks like this: */
+ EXCEPTION_DISPOSITION handle_exception(EXCEPTION_RECORD *,
+                                        struct lisp_exception_frame *,
+@@ -107,6 +174,106 @@ inline static void *get_stack_frame(void)
+ }
+ #endif
+ 
++#if defined(LISP_FEATURE_SB_THREAD)
++void alloc_gc_page()
++{
++  void* addr = VirtualAlloc(GC_SAFEPOINT_PAGE_ADDR, 4, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
++  if (!addr) {
++    DWORD lastError = GetLastError();
++    lose("in alloc_gc_page, VirtualAlloc returned NULL");
++  }
++}
++
++void map_gc_page()
++{
++  DWORD oldProt;
++  if (!VirtualProtect(GC_SAFEPOINT_PAGE_ADDR, 4, PAGE_READWRITE, &oldProt)) {
++    DWORD lastError = GetLastError();
++    lose("in map_gc_page, VirtualProtect returned FALSE");
++  }
++}
++
++void unmap_gc_page()
++{
++  DWORD oldProt;
++  if (!VirtualProtect(GC_SAFEPOINT_PAGE_ADDR, 4, PAGE_NOACCESS, &oldProt)) {
++    DWORD lastError = GetLastError();
++    lose("in unmap_gc_page, VirtualProtect returned FALSE");
++  }
++}
++#endif
++
++#if defined(LISP_FEATURE_SB_THREAD)
++/* We want to get a slot in TIB that (1) is available at constant
++   offset, (2) is our private property, so libraries wouldn't legally
++   override it, (3) contains something predefined for threads created
++   out of our sight.
++
++   Low 64 TLS slots are adressable directly, starting with
++   FS:[#xE10]. When SBCL runtime is initialized, some of the low slots
++   may be already in use by its prerequisite DLLs, as DllMain()s and
++   TLS callbacks have been called already. But slot 63 is unlikely to
++   be reached at this point: one slot per DLL that needs it is the
++   common practice, and many system DLLs use predefined TIB-based
++   areas outside conventional TLS storage and don't need TLS slots.
++   With our current dependencies, even slot 2 is observed to be free
++   (as of WinXP and wine).
++
++   Now we'll call TlsAlloc() repeatedly until slot 63 is officially
++   assigned to us, then TlsFree() all other slots for normal use. TLS
++   slot 63, alias FS:[#.(+ #xE10 (* 4 63))], now belongs to us.
++
++   To summarize, let's list the assumptions we make:
++
++   - TIB, which is FS segment base, contains first 64 TLS slots at the
++     offset #xE10 (i.e. TIB layout compatibility);
++   - TLS slots are allocated from lower to higher ones;
++   - All libraries together with CRT startup have not requested 64
++     slots yet.
++
++   All these assumptions together don't seem to be less warranted than
++   the availability of TIB arbitrary data slot for our use. There are
++   some more reasons to prefer slot 63 over TIB arbitrary data: (1) if
++   our assumptions for slot 63 are violated, it will be detected at
++   startup instead of causing some system-specific unreproducible
++   problems afterwards, depending on OS and loaded foreign libraries;
++   (2) if getting slot 63 reliably with our current approach will
++   become impossible for some future Windows version, we can add TLS
++   callback directory to SBCL binary; main image TLS callback is
++   started before _any_ TLS slot is allocated by libraries, and
++   some C compiler vendors rely on this fact. */
++
++void os_preinit()
++{
++    DWORD slots[TLS_MINIMUM_AVAILABLE];
++    DWORD key;
++    int n_slots = 0, i;
++    for (i=0; i<TLS_MINIMUM_AVAILABLE; ++i) {
++        key = TlsAlloc();
++        if (key == OUR_TLS_INDEX) {
++            if (TlsGetValue(key)!=NULL)
++                lose("TLS slot assertion failed: fresh slot value is not NULL");
++            TlsSetValue(OUR_TLS_INDEX, (intptr_t)0xFEEDBAC4);
++            if ((intptr_t)(void*)arch_os_get_current_thread()!=(intptr_t)0xFEEDBAC4)
++                lose("TLS slot assertion failed: TIB layout change detected");
++            TlsSetValue(OUR_TLS_INDEX, (intptr_t)0xDEADBEAD);
++            if ((intptr_t)(void*)arch_os_get_current_thread()!=(intptr_t)0xDEADBEAD)
++                lose("TLS slot assertion failed: TIB content unstable");
++            TlsSetValue(OUR_TLS_INDEX, NULL);
++            break;
++        }
++        slots[n_slots++]=key;
++    }
++    for (i=0; i<n_slots; ++i) {
++        TlsFree(slots[i]);
++    }
++    if (key!=OUR_TLS_INDEX) {
++        lose("TLS slot assertion failed: slot 63 is unavailable "
++             "(last TlsAlloc() returned %u)",key);
++    }
++}
++#endif
++
+ void os_init(char *argv[], char *envp[])
+ {
+     SYSTEM_INFO system_info;
+@@ -115,6 +282,9 @@ void os_init(char *argv[], char *envp[])
+     os_vm_page_size = system_info.dwPageSize;
+ 
+     base_seh_frame = get_seh_frame();
++#if defined(LISP_FEATURE_SB_THREAD)
++    alloc_gc_page();
++#endif
+ }
+ 
+ 
+@@ -199,6 +369,14 @@ os_invalidate(os_vm_address_t addr, os_vm_size_t len)
+     }
+ }
+ 
++void
++os_invalidate_free(os_vm_address_t addr, os_vm_size_t len)
++{
++    if (!VirtualFree(addr, 0, MEM_RELEASE)) {
++        fprintf(stderr, "VirtualFree: 0x%lx.\n", GetLastError());
++    }
++}
++
+ /*
+  * os_map() is called to map a chunk of the core file into memory.
+  *
+@@ -301,7 +479,7 @@ extern boolean internal_errors_enabled;
+ #ifdef LISP_FEATURE_UD2_BREAKPOINTS
+ #define IS_TRAP_EXCEPTION(exception_record, context) \
+     (((exception_record)->ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION) && \
+-     (((unsigned short *)((context)->Eip))[0] == 0x0b0f))
++     (((unsigned short *)((context.win32_context)->Eip))[0] == 0x0b0f))
+ #define TRAP_CODE_WIDTH 2
+ #else
+ #define IS_TRAP_EXCEPTION(exception_record, context) \
+@@ -320,43 +498,78 @@ handle_exception(EXCEPTION_RECORD *exception_record,
+                  CONTEXT *context,
+                  void *dispatcher_context)
+ {
++    DWORD lasterror = GetLastError();
++    os_context_t ctx;
++    ctx.win32_context = context;
++#if defined(LISP_FEATURE_SB_THREAD)
++    struct thread * self = arch_os_get_current_thread();
++    pthread_sigmask(SIG_SETMASK, NULL, &ctx.sigmask);
++    pthread_sigmask(SIG_BLOCK, &blockable_sigset, NULL);
++#endif
++    /* For EXCEPTION_ACCESS_VIOLATION only. */
++    void *fault_address = (void *)exception_record->ExceptionInformation[1];
++    odprintf("handle exception, EIP = 0x%p, code = 0x%p (addr = 0x%p)", context->Eip, exception_record->ExceptionCode, fault_address);
+     if (exception_record->ExceptionFlags & (EH_UNWINDING | EH_EXIT_UNWIND)) {
+         /* If we're being unwound, be graceful about it. */
+ 
+-        /* Undo any dynamic bindings. */
++#if defined(LISP_FEATURE_SB_THREAD)
++        pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
++#endif
++        /* Undo any dynamic bindings, including *gc-safe*. */
+         unbind_to_here(exception_frame->bindstack_pointer,
+                        arch_os_get_current_thread());
+-
++#if defined(LISP_FEATURE_SB_THREAD)
++        pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
++        gc_safepoint();
++        SetLastError(lasterror);
++#endif
+         return ExceptionContinueSearch;
+     }
+ 
+-    /* For EXCEPTION_ACCESS_VIOLATION only. */
+-    void *fault_address = (void *)exception_record->ExceptionInformation[1];
+ 
+     if (single_stepping &&
+         exception_record->ExceptionCode == EXCEPTION_SINGLE_STEP) {
+         /* We are doing a displaced instruction. At least function
+          * end breakpoints uses this. */
+-        restore_breakpoint_from_single_step(context);
++        restore_breakpoint_from_single_step(&ctx);
++        #if defined(LISP_FEATURE_SB_THREAD)
++        pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
++        gc_safepoint();
++        #endif
++        SetLastError(lasterror);
+         return ExceptionContinueExecution;
+     }
+ 
+-    if (IS_TRAP_EXCEPTION(exception_record, context)) {
++    if (IS_TRAP_EXCEPTION(exception_record, ctx)) {
+         unsigned char trap;
++
+         /* This is just for info in case the monitor wants to print an
+          * approximation. */
+-        current_control_stack_pointer =
+-            (lispobj *)*os_context_sp_addr(context);
++        access_control_stack_pointer(self) =
++            (lispobj *)*os_context_sp_addr(&ctx);
+         /* Unlike some other operating systems, Win32 leaves EIP
+          * pointing to the breakpoint instruction. */
+-        context->Eip += TRAP_CODE_WIDTH;
++        ctx.win32_context->Eip += TRAP_CODE_WIDTH;
+         /* Now EIP points just after the INT3 byte and aims at the
+          * 'kind' value (eg trap_Cerror). */
+-        trap = *(unsigned char *)(*os_context_pc_addr(context));
+-        handle_trap(context, trap);
++        trap = *(unsigned char *)(*os_context_pc_addr(&ctx));
++        handle_trap(&ctx, trap);
++        #if defined(LISP_FEATURE_SB_THREAD)
++        pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
++        gc_safepoint();
++        #endif
++        SetLastError(lasterror);
+         /* Done, we're good to go! */
+         return ExceptionContinueExecution;
+     }
++    #if defined(LISP_FEATURE_SB_THREAD)
++    else if (exception_record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault_address == GC_SAFEPOINT_PAGE_ADDR) {
++      pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
++      gc_safepoint();
++      SetLastError(lasterror);
++      return ExceptionContinueExecution;
++    }
++    #endif
+     else if (exception_record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+              (is_valid_lisp_addr(fault_address) ||
+               is_linkage_table_addr(fault_address))) {
+@@ -389,12 +602,24 @@ handle_exception(EXCEPTION_RECORD *exception_record,
+                         gencgc_handle_wp_violation(fault_address);
+                     }
+                 }
++                #if defined(LISP_FEATURE_SB_THREAD)
++                pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
++                gc_safepoint();
++                #endif
++                SetLastError(lasterror);
+                 return ExceptionContinueExecution;
+             }
+ 
+-        } else if (gencgc_handle_wp_violation(fault_address)) {
+-            /* gc accepts the wp violation, so resume where we left off. */
+-            return ExceptionContinueExecution;
++        } else {
++            if (gencgc_handle_wp_violation(fault_address)) {
++              #if defined(LISP_FEATURE_SB_THREAD)
++              pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
++              gc_safepoint();
++              #endif
++              SetLastError(lasterror);
++              /* gc accepts the wp violation, so resume where we left off. */
++              return ExceptionContinueExecution;
++          }
+         }
+ 
+         /* All else failed, drop through to the lisp-side exception handler. */
+@@ -416,11 +641,15 @@ handle_exception(EXCEPTION_RECORD *exception_record,
+          * aren't supposed to happen during cold init or reinit
+          * anyway. */
+ 
+-        fake_foreign_function_call(context);
+-
++        fake_foreign_function_call(&ctx);
++	
++        #if defined(LISP_FEATURE_SB_THREAD)
++        pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
++        #endif
++        
+         /* Allocate the SAP objects while the "interrupts" are still
+          * disabled. */
+-        context_sap = alloc_sap(context);
++        context_sap = alloc_sap(&ctx);
+         exception_record_sap = alloc_sap(exception_record);
+ 
+         /* The exception system doesn't automatically clear pending
+@@ -433,7 +662,11 @@ handle_exception(EXCEPTION_RECORD *exception_record,
+                  exception_record_sap);
+ 
+         /* If Lisp doesn't nlx, we need to put things back. */
+-        undo_fake_foreign_function_call(context);
++        undo_fake_foreign_function_call(&ctx);
++        #if defined(LISP_FEATURE_SB_THREAD)
++        gc_safepoint();
++        #endif
++        SetLastError(lasterror);
+ 
+         /* FIXME: HANDLE-WIN32-EXCEPTION should be allowed to decline */
+         return ExceptionContinueExecution;
+@@ -455,10 +688,15 @@ handle_exception(EXCEPTION_RECORD *exception_record,
+ 
+     fflush(stderr);
+ 
+-    fake_foreign_function_call(context);
++    fake_foreign_function_call(&ctx);
+     lose("Exception too early in cold init, cannot continue.");
+ 
+     /* FIXME: WTF? How are we supposed to end up here? */
++    #if defined(LISP_FEATURE_SB_THREAD)
++    pthread_sigmask(SIG_SETMASK, &ctx.sigmask, NULL);
++    gc_safepoint();
++    SetLastError(lasterror);
++    #endif
+     return ExceptionContinueSearch;
+ }
+ 
+diff --git a/src/runtime/win32-os.h b/src/runtime/win32-os.h
+index a09c37f..f810a79 100644
+--- a/src/runtime/win32-os.h
++++ b/src/runtime/win32-os.h
+@@ -9,6 +9,9 @@
+  * files for more information.
+  */
+ 
++#define _WIN32_WINNT 0x0500
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
+ #include <stdlib.h>
+ #include <sys/types.h>
+ #include <string.h>
+@@ -16,8 +19,6 @@
+ #include <sys/stat.h>
+ #include <unistd.h>
+ 
+-#define WIN32_LEAN_AND_MEAN
+-#include <windows.h>
+ #include "target-arch-os.h"
+ #include "target-arch.h"
+ 
+@@ -33,6 +34,7 @@ typedef void *siginfo_t;
+ #define OS_VM_PROT_WRITE   2
+ #define OS_VM_PROT_EXECUTE 4
+ 
++#define OUR_TLS_INDEX 63
+ #define SIG_MEMORY_FAULT SIGSEGV
+ 
+ #define SIG_STOP_FOR_GC (SIGRTMIN+1)
+@@ -48,3 +50,4 @@ struct lisp_exception_frame {
+ void wos_install_interrupt_handlers(struct lisp_exception_frame *handler);
+ char *dirname(char *path);
+ 
++void os_invalidate_free(os_vm_address_t addr, os_vm_size_t len);
+diff --git a/src/runtime/x86-arch.c b/src/runtime/x86-arch.c
+index cbb6fb4..250ab96 100644
+--- a/src/runtime/x86-arch.c
++++ b/src/runtime/x86-arch.c
+@@ -18,7 +18,6 @@
+ #include "os.h"
+ #include "arch.h"
+ #include "lispregs.h"
+-#include "signal.h"
+ #include "alloc.h"
+ #include "interrupt.h"
+ #include "interr.h"
+@@ -78,7 +77,7 @@ context_eflags_addr(os_context_t *context)
+ #elif defined __NetBSD__
+     return &(context->uc_mcontext.__gregs[_REG_EFL]);
+ #elif defined LISP_FEATURE_WIN32
+-    return (int *)&context->EFlags;
++    return (int *)&context->win32_context->EFlags;
+ #else
+ #error unsupported OS
+ #endif
+diff --git a/src/runtime/x86-assem.S b/src/runtime/x86-assem.S
+index 5a89a4a..349b327 100644
+--- a/src/runtime/x86-assem.S
++++ b/src/runtime/x86-assem.S
+@@ -122,6 +122,11 @@ GNAME(call_into_c):
+ 	fstp	%st(0)
+ 	fstp	%st(0)
+ 
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++	pusha
++	call GNAME(gc_enter_safe_region)
++	popa
++#endif
+ 	call	*%eax		  # normal callout using Lisp stack
+ 	movl	%eax,%ecx	  # remember integer return value
+ 
+@@ -145,6 +150,11 @@ GNAME(call_into_c):
+ 
+ /* Restore the return value. */
+ 	movl	%ecx,%eax	# maybe return value
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++	pusha
++	call GNAME(gc_leave_region)
++	popa
++#endif
+ 
+ /* Return. */
+ 	jmp	*%ebx
+@@ -163,6 +173,11 @@ Lfp_rtn_value:
+ 
+ /* We don't need to restore eax, because the result is in st(0). */
+ 
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++	pusha
++	call GNAME(gc_leave_region)
++	popa
++#endif
+ /* Return. FIXME: It would be nice to restructure this to use RET. */	
+ 	jmp	*%ebx
+ 
+@@ -200,6 +215,13 @@ GNAME(call_into_lisp_first_time):
+ 	
+ 	.align	align_16byte,0x90
+ GNAME(call_into_lisp):
++
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++	pusha
++	call GNAME(gc_enter_unsafe_region)
++	popa
++#endif
++  
+ 	pushl	%ebp		# Save old frame pointer.
+ 	movl	%esp,%ebp	# Establish new frame.
+ Lstack:
+@@ -261,8 +283,13 @@ Ldone:
+ #ifdef LISP_FEATURE_WIN32
+ 	/* Establish an SEH frame. */
+ #ifdef LISP_FEATURE_SB_THREAD
+-	/* FIXME: need to save BSP here. */
+-#error "need to save BSP here, but don't know how yet."
++	/* Save binding stack pointer */
++	subl $4, %esp
++	pushl %eax
++	movl %fs:0xE10+(4*63), %eax
++	movl THREAD_BINDING_STACK_POINTER_OFFSET(%eax), %eax
++	movl %eax, 4(%esp)
++	popl %eax
+ #else
+ 	pushl	BINDING_STACK_POINTER + SYMBOL_VALUE_OFFSET
+ #endif
+@@ -306,6 +333,11 @@ LsingleValue:
+ 	
+ 	popl	%ebp		# c-sp
+ 	movl	%edx,%eax	# c-val
++#if defined(LISP_FEATURE_WIN32) && defined(LISP_FEATURE_SB_THREAD)
++	pusha
++	call GNAME(gc_leave_region)
++	popa
++#endif
+ 	ret
+ 	SIZE(GNAME(call_into_lisp))
+ 
+@@ -539,6 +571,7 @@ DEFINE_ALLOC_TO_REG(alloc_16_to_edi,%edi,$16)
+ #define START_REGION GNAME(boxed_region)
+ #endif
+ 
++/* FIXME Win32 */
+ #define ALLOC_OVERFLOW(size)                                    \
+         /* Calculate the size for the allocation. */            \
+         subl    START_REGION,size;                              \
+diff --git a/src/runtime/x86-win32-os.c b/src/runtime/x86-win32-os.c
+index fc076de..62b5193 100644
+--- a/src/runtime/x86-win32-os.c
++++ b/src/runtime/x86-win32-os.c
+@@ -22,7 +22,6 @@
+ #include <unistd.h>
+ #include <errno.h>
+ 
+-#include "./signal.h"
+ #include "os.h"
+ #include "arch.h"
+ #include "globals.h"
+@@ -32,7 +31,7 @@
+ #include "sbcl.h"
+ 
+ #include <sys/types.h>
+-#include <signal.h>
++#include "runtime.h"
+ #include <sys/time.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
+@@ -86,40 +85,7 @@ int arch_os_thread_init(struct thread *thread)
+     }
+ 
+ #ifdef LISP_FEATURE_SB_THREAD
+-    /* this must be called from a function that has an exclusive lock
+-     * on all_threads
+-     */
+-    struct user_desc ldt_entry = {
+-        1, 0, 0, /* index, address, length filled in later */
+-        1, MODIFY_LDT_CONTENTS_DATA, 0, 0, 0, 1
+-    };
+-    int n;
+-    get_spinlock(&modify_ldt_lock,thread);
+-    n=modify_ldt(0,local_ldt_copy,sizeof local_ldt_copy);
+-    /* get next free ldt entry */
+-
+-    if(n) {
+-        u32 *p;
+-        for(n=0,p=local_ldt_copy;*p;p+=LDT_ENTRY_SIZE/sizeof(u32))
+-            n++;
+-    }
+-    ldt_entry.entry_number=n;
+-    ldt_entry.base_addr=(unsigned long) thread;
+-    ldt_entry.limit=dynamic_values_bytes;
+-    ldt_entry.limit_in_pages=0;
+-    if (modify_ldt (1, &ldt_entry, sizeof (ldt_entry)) != 0) {
+-        modify_ldt_lock=0;
+-        /* modify_ldt call failed: something magical is not happening */
+-        return -1;
+-    }
+-    __asm__ __volatile__ ("movw %w0, %%fs" : : "q"
+-                          ((n << 3) /* selector number */
+-                           + (1 << 2) /* TI set = LDT */
+-                           + 3)); /* privilege level */
+-    thread->tls_cookie=n;
+-    modify_ldt_lock=0;
+-
+-    if(n<0) return 0;
++    TlsSetValue(OUR_TLS_INDEX,thread);
+ #endif
+ 
+     return 1;
+@@ -133,18 +99,25 @@ int arch_os_thread_cleanup(struct thread *thread) {
+     return 0;
+ }
+ 
++#if defined(LISP_FEATURE_SB_THREAD)
++sigset_t *os_context_sigmask_addr(os_context_t *context)
++{
++  return &context->sigmask;
++}
++#endif
++
+ os_context_register_t *
+ os_context_register_addr(os_context_t *context, int offset)
+ {
+     switch(offset) {
+-    case reg_EAX: return &context->Eax;
+-    case reg_ECX: return &context->Ecx;
+-    case reg_EDX: return &context->Edx;
+-    case reg_EBX: return &context->Ebx;
+-    case reg_ESP: return &context->Esp;
+-    case reg_EBP: return &context->Ebp;
+-    case reg_ESI: return &context->Esi;
+-    case reg_EDI: return &context->Edi;
++    case reg_EAX: return &context->win32_context->Eax;
++    case reg_ECX: return &context->win32_context->Ecx;
++    case reg_EDX: return &context->win32_context->Edx;
++    case reg_EBX: return &context->win32_context->Ebx;
++    case reg_ESP: return &context->win32_context->Esp;
++    case reg_EBP: return &context->win32_context->Ebp;
++    case reg_ESI: return &context->win32_context->Esi;
++    case reg_EDI: return &context->win32_context->Edi;
+     default: return 0;
+     }
+ }
+@@ -152,32 +125,32 @@ os_context_register_addr(os_context_t *context, int offset)
+ os_context_register_t *
+ os_context_pc_addr(os_context_t *context)
+ {
+-    return &context->Eip; /*  REG_EIP */
++    return &context->win32_context->Eip; /*  REG_EIP */
+ }
+ 
+ os_context_register_t *
+ os_context_sp_addr(os_context_t *context)
+ {
+-    return &context->Esp; /* REG_UESP */
++    return &context->win32_context->Esp; /* REG_UESP */
+ }
+ 
+ os_context_register_t *
+ os_context_fp_addr(os_context_t *context)
+ {
+-    return &context->Ebp; /* REG_EBP */
++    return &context->win32_context->Ebp; /* REG_EBP */
+ }
+ 
+ unsigned long
+ os_context_fp_control(os_context_t *context)
+ {
+-    return ((((context->FloatSave.ControlWord) & 0xffff) ^ 0x3f) |
+-            (((context->FloatSave.StatusWord) & 0xffff) << 16));
++    return ((((context->win32_context->FloatSave.ControlWord) & 0xffff) ^ 0x3f) |
++            (((context->win32_context->FloatSave.StatusWord) & 0xffff) << 16));
+ }
+ 
+ void
+ os_restore_fp_control(os_context_t *context)
+ {
+-    asm ("fldcw %0" : : "m" (context->FloatSave.ControlWord));
++    asm ("fldcw %0" : : "m" (context->win32_context->FloatSave.ControlWord));
+ }
+ 
+ void
+diff --git a/src/runtime/x86-win32-os.h b/src/runtime/x86-win32-os.h
+index e703338..b17c020 100644
+--- a/src/runtime/x86-win32-os.h
++++ b/src/runtime/x86-win32-os.h
+@@ -1,7 +1,13 @@
+ #ifndef _X86_WIN32_OS_H
+ #define _X86_WIN32_OS_H
+ 
+-typedef CONTEXT os_context_t;
++typedef struct os_context_t {
++  CONTEXT* win32_context;
++#if defined(LISP_FEATURE_SB_THREAD)
++  sigset_t sigmask;
++#endif
++} os_context_t;
++
+ typedef long os_context_register_t;
+ 
+ static inline os_context_t *arch_os_get_context(void **void_context)
+diff --git a/tests/threads.impure.lisp b/tests/threads.impure.lisp
+index 8914dda..226f6ae 100644
+--- a/tests/threads.impure.lisp
++++ b/tests/threads.impure.lisp
+@@ -196,6 +196,8 @@
+ ;;; For one of the interupt-thread tests, we want a foreign function
+ ;;; that does not make syscalls
+ 
++#-win32
++(progn
+ (with-open-file (o "threads-foreign.c" :direction :output :if-exists :supersede)
+   (format o "void loop_forever() { while(1) ; }~%"))
+ (sb-ext:run-program "/bin/sh"
+@@ -205,7 +207,7 @@
+ (sb-alien:load-shared-object (truename "threads-foreign.so"))
+ (sb-alien:define-alien-routine loop-forever sb-alien:void)
+ (delete-file "threads-foreign.c")
+-
++)
+ 
+ ;;; elementary "can we get a lock and release it again"
+ (with-test (:name (:mutex :basics))
+@@ -394,7 +396,11 @@
+   `(handler-case (progn (progn ,@body) nil)
+     (sb-ext:timeout () t)))
+ 
+-(with-test (:name (:semaphore :wait-forever))
++(with-test (:name (:semaphore :wait-forever)
++            :fails-on :win32)
++  #+win32
++  (error "No timeout support on win32")
++  #-win32
+   (let ((sem (make-semaphore :count 0)))
+     (assert (raises-timeout-p
+               (sb-ext:with-timeout 0.1
+@@ -529,10 +535,15 @@
+   (let ((child (test-interrupt (lambda () (loop)))))
+     (terminate-thread child)))
+ 
+-(with-test (:name (:interrupt-thread :interrupt-foreign-loop))
++(with-test (:name (:interrupt-thread :interrupt-foreign-loop)
++            :fails-on :win32)
++  #+win32 (error "Foreign loop is not interruptible on win32")
++  #-win32
+   (test-interrupt #'loop-forever :quit))
+ 
+-(with-test (:name (:interrupt-thread :interrupt-sleep))
++(with-test (:name (:interrupt-thread :interrupt-sleep)
++            :fails-on :win32)
++  #+win32 (error "Sleep is not interruptible on win32")
+   (let ((child (test-interrupt (lambda () (loop (sleep 2000))))))
+     (terminate-thread child)
+     (wait-for-threads (list child))))
+@@ -855,7 +866,9 @@
+      (wait-for-gc)
+      (decf sb-vm::*binding-stack-pointer* 2))))
+ 
+-(with-test (:name (:binding-stack-gc-safety))
++(with-test (:name (:binding-stack-gc-safety)
++            :fails-on :win32)
++  #+win32 (error "Not appliable on platform with safepoints")
+   (let (threads)
+     (unwind-protect
+          (progn
+diff --git a/tests/threads.pure.lisp b/tests/threads.pure.lisp
+index bc2b94c..10a8711 100644
+--- a/tests/threads.pure.lisp
++++ b/tests/threads.pure.lisp
+@@ -40,7 +40,7 @@
+ 
+ ;;; Terminating a thread that's waiting for the terminal.
+ 
+-#+sb-thread
++#+(and sb-thread (not win32))
+ (let ((thread (make-thread (lambda ()
+                              (sb-thread::get-foreground)))))
+   (sleep 1)
+@@ -103,8 +103,10 @@
+     (mapcar #'sb-thread:join-thread threads)
+     (assert (not oops))))
+ 
++;; win32 doesn't have signal timers
+ #+sb-thread
+-(with-test (:name :semaphore-multiple-waiters)
++(with-test (:name :semaphore-multiple-waiters
++            :fails-on :win32)
+   (let ((semaphore (make-semaphore :name "test sem")))
+     (labels ((make-readers (n i)
+                (values

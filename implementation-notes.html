@@ -1,0 +1,141 @@
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>SBCL Windows threads patches - Implementation notes</title>
+  </head>
+  <body>
+    <h1>SBCL's Windows threads implementation notes</h1>
+    <ul>
+      <li><a href="#thread-local-storage">Thread-local storage</a></li>
+      <li><a href="#thread-suspension-and-interruption">Thread suspension and interruption</a>
+        <ul>
+          <li><a href="#thread-suspension-and-interruption-suspend">Implementation of thread suspension</a></li>
+          <li><a href="#thread-suspension-and-interruption-interruption">Interruption</a></li>
+          <li><a href="#thread-suspension-and-interruption-safepoint-code">Safepoint code</a></li>
+        </ul>
+      </li>
+    </ul>
+    <h2><a name="thread-local-storage"></a>Thread-local storage</h2>
+
+    <p>Windows allocates a special thread-specific structure &mdash; Thread Information Block (TIB) [<a href="http://en.wikipedia.org/wiki/Win32_Thread_Information_Block">1</a>, <a href="http://www.microsoft.com/msj/archive/s2ce.aspx">2</a>, <a href="http://msdn.microsoft.com/en-us/library/aa232399(VS.60).aspx">3</a>]. TIB contains thread-specific variables such as last error number, pointer to SEH (structured exception handling) frame, thread identifier, TLS backing store. This structure is documented in [<a href="http://www.microsoft.com/msj/archive/s2ce.aspx">2</a>] and [<a href="http://www.microsoft.com/msj/archive/s2cea.htm">4</a>]. Thread can access its own TIB via the <code>FS</code> segment register: <code>%fs:0</code> is a first field in TIB.</p>
+    
+    <p>First 64 TLS slots in are stored in TLS array in TIB at offset <code>0xE10</code> (slots with numbers higher than 63 are stored in some other memory location; pointer to this location is also stored in TIB). This location is documented and is used by several C/C++ compilers for thread-local variables [TODO: need a reference]. Windows provides <code>TlsAlloc</code> function to allocate a slot in this array; we can allocate one slot from TLS array and use it to store a pointer to <code>struct thread</code>.</p>
+    <ol>
+      <li>Windows lets executables control the initial allocation of TLS slots. We can claim the TLS slot 0 and use it to store the pointer to <code>struct thread</code>. Controlling initial allocation of TLS slots would complicate the initialization of lisp runtime and the build process. And this will be a barrier for embedding SBCL.</li>
+      <li>We can take the last TLS slot (slot 63) by allocating TLS slots (<code>TlsAlloc</code>) until we get the slot we want. After that, we free the slots that we don't need. This way the pointer to <code>struct thread</code> will be at at a known memory location. It is safe to assume that slot 63 is free when SBCL is initialed: libraries on Windows commonly use no more that one TLS slot (and system libraries like <code>Winsock</code> don't even use TLS as they have their own fields in TIB). When <code>sbcl.exe</code> is started, only several TLS slots are taken. Even if we fail to own slot 63, we will know this at the initialization time and we will not crash silently somewhere later.</li>
+      <li>We can allocate the TLS slot in normal Windows way (by calling <code>TlsAlloc</code>) and store slot index in a global variable. The initialization process is easy: just call <code>TlsAlloc</code>. But all TLS accesses will have one more indirection. I consider that this does not present any kind of performance issue. SBCL's compiler uses macros like <code>(pseudo-atomic &body body)</code>, <code>(load-tl-symbol-value reg symbol)</code>. It would be necessary to allocate temporary register(s) for resolving the indirections.</li>
+    </ol>
+
+    <p>The last option is clearly the best one; but it would require changes to code generation so I'll leave it to some later time.</p>
+    
+    <p>Currently TLS is implemented as option 2. On initialization, we take the slot 63 (or fail if we couldn't - but I can't imagine the situation where this can happen). When windows-threads will be merged to SBCL, we should consider the option 3 because if implemented now, the change would be more than necessary for windows threading support.</p>
+    
+    
+    <p>TLS notes:</p>
+    
+    <ol>
+      <li>This only applies to Win32. Win64 is very different</li>
+      <li>Clozure CL uses <code>ES</code> segment register and undocument Windows NT functions to allocate a segment and store it in Local Descriptor Table. This is problematic because WOW64 (the Windows subsystem used to run Win32 applications in Windows 64) does not preserve the value of <code>ES</code> register during context switches (including thread preemtion) and syscalls. This is the reason why 32-bit version of Clozure CL does not work on Windows 64.</li>
+      <li>In previous versions of <code>windows-threads</code>, pointer to <code>struct thread</code> was stored in TIB's <code>pvArbitrary</code> field. Windows lets libraries to freely use <code>pvArbitrary</code> field &mdash; thus there is a potential conflict which is hard to detect. Anton Kovalenko persuaded me that using known slot of TLS array is better.</li>
+    </ol>
+
+    <h2><a name="thread-suspension-and-interruption"></a>Thread suspension and interruption</h2>
+    
+    <p>Lisp code in SBCL runs in managed environment &mdash; SBCL needs to be able to safely suspend threads (because it uses stop-the-world garbage collector) and interrupt them (interruption is a process of stopping the thread and making it call some function).</p>
+    
+    <p>On Unix-like systems, suspending and interrupting threads is conceptually simple. By sending UNIX signal to the thread we can suspend it or interrupt it. Despite conceptual simplicity, writing code that uses signals to synchrone threads is hard due to asynchronous code.</p>
+    
+    <p>Windows, on the other hand, does not provide equivalent asynchronous interruptions. There are several ways of emulating them:</p>
+    
+    <ol>
+    <li><p>&laquo;Thread hijacking&raquo;. Windows' debugging API has functions <code>SuspendThread</code> (stops a thread), <code>GetThreadContext</code> and <code>SetThreadContext</code>) (examine and modify the context of a thread) and <code>ResumeThread</code> (resume a thread). We can push a stack frame on a stack and point thread context's <code>EIP</code> register to the signal handler, imitating the delivery of a signal. This method is called &laquo;thread hijacking&raquo; or &laquo;EIP hijacking&raquo;.</p>
+    
+    <p>The bad news is that thread hijacking will lead to race conditions inside Windows internals [<a href="http://translate.google.com/translate?js=n&prev=_t&hl=en&ie=UTF-8&layout=2&eotf=1&sl=ru&tl=en&u=http://blog.not-a-kernel-guy.com/2010/05/04/812">5</a>] and so it should be avoided.</p>
+    </li>
+
+    <li><p>Asynchronous Procedure Calls. An APC in Windows acts like a signal in Unix &mdash; it executes some function in a context of thread and then returns to whatever thread was doing.</p>
+      <p>There are two kinds of APCs &mdash; &laquo;user APC&raquo; and &laquo;kernel APC&raquo;. They differ in that kernel APCs are only available from kernel drivers and are delivered immediatelly while user APCs are delivered only to threads in an &laquo;alertable&raquo; state. Thread is in alertable state only for duration of some specific syscalls like <code>ReadFileEx</code>, <code>SleepEx</code>, <code>WaitForSingleObjectEx</code> and some others. Only kernel code can issue a kernel APC but there is a QueueUserAPCEx[<a href="http://www.codeproject.com/KB/threads/QueueUserAPCEx_v2.aspx">6</a>] project that lets applications use kernel APCs by installing a custom kernel driver.</p>
+    
+      <p>Since QueueUserAPCEx requires installing a kernel-mode driver, I haven't tried it. By the way, pthreads_win32[<a href="http://sourceware.org/pthreads-win32/">7</a>] project uses QueueUserAPCEx for implementation of <code>pthread_kill</code> and <code>pthread_cancel</code> if it's available.</p>
+    </li>
+    <li>Periodical polling. Thread periodically checks if it should suspend or interrupt. Polling does not require special support from operating system. But it requires modifying the code so it would polling at regular intervals and SBCL should be prepared for potentially long or event infinite delays in polling (they may occur when thread executes a blocking operation).</li>
+    </ol>
+    
+    <p>Among these methods of thread suspension, only polling really works. So it's clear that we have no other choice but to implement polling in SBCL threads. Luckily, I didn't even need to do this myself &mdash; Paul Khuong implemented GC safepoints for SBCL[<a href="http://www.pvk.ca/Blog/LowLevel/VM_tricks_safepoints.html">8</a>, <a href="http://repo.or.cz/w/sbcl/pkhuong.git/shortlog/refs/heads/gc-safe-points">9</a>]. The safepoints are implemented by reading a known fixed memory location: <code>test %eax, GC_POLL_PAGE_ADDR</code> where <code>GC_POLL_PAGE_ADDR</code> is some fixed address. Under normal circumstances, this instruction will not have side effects on the running code (it only modifies <code>EFLAGS</code> register and it is not inserted inside condition-checking code). But if the memory page is read-protected or unmapped, this instruction will cause a page fault which will be handled by an exception handler. Exception handler will put the thread to sleep or call the interruption function.</p>
+    <h3><a name="thread-suspension-and-interruption-suspend"></a>Implementation of thread suspension</h3>
+    
+    <p>To signal all threads that GC is coming and they should pause, <code>GC_POLL_PAGE</code> is read-protected. After that, threads will start receiving page faults (unless they are blocked in foreign code). We must consider that:</p>
+    <ol>
+      <li>The reaction to <code>GC_POLL_PAGE</code> unmapping is not immediate &mdash; it might take some time for a thread to reach the safepoint</li>
+      <li>If some thread is executing foreign code or a blocking system call, it will not reach a safepoint in any foreseeable future</li>
+      <li>Even if a thread has reached a safepoint, it does not mean that GC can start. The thread may be inside <code>WITHOUT-GCING</code> section or doing some operation that temporarily breaks invariants. The thread must have a chance to finish what it is doing; but if such thread is resumed it would retry the safepoint instruction forever.</li>
+    </ol>
+    
+    <p>From these considerations we can draw some conclusions:</p>
+    <ol>
+      <li>Thread will always reach safepoint in some finite time &mdash; unless it is running foreign code or is doing a blocking operation (e.g., reading from file or waiting on synchronization object).</li>
+      <li>Every thread that can reach safepoint must reach it before GC can proceed</li>
+      <li>Every thread can can not reach safepoint must not interfere with GC if it will suddenly return to lisp code</li>
+      <li>After all threads have reached safepoint, we must wait for all threads to be ready for GC</li>
+    </ol>
+    
+    <p>Thread suspension proceeds in two phases. In the first phase, threads are notified that they should pause. In the second phase threads are actually stopped. This separation is needed because we must know when to return back the GC poll page.</p>
+    <p>Phase 1:</p>
+    <ol>
+    <li>GC poll page is mapped as unreadable</li>
+    <li>Master thread (the thread that is doing the GC) enumerates threads; if the thread is running lisp code, wait until its state becomes <code>STATE_SUSPENDED_BRIEFLY</code>.</li>
+    </ol>
+    <p>The thread state <code>STATE_SUSPENDED_BRIEFLY</code> means that the thread has reached a safepoint and is waiting for the second phase of suspension process. Thread enters this state even if it's some state that prevents garbage collection.</p>
+    <p>Phase 2:</p>
+    <ol>
+      <li>GC poll page is mapped as readable so that threads can prepare for gc</li>
+      <li>Threads that have reached a safepoint are resumed (because reaching a safepoint does not necessarily mean readiness for GC)</li>
+      <li>Master thread waits for every thread to be ready for GC. This is achieved by waiting for state of every thread to become <code>STATE</code>_SUSPENDED (except for threads that are ready for GC)
+        <p>Thread is ready for GC if:</p>
+        <ul>
+          <li>its state is <code>STATE_SUSPENDED</code>;</li>
+          <li>or it is marked as being <code>gc-safe</code>.</li>
+        </ul>
+        <p>Thread marks itself as being <code>gc-safe</code> when it is running non-lisp code and blockable signals are unblocked and it is not inside <code>WITHOUT-GCING</code> or <code>WITHOUT-INTERRUPTS</code>.</p>
+        <p>To track whether a thread that cannot reach a safepoint allows the garbage collection, special variable <code>*GC-SAFE*</code> is introduced. It is guaranteed that thread can not 'slip through' when garbage collection is commencing.</p>
+      </li>
+    </ol>
+    
+    <h3><a name="thread-suspension-and-interruption-interruption"></a>Interruption</h3>
+    <p>Thread interruption is similar, but we only need to wait for the thread that we are interested in.</p>
+    <p>Phase 1:</p>
+    <ol>
+      <li>GC poll page is remapped as unreadable</li>
+      <li>If the thread is doing <code>pthread_cond_wait</code>, a spurious wakeup is generated. This e.g., wakes the thread from <code>futex_wait</code>. In future versions, other wakeups should be done: e.g., sleep is canceled, I/O is cancelled.</li>
+      <li>Master thread checks interrupted thread: if it's running lisp code, wait until it reaches a safepoint. Thread is considered to reach a safepoint when it's state is <code>STATE_SUSPENDED_BRIEFLY</code>.</li>
+    </ol>
+    <p>Phase 2:</p>
+    <ol>
+      <li>GC poll page is mapped</li>
+      <li>All threads that have reached a safepoint are released</li>
+      <li>Interrupted thread runs an interruption function or queues it if the thread can't run it right now.
+    </ol>
+    
+    <h3><a name="thread-suspension-and-interruption-safepoint-code"></a>Safepoint code</h3>
+    
+    <p>&laquo;Safepoint&raquo; is a code that performs some bookkeeping activities for a thread. It is called:</p>
+    <ol>
+      <li>When thread reaches a safepoint</li>
+      <li>When thread leaves or enters non-lisp code</li>
+      <li>At the beginning of exception handler.</li>
+      <li>When thread changes its state variables like <code>INTERRUPTS-ENABLED</code>, <code>IN-WITHOUT-GCING</code>, <code>GC-PENDING</code> and others.</li>
+    </ol>
+    <p>Safepoint code is responsible for:</p>
+    <ol>
+      <li>If a safepoint was hit, this should be noted by changing state to <code>STATE_SUSPENDED_BRIEFLY</code> and waiting for a change of a state.</li>
+      <li>If thread should suspend, it suspends if possible. If it's not possible, sets <code>STOP_FOR_GC_PENDING</code> and <code>INTERRUPT_PENDING</code> (and <code>pseudo_atomic_interrupted</code>, if inside pseudo-atomic section)</li>
+      <li>If thread should interrupt, it executes interruption if possible. If it's not possible, sets <code>INTERRUPT_PENDING</code> and <code>pseudo_atomic_interrupted</code>.</li>
+      <li>If GC is pending and thread can do GC, runs the GC</li>
+      <li>Is interrupt is pending and thread can execute it, executes it.</li>
+    </ol>
+    
+    <p>On some occasions, runtime is in very fragile state and can not do anything that safepoint must do (e.g., change thread state, execute GC, execute interruption). For example, running lisp thread synchronization objects. To control this, <code>*DISABLE-SAFEPOINTS*</code> variable is used.</p>
+    
+    <p>GC code is run inside a safepoint, and safepoint code itself is not reenterable. Since GC code itself has safepoints (SUB-GC is a normal lisp function, it calls lisp synchronization routines and does several switches to/from foreign code). To prevent rentering of a safepoint code, <code>*IN-SAFEPOINT*</code> variable is used.</p>
+  </body>
+</html>
