@@ -1,0 +1,23 @@
+<html>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>SBCL Windows threads patches - Implementation notes</title>
+  </head>
+  <body>
+    <h1>Known limitations of SBCL's Windows support</h1>
+    <ol>
+      <li>
+        <p>Pending input/output operation will block further operations on this handle.</p>
+        <p>This affects SLIME when it uses multiple threads (this is set by setting <code>*communication-style*</code> to <code>:spawn</code>; by default SLIME uses single thread for communication with Emacs).</p>
+        <p>This limitation is corrected making non-blocking input/output operations.</p>
+      </li>
+      <li>
+        <p>(As an indirect consequence of the first limitation) Dynamically loading foreign library will hang if other thread is reading from standard input or writing to standard output or to standard error output.</p>
+      </li>
+      <li>
+        <p>Input/output on sockets is not fully supported. Not supported operations include <code>read-char-no-hang</code>, <code>sb-bsd-sockets:select</code>.</p>
+        <p>This affects almost any socket-using code. For example, Hunchentoot.</code>
+      </li>
+    </ol>
+  </body>
+</html>
